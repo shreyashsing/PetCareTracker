@@ -1,25 +1,15 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { authService } from '../services/auth/authService';
 import { migratePetsToUser } from '../services/db';
-
-// Storage keys
-const AUTH_USER_KEY = 'auth_user';
-const AUTH_USERS_KEY = 'auth_users';
+import * as SecureStore from 'expo-secure-store';
 
 // Define the User type
 export interface User {
   id: string;
   email: string;
   displayName?: string;
+  name?: string;
   isNewUser?: boolean; // Flag to track if user needs to add their first pet
-}
-
-// For storing user credentials
-interface UserCredential {
-  id: string;
-  email: string;
-  password: string;
-  displayName?: string;
 }
 
 // Define the auth context type
@@ -38,39 +28,11 @@ interface AuthContextType {
 // Create the auth context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Generate a unique ID (simple implementation)
-const generateId = () => {
-  return Date.now().toString() + Math.random().toString(36).substr(2, 9);
-};
-
 // Provider component
 export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Initialize mock user database if needed
-  const initializeUsers = async () => {
-    try {
-      const existingUsers = await AsyncStorage.getItem(AUTH_USERS_KEY);
-      
-      if (!existingUsers) {
-        // Create initial demo user
-        const initialUsers: UserCredential[] = [
-          {
-            id: '123',
-            email: 'user@example.com',
-            password: 'password123',
-            displayName: 'Demo User'
-          }
-        ];
-        
-        await AsyncStorage.setItem(AUTH_USERS_KEY, JSON.stringify(initialUsers));
-      }
-    } catch (error) {
-      console.error('Failed to initialize users:', error);
-    }
-  };
 
   // Check for existing user session
   useEffect(() => {
@@ -78,15 +40,19 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
       try {
         setIsLoading(true);
         
-        // Initialize user database if needed
-        await initializeUsers();
+        // Get current user from auth service
+        const currentUser = await authService.getCurrentUser();
         
-        // Check if user is logged in
-        const userData = await AsyncStorage.getItem(AUTH_USER_KEY);
-        
-        if (userData) {
-          const parsedUser = JSON.parse(userData) as User;
-          setUser(parsedUser);
+        if (currentUser) {
+          // Format user data to match User interface
+          const userData: User = {
+            id: currentUser.id,
+            email: currentUser.email,
+            name: currentUser.name,
+            displayName: currentUser.name
+          };
+          
+          setUser(userData);
         } else {
           setUser(null);
         }
@@ -112,37 +78,22 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     setError(null);
     
     try {
-      // Get users from storage
-      const usersData = await AsyncStorage.getItem(AUTH_USERS_KEY);
+      // Use auth service to login
+      const loggedInUser = await authService.login(email, password);
       
-      if (!usersData) {
-        setError('Authentication system not initialized');
-        setIsLoading(false);
-        return false;
-      }
-      
-      const users: UserCredential[] = JSON.parse(usersData);
-      
-      // Find user by email and password
-      const foundUser = users.find(u => 
-        u.email.toLowerCase() === email.toLowerCase() && 
-        u.password === password
-      );
-      
-      if (foundUser) {
-        // Create user object (without password)
-        const loggedInUser: User = {
-          id: foundUser.id,
-          email: foundUser.email,
-          displayName: foundUser.displayName
+      if (loggedInUser) {
+        // Format user data to match User interface
+        const userData: User = {
+          id: loggedInUser.id,
+          email: loggedInUser.email,
+          name: loggedInUser.name,
+          displayName: loggedInUser.name
         };
         
-        // Save to state and AsyncStorage
-        setUser(loggedInUser);
-        await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(loggedInUser));
+        setUser(userData);
         
         // Migrate any existing pets to this user
-        await migratePetsToUser(loggedInUser.id);
+        await migratePetsToUser(userData.id);
         
         setIsLoading(false);
         return true;
@@ -166,50 +117,30 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     setError(null);
     
     try {
-      // Get existing users
-      const usersData = await AsyncStorage.getItem(AUTH_USERS_KEY);
-      const users: UserCredential[] = usersData ? JSON.parse(usersData) : [];
+      // Use auth service to register
+      const newUser = await authService.register(email, password, displayName);
       
-      // Check if email already exists
-      const userExists = users.some(u => 
-        u.email.toLowerCase() === email.toLowerCase()
-      );
-      
-      if (userExists) {
-        setError('Email is already registered');
-        setIsLoading(false);
-        return false;
-      } else {
-        // Create new user
-        const userId = generateId();
-        const newUserCredential: UserCredential = {
-          id: userId,
-          email,
-          password,
-          displayName
-        };
-        
-        // Add to users array and save
-        users.push(newUserCredential);
-        await AsyncStorage.setItem(AUTH_USERS_KEY, JSON.stringify(users));
-        
-        // Create user object for session (without password)
-        const newUser: User = {
-          id: userId,
-          email,
-          displayName,
+      if (newUser) {
+        // Format user data to match User interface
+        const userData: User = {
+          id: newUser.id,
+          email: newUser.email,
+          name: newUser.name,
+          displayName: newUser.name,
           isNewUser: true // Flag for first pet onboarding
         };
         
-        // Save to state and AsyncStorage
-        setUser(newUser);
-        await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(newUser));
+        setUser(userData);
         
         // Migrate any existing pets to this user (unlikely for new users but for safety)
-        await migratePetsToUser(userId);
+        await migratePetsToUser(userData.id);
         
         setIsLoading(false);
         return true;
+      } else {
+        setError('Registration failed. Email may already be in use.');
+        setIsLoading(false);
+        return false;
       }
     } catch (error) {
       console.error('Registration failed', error);
@@ -230,7 +161,9 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
       };
       
       setUser(updatedUser);
-      await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(updatedUser));
+      
+      // In a real app, you would update this in your database
+      // For this demo app, we'll just update the state
     } catch (error) {
       console.error('Failed to update onboarding status:', error);
     }
@@ -240,8 +173,8 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const logout = async () => {
     setIsLoading(true);
     try {
-      // Remove user from AsyncStorage
-      await AsyncStorage.removeItem(AUTH_USER_KEY);
+      // Use auth service to logout
+      await authService.logout();
       setUser(null);
     } catch (error) {
       console.error('Logout failed', error);
@@ -252,51 +185,40 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
   // Forgot password function
   const forgotPassword = async (email: string) => {
+    setIsLoading(true);
     setError(null);
     try {
-      // Get users from storage
-      const usersData = await AsyncStorage.getItem(AUTH_USERS_KEY);
-      
-      if (!usersData) {
-        setError('Authentication system not initialized');
-        return;
-      }
-      
-      const users: UserCredential[] = JSON.parse(usersData);
-      
-      // Check if user exists
-      const userExists = users.some(u => 
-        u.email.toLowerCase() === email.toLowerCase()
-      );
-      
-      if (!userExists) {
-        setError('No account found with this email address');
-      } else {
-        console.log(`Password reset email would be sent to ${email}`);
-        // In a real app, send a password reset email here
-      }
+      // Use auth service to request password reset
+      await authService.requestPasswordReset(email);
+      // Don't provide feedback on whether email exists for security
     } catch (error) {
       console.error('Forgot password failed', error);
-      setError('Password reset failed. Please try again.');
+      setError('An error occurred. Please try again later.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const value = {
-    user,
-    isLoading,
-    error,
-    login,
-    register,
-    logout,
-    forgotPassword,
-    clearError,
-    completeOnboarding
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        error,
+        login,
+        register,
+        logout,
+        forgotPassword,
+        clearError,
+        completeOnboarding
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
-// Custom hook to use the auth context
+// Custom hook to use auth context
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

@@ -326,6 +326,18 @@ export interface User {
   email: string;
   passwordHash: string;
   name: string;
+  displayName?: string;
   createdAt: Date;
   petIds: string[];
+  lastLogin?: Date;
+  isVerified?: boolean;
+  role?: 'user' | 'admin';
+  preferences?: {
+    emailNotifications?: boolean;
+    pushNotifications?: boolean;
+    theme?: 'light' | 'dark' | 'system';
+  };
+  isNewUser?: boolean;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
 } 

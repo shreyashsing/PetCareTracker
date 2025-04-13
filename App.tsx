@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LogBox, View, Text, ActivityIndicator } from 'react-native';
+import { LogBox, View, Text, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
@@ -27,6 +27,10 @@ LogBox.ignoreLogs([
 // Import database services 
 import { AsyncStorageService } from './src/services/db/asyncStorage';
 import { databaseManager, STORAGE_KEYS } from './src/services/db';
+import * as SecureStore from 'expo-secure-store';
+
+// Encryption key for sensitive data (in real app, should be securely stored)
+const ENCRYPTION_CHECK_KEY = 'encryption_initialized';
 
 // Create query client with defaultOptions to silence the 'no queryFn' warnings
 const queryClient = new QueryClient({
@@ -79,10 +83,55 @@ export default function App() {
   const [dbInitialized, setDbInitialized] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [securityInitialized, setSecurityInitialized] = useState<boolean>(false);
+
+  // Check if sensitive data encryption is available
+  useEffect(() => {
+    const checkSecurity = async () => {
+      try {
+        // Check if secure storage is available
+        const isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+        
+        if (!isSecureStoreAvailable) {
+          Alert.alert(
+            "Security Warning",
+            "Secure storage is not available on this device. Some features may not work properly and your data may not be fully protected.",
+            [{ text: "Continue Anyway" }]
+          );
+        }
+        
+        // Set a test value to verify secure storage works
+        await SecureStore.setItemAsync(ENCRYPTION_CHECK_KEY, 'true');
+        const testValue = await SecureStore.getItemAsync(ENCRYPTION_CHECK_KEY);
+        
+        if (testValue !== 'true') {
+          throw new Error('Secure storage verification failed');
+        }
+        
+        setSecurityInitialized(true);
+      } catch (error) {
+        console.error('Security initialization error:', error);
+        Alert.alert(
+          "Security Error",
+          "Could not initialize secure storage. The app will continue but your sensitive data may not be properly protected.",
+          [{ text: "Continue Anyway" }]
+        );
+        // Allow app to continue despite security issues
+        setSecurityInitialized(true);
+      }
+    };
+    
+    checkSecurity();
+  }, []);
 
   useEffect(() => {
     const initializeDatabase = async () => {
       try {
+        // Wait for security check to complete
+        if (!securityInitialized) {
+          return;
+        }
+        
         // Check if the database is already initialized
         const isInitialized = await AsyncStorageService.getItem<boolean>('dbInitialized');
         
@@ -92,6 +141,10 @@ export default function App() {
           
           // Set the database as initialized
           await AsyncStorageService.setItem('dbInitialized', true);
+          
+          // Import here to avoid circular imports
+          const { createDemoUserIfNeeded } = require('./src/utils/demoUsers');
+          await createDemoUserIfNeeded();
         } else {
           console.log('Database already initialized');
           
@@ -121,7 +174,7 @@ export default function App() {
     };
     
     initializeDatabase();
-  }, []);
+  }, [securityInitialized]);
 
   // Handle loading state
   if (isLoading) {

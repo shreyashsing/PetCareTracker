@@ -3,22 +3,29 @@ import { STORAGE_KEYS } from '../db/constants';
 import { databaseManager } from '../db';
 import { User } from '../../types/components';
 import { generateUUID } from '../../utils/helpers';
+import * as SecureStore from 'expo-secure-store';
+import { hashPassword, verifyPassword } from './passwordService';
+import * as Crypto from 'expo-crypto';
+
+// Secure storage keys
+const SECURE_STORE_KEYS = {
+  AUTH_TOKEN: 'auth_token',
+  USER_ID: 'user_id'
+};
 
 /**
- * Simple password hashing function (in production app use better methods)
- * @param password Password to hash
- * @returns Hashed password
+ * Generate an authentication token
+ * @returns Authentication token
  */
-const hashPassword = (password: string): string => {
-  // In a real app, use a proper cryptography library
-  // This is a simple hash for demonstration purposes only
-  let hash = 0;
-  for (let i = 0; i < password.length; i++) {
-    const char = password.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return hash.toString(36);
+const generateAuthToken = async (userId: string): Promise<string> => {
+  // Generate a secure random string using expo-crypto
+  const randomBytes = await Crypto.getRandomBytesAsync(16);
+  const randomStr = Array.from(randomBytes)
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+    
+  // Return a token with userId and timestamp
+  return `token_${userId}_${Date.now()}_${randomStr}`;
 };
 
 /**
@@ -41,11 +48,14 @@ export class AuthService {
         return null;
       }
 
+      // Hash the password using our custom implementation
+      const passwordHash = await hashPassword(password);
+
       // Create new user
       const newUser: User = {
         id: generateUUID(),
         email,
-        passwordHash: hashPassword(password),
+        passwordHash, // Store hashed password
         name,
         createdAt: new Date(),
         petIds: []
@@ -54,8 +64,12 @@ export class AuthService {
       // Save user to database
       await databaseManager.users.create(newUser);
 
-      // Store current user ID in AsyncStorage
-      await AsyncStorageService.setItem(STORAGE_KEYS.CURRENT_USER, newUser.id);
+      // Generate and store authentication token in SecureStore
+      const authToken = await generateAuthToken(newUser.id);
+      await SecureStore.setItemAsync(SECURE_STORE_KEYS.AUTH_TOKEN, authToken);
+      
+      // Store user ID in SecureStore
+      await SecureStore.setItemAsync(SECURE_STORE_KEYS.USER_ID, newUser.id);
 
       return newUser;
     } catch (error) {
@@ -79,14 +93,25 @@ export class AuthService {
         return null;
       }
 
-      // Check password
-      if (user.passwordHash !== hashPassword(password)) {
+      // Check password using our custom verification
+      const isPasswordValid = await verifyPassword(password, user.passwordHash);
+      if (!isPasswordValid) {
         console.error('Invalid password');
         return null;
       }
 
-      // Store current user ID in AsyncStorage
-      await AsyncStorageService.setItem(STORAGE_KEYS.CURRENT_USER, user.id);
+      // Generate and store authentication token in SecureStore
+      const authToken = await generateAuthToken(user.id);
+      await SecureStore.setItemAsync(SECURE_STORE_KEYS.AUTH_TOKEN, authToken);
+      
+      // Store user ID in SecureStore
+      await SecureStore.setItemAsync(SECURE_STORE_KEYS.USER_ID, user.id);
+
+      // Update last login timestamp
+      if (user.lastLogin) {
+        user.lastLogin = new Date();
+        await databaseManager.users.update(user.id, user);
+      }
 
       return user;
     } catch (error) {
@@ -96,31 +121,34 @@ export class AuthService {
   }
 
   /**
-   * Logout current user
+   * Logout user
    */
   async logout(): Promise<void> {
     try {
-      // Remove current user from AsyncStorage
-      await AsyncStorageService.removeItem(STORAGE_KEYS.CURRENT_USER);
+      // Remove auth token and user ID from SecureStore
+      await SecureStore.deleteItemAsync(SECURE_STORE_KEYS.AUTH_TOKEN);
+      await SecureStore.deleteItemAsync(SECURE_STORE_KEYS.USER_ID);
     } catch (error) {
-      console.error('Error logging out:', error);
+      console.error('Error during logout:', error);
     }
   }
 
   /**
-   * Get current logged in user
-   * @returns User object if logged in, null otherwise
+   * Get current authenticated user
+   * @returns User object if authenticated, null otherwise
    */
   async getCurrentUser(): Promise<User | null> {
     try {
-      // Get current user ID from AsyncStorage
-      const userId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.CURRENT_USER);
+      // Get user ID from SecureStore
+      const userId = await SecureStore.getItemAsync(SECURE_STORE_KEYS.USER_ID);
+      
       if (!userId) {
         return null;
       }
-
+      
       // Get user from database
-      return await databaseManager.users.findById(userId);
+      const user = await databaseManager.users.getById(userId);
+      return user;
     } catch (error) {
       console.error('Error getting current user:', error);
       return null;
@@ -128,12 +156,28 @@ export class AuthService {
   }
 
   /**
-   * Check if user is logged in
-   * @returns True if logged in, false otherwise
+   * Request password reset
+   * @param email User email
    */
-  async isLoggedIn(): Promise<boolean> {
-    const user = await this.getCurrentUser();
-    return user !== null;
+  async requestPasswordReset(email: string): Promise<boolean> {
+    try {
+      // Find user by email
+      const user = await databaseManager.users.findByEmail(email);
+      
+      // For security, don't reveal if user exists
+      if (!user) {
+        console.log(`Password reset requested for non-existent email: ${email}`);
+        return true; // Return true to not leak user existence
+      }
+      
+      // In a real app, send email with password reset link
+      // For demo, just log info
+      console.log(`Password reset requested for user: ${user.id}`);
+      return true;
+    } catch (error) {
+      console.error('Error requesting password reset:', error);
+      return false;
+    }
   }
 }
 

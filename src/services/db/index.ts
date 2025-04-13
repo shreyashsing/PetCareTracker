@@ -57,23 +57,53 @@ export class DatabaseManager {
       // Check if it's the first run
       const hasData = await AsyncStorageService.getItem<boolean>('dbInitialized');
       
-      if (!hasData) {
-        console.log('First run, initializing database...');
-        
-        // Check if any pets already exist
-        const existingPets = await this.pets.getAll();
-        
-        // Only set default values if no pets exist
-        if (existingPets.length === 0) {
-        await this.setDefaultValues();
-        } else {
-          console.log('Pets already exist, skipping default pet creation');
+      // Import here to avoid circular dependency
+      const { runMigrations } = require('./migrations');
+      
+      // Set a timeout to prevent hanging
+      const initPromise = new Promise<void>(async (resolve, reject) => {
+        try {
+          if (!hasData) {
+            console.log('First run, initializing database...');
+            
+            // Check if any pets already exist
+            const existingPets = await this.pets.getAll();
+            
+            // Only set default values if no pets exist
+            if (existingPets.length === 0) {
+              await this.setDefaultValues();
+            } else {
+              console.log('Pets already exist, skipping default pet creation');
+            }
+            
+            await AsyncStorageService.setItem('dbInitialized', true);
+          }
+          
+          // Run migrations regardless of initialization status
+          // This ensures database schema is up to date
+          await runMigrations();
+          
+          resolve();
+        } catch (err) {
+          console.error('Error in database initialization:', err);
+          reject(err);
         }
-        
-        await AsyncStorageService.setItem('dbInitialized', true);
-      }
+      });
+      
+      // Set 5 second timeout to prevent hanging
+      const timeoutPromise = new Promise<void>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('Database initialization timed out')), 5000);
+      });
+      
+      // Use Promise.race to implement timeout
+      await Promise.race([initPromise, timeoutPromise]);
+      
     } catch (error) {
       console.error('Error initializing database:', error);
+      // Throw error only for critical failures
+      if (error instanceof Error && error.message.includes('timed out')) {
+        throw error;
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { getRandomBytesBase64 } from './cryptoFallback';
+import { securityService } from '../security';
 
 // Constants
 const SALT_LENGTH = 16; // 16 bytes = 128 bits
@@ -11,7 +12,15 @@ const ALGORITHM = Crypto.CryptoDigestAlgorithm.SHA256;
  * @returns Base64-encoded salt string
  */
 const generateSalt = async (): Promise<string> => {
-  return getRandomBytesBase64(SALT_LENGTH);
+  try {
+    // Use security service to generate a secure random string
+    // This will generate a hex string which is already safe for storage
+    return await securityService.generateSecureRandomString(SALT_LENGTH);
+  } catch (error) {
+    console.error('Error generating salt with security service, falling back to default method:', error);
+    // Fall back to original method if security service fails
+    return getRandomBytesBase64(SALT_LENGTH);
+  }
 };
 
 /**

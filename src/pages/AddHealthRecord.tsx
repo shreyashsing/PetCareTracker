@@ -8,13 +8,14 @@ import { useAppColors } from '../hooks/useAppColors';
 import { 
   Input, 
   Select, 
-  DatePicker,
-  Switch
+  Switch,
+  DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
 import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { HealthRecord } from '../types/components';
+import { generateUUID } from '../utils/helpers';
 
 type AddHealthRecordScreenProps = NativeStackScreenProps<RootStackParamList, 'AddHealthRecord'>;
 
@@ -237,7 +238,7 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
       
       // Create base health record with common fields
       const baseRecord: Partial<HealthRecord> = {
-        id: isEditMode && recordId ? recordId : Date.now().toString(),
+        id: isEditMode && recordId ? recordId : generateUUID(),
         petId: effectivePetId,
         date: formState.date,
         provider: {
@@ -379,10 +380,9 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           <DatePicker
             label="Date"
             value={formState.date}
-            onChange={(date) => handleChange('date', date || new Date())}
-            maxDate={new Date()}
+            onChange={(date) => handleChange('date', date)}
+            mode="date"
             error={errors.date}
-            touched={touched.date}
             containerStyle={styles.inputContainer}
           />
           
@@ -401,11 +401,10 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
               
               <DatePicker
                 label="Next Due Date"
-                value={formState.nextDueDate}
+                value={formState.nextDueDate || new Date()}
                 onChange={(date) => handleChange('nextDueDate', date)}
+                mode="date"
                 error={errors.nextDueDate}
-                touched={touched.nextDueDate}
-                minDate={new Date()}
                 containerStyle={styles.inputContainer}
               />
               
@@ -502,11 +501,10 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
               
               <DatePicker
                 label="Follow-up Date"
-                value={formState.followUpDate}
+                value={formState.followUpDate || new Date()}
                 onChange={(date) => handleChange('followUpDate', date)}
+                mode="date"
                 error={errors.followUpDate}
-                touched={touched.followUpDate}
-                minDate={formState.date}
                 containerStyle={styles.inputContainer}
               />
               

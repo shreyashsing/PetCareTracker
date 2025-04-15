@@ -8,9 +8,9 @@ import { useAppColors } from '../hooks/useAppColors';
 import { 
   Input, 
   Select, 
-  DatePicker,
   FormRow,
-  Switch
+  Switch,
+  DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
 import { databaseManager } from '../services/db';
@@ -204,7 +204,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         0
       );
       
-      // Create a task object to save
+      // Create a task object to save - make sure it matches the Task interface
       const taskData = {
         id: isEditMode ? taskId as string : generateUUID(),
         petId: activePetId as string,
@@ -223,7 +223,6 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
           notificationType: 'push' as 'push' | 'sound' | 'both'
         },
         status: formState.isCompleted ? 'completed' : 'pending' as 'pending' | 'in-progress' | 'completed' | 'skipped' | 'rescheduled',
-        // Add missing required fields
         location: {
           name: 'Home'
         },
@@ -231,17 +230,20 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         completionDetails: formState.isCompleted ? {
           completedAt: new Date(),
           completedBy: 'User',
+          notes: ''
         } : undefined
       };
       
-      console.log('Saving task data:', taskData);
+      console.log('Saving task data:', JSON.stringify(taskData, null, 2));
 
       if (isEditMode) {
         // Update existing task
         await databaseManager.tasks.update(taskId as string, taskData);
+        alert('Task updated successfully!');
       } else {
         // Create new task
         await databaseManager.tasks.create(taskData);
+        alert('Task created successfully!');
       }
       
       // Instead of navigating directly to Schedule, go back to previous screen
@@ -249,6 +251,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
     } catch (error) {
       console.error('Error saving task:', error);
       // Handle error (show alert, etc.)
+      alert(`Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
@@ -338,11 +341,11 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
               <DatePicker
                 label="Due Date"
                 value={formState.dueDate}
-                onChange={(date) => handleChange('dueDate', date || new Date())}
+                onChange={(date) => handleChange('dueDate', date)}
+                mode="date"
                 error={errors.dueDate}
-                touched={touched.dueDate}
-                minDate={new Date()}
                 containerStyle={styles.inputContainer}
+                allowMonthYearSelection={true}
               />
             </View>
             
@@ -350,10 +353,9 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
               <DatePicker
                 label="Due Time"
                 value={formState.dueTime}
-                onChange={(time) => handleChange('dueTime', time || new Date())}
-                error={errors.dueTime}
-                touched={touched.dueTime}
+                onChange={(date) => handleChange('dueTime', date)}
                 mode="time"
+                error={errors.dueTime}
                 containerStyle={styles.inputContainer}
               />
             </View>

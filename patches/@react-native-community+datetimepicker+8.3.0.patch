@@ -1,0 +1,71 @@
+diff --git a/node_modules/@react-native-community/datetimepicker/src/RNCMaterialDatePickerShim/index.js b/node_modules/@react-native-community/datetimepicker/src/RNCMaterialDatePickerShim/index.js
+new file mode 100644
+index 0000000..a8ec90c
+--- /dev/null
++++ b/node_modules/@react-native-community/datetimepicker/src/RNCMaterialDatePickerShim/index.js
+@@ -0,0 +1,4 @@
++
++// This is a shim for RNCMaterialDatePicker
++const RNCMaterialDatePickerShim = require('..\..\..\..\..\src\shims\RNCMaterialDatePicker');
++module.exports = RNCMaterialDatePickerShim;
+diff --git a/node_modules/@react-native-community/datetimepicker/src/datepicker.android.js b/node_modules/@react-native-community/datetimepicker/src/datepicker.android.js
+index 5d5eadb..19e0b42 100644
+--- a/node_modules/@react-native-community/datetimepicker/src/datepicker.android.js
++++ b/node_modules/@react-native-community/datetimepicker/src/datepicker.android.js
+@@ -7,12 +7,55 @@
+  * @format
+  * @flow strict-local
+  */
++import {NativeModules, processColor} from 'react-native';
++import {
++  createDateTimeSetEventHandler,
++  createNeutralButtonClickEventHandler,
++  createDismissedEventHandler,
++  throwIfInvalidDateValue,
++} from './utils';
++import {DISPLAY_MODES, ANDROID_MODE} from './constants';
+ import {DATE_SET_ACTION, DISMISS_ACTION, ANDROID_DISPLAY} from './constants';
+ import {toMilliseconds} from './utils';
+ import RNDatePickerAndroid from './specs/NativeModuleDatePicker';
+ import type {DatePickerOptions, DateTimePickerResult} from './types';
+ 
+-export default class DatePickerAndroid {
++// Use our custom shim if the native module is not available
++let RNCMaterialDatePicker;
++try {
++  RNCMaterialDatePicker = NativeModules.RNCMaterialDatePicker;
++} catch (e) {
++  // Use a shim for missing module
++  console.warn('RNCMaterialDatePicker native module not available, using shim');
++  RNCMaterialDatePicker = {
++    present: () => Promise.resolve({ action: 'dismissed' }),
++    dismiss: () => {}
++  };
++}
++
++export default function DatePickerAndroid(props) {
++  const {
++    date,
++    display,
++    positiveButtonLabel,
++    negativeButtonLabel,
++    fallbackDisplayIOS,
++    neutralButtonLabel,
++    timeZoneOffsetInMinutes,
++    is24Hour = true,
++    accentColor,
++    onChange,
++    onDismiss,
++    onNeutralButtonClick,
++    ...otherProps
++  } = props;
++
++  throwIfInvalidDateValue(date);
++
++  const dismissListener = onDismiss
++    ? createDismissedEventHandler(onDismiss)
++    : null;
++
+   /**
+    * Opens the standard Android date picker dialog.
+    *

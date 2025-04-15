@@ -12,6 +12,7 @@ import { databaseManager, STORAGE_KEYS } from '../../services/db';
 import { AsyncStorageService } from '../../services/db/asyncStorage';
 import { Pet } from '../../types/components';
 import { generateUUID } from '../../utils/helpers';
+import { useAuth } from '../../contexts/AuthContext';
 
 type AddFirstPetNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -19,6 +20,7 @@ type AddFirstPetNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type PetType = 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
 
 export const AddFirstPet: React.FC = () => {
+  const { user } = useAuth();
   const navigation = useNavigation<AddFirstPetNavigationProp>();
   const { setActivePetId } = useActivePet();
   const { toast } = useToast();
@@ -90,6 +92,7 @@ export const AddFirstPet: React.FC = () => {
       // Create the pet object
       const newPet: Pet = {
         id: petId,
+        userId: user?.id || 'user123',
         name: petName,
         type: petType,
         breed: petBreed,

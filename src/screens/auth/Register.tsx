@@ -7,6 +7,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
@@ -14,15 +15,17 @@ import { Input } from '../../components/Input';
 import { Button } from '../../components/Button';
 import { useAuth } from '../../contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
+import { directRegister } from '../../utils/registerHelper';
 
 type RegisterScreenProps = NativeStackScreenProps<AuthStackParamList, 'Register'>;
 
 const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) => {
-  const { register, isLoading } = useAuth();
+  const { register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
     email?: string;
@@ -75,9 +78,55 @@ const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) => {
   const handleRegister = async () => {
     if (validateForm()) {
       try {
-        await register(email, password, name);
+        setIsLoading(true);
+        
+        // Try the direct registration helper first
+        const directResult = await directRegister(email, password, name);
+        
+        if (directResult.success) {
+          // If direct registration worked, try normal registration
+          const success = await register(email, password, name);
+          if (!success) {
+            Alert.alert(
+              "Registration Complete", 
+              "Your account was created but there was an issue signing you in. Please try logging in manually.",
+              [{ text: "Go to Login", onPress: () => navigation.navigate('Login') }]
+            );
+          }
+        } else {
+          // Log detailed error information
+          console.error('Registration failed with error:', JSON.stringify(directResult));
+          
+          // Show appropriate error message based on the step that failed
+          if (directResult.step === 'auth') {
+            Alert.alert(
+              "Registration Failed", 
+              "There was an error creating your account. The email may already be in use.",
+              [{ text: "OK" }]
+            );
+          } else if (directResult.step === 'database') {
+            Alert.alert(
+              "Account Created", 
+              "Your account was created but there was an issue with your profile. Please try logging in.",
+              [{ text: "Go to Login", onPress: () => navigation.navigate('Login') }]
+            );
+          } else {
+            Alert.alert(
+              "Registration Error", 
+              "An unexpected error occurred. Please try again later.",
+              [{ text: "OK" }]
+            );
+          }
+        }
       } catch (error) {
         console.error('Registration error:', error);
+        Alert.alert(
+          "Registration Error", 
+          `Failed to register: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          [{ text: "OK" }]
+        );
+      } finally {
+        setIsLoading(false);
       }
     }
   };

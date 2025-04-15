@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -18,6 +18,9 @@ import { useActivePet } from '../hooks/useActivePet';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import { Pet } from '../types/components';
 
+// Add this type definition for Ionicons to fix TypeScript errors
+type IconName = keyof typeof Ionicons.glyphMap;
+
 const { width } = Dimensions.get('window');
 
 type FullAnalyticsScreenProps = NativeStackScreenProps<RootStackParamList, 'FullAnalytics'>;
@@ -29,7 +32,7 @@ interface AnalyticsMetric {
   change: string;
   trend: 'up' | 'down' | 'stable';
   color: string;
-  icon: string;
+  icon: IconName; // Update type to use the defined IconName type
 }
 
 interface AnalyticsChart {
@@ -46,7 +49,7 @@ interface HealthInsight {
   id: string;
   title: string;
   description: string;
-  icon: string;
+  icon: IconName; // Update type to use the defined IconName type
   color: string;
 }
 
@@ -56,8 +59,9 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
   const [selectedTimeRange, setSelectedTimeRange] = useState<'week' | 'month' | 'year'>('month');
   
   // Use the same dummy pet as in Home screen for consistency
-  const dummyPet: Pet = {
+  const dummyPet: Pet = useMemo(() => ({
     id: '1',
+    userId: 'user123',
     name: 'Max',
     type: 'dog',
     breed: 'Golden Retriever',
@@ -73,9 +77,9 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
     medicalConditions: [],
     allergies: [],
     status: 'healthy'
-  };
+  }), []);
 
-  const analyticsMetrics: AnalyticsMetric[] = [
+  const analyticsMetrics: AnalyticsMetric[] = useMemo(() => [
     {
       id: '1',
       title: 'Weight',
@@ -112,9 +116,9 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
       color: '#EF4444',
       icon: 'medkit-outline'
     }
-  ];
+  ], []);
 
-  const analyticsCharts: AnalyticsChart[] = [
+  const analyticsCharts: AnalyticsChart[] = useMemo(() => [
     {
       id: '1',
       title: 'Weight Trend',
@@ -151,9 +155,9 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
       unit: '%',
       description: 'Activity level has steadily increased, reaching 90% in July.'
     }
-  ];
+  ], []);
 
-  const healthInsights: HealthInsight[] = [
+  const healthInsights: HealthInsight[] = useMemo(() => [
     {
       id: '1',
       title: 'Weight Management',
@@ -182,9 +186,21 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
       icon: 'fitness-outline',
       color: '#10B981'
     }
-  ];
+  ], []);
 
-  const renderChart = (chart: AnalyticsChart) => {
+  const handleTabChange = useCallback((tab: 'overview' | 'trends' | 'insights') => {
+    setActiveTab(tab);
+  }, []);
+
+  const handleTimeRangeChange = useCallback((range: 'week' | 'month' | 'year') => {
+    setSelectedTimeRange(range);
+  }, []);
+
+  const handleBackPress = useCallback(() => {
+    navigation.goBack();
+  }, [navigation]);
+
+  const renderChart = useCallback((chart: AnalyticsChart) => {
     const maxValue = Math.max(...chart.data);
     const minValue = Math.min(...chart.data);
     const range = maxValue - minValue;
@@ -224,9 +240,9 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
         </View>
       </View>
     );
-  };
+  }, [colors.text]);
 
-  const renderTabContent = () => {
+  const renderTabContent = useCallback(() => {
     switch (activeTab) {
       case 'overview':
         return (
@@ -235,7 +251,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
               {analyticsMetrics.map(metric => (
                 <View key={metric.id} style={[styles.metricCard, { backgroundColor: colors.card }]}>
                   <View style={[styles.metricIconContainer, { backgroundColor: metric.color + '15' }]}>
-                    <Ionicons name={metric.icon as any} size={24} color={metric.color} />
+                    <Ionicons name={metric.icon} size={24} color={metric.color} />
                   </View>
                   <Text style={[styles.metricName, { color: colors.text + '80' }]}>{metric.title}</Text>
                   <Text style={[styles.metricValue, { color: colors.text }]}>{metric.value}</Text>
@@ -251,7 +267,8 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
                     <Ionicons 
                       name={
                         metric.trend === 'up' ? 'arrow-up' : 
-                        metric.trend === 'down' ? 'arrow-down' : 'remove'
+                        metric.trend === 'down' ? 'arrow-down' : 
+                        'remove'
                       } 
                       size={12} 
                       color={
@@ -290,7 +307,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
               {healthInsights.slice(0, 2).map(insight => (
                 <View key={insight.id} style={[styles.insightCard, { backgroundColor: colors.card }]}>
                   <View style={[styles.insightIconContainer, { backgroundColor: insight.color + '15' }]}>
-                    <Ionicons name={insight.icon as any} size={24} color={insight.color} />
+                    <Ionicons name={insight.icon} size={24} color={insight.color} />
                   </View>
                   <View style={styles.insightContent}>
                     <Text style={[styles.insightTitle, { color: colors.text }]}>{insight.title}</Text>
@@ -312,7 +329,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
                   styles.timeRangeButton, 
                   selectedTimeRange === 'week' && { backgroundColor: colors.primary }
                 ]}
-                onPress={() => setSelectedTimeRange('week')}
+                onPress={() => handleTimeRangeChange('week')}
               >
                 <Text style={[
                   styles.timeRangeText, 
@@ -326,7 +343,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
                   styles.timeRangeButton, 
                   selectedTimeRange === 'month' && { backgroundColor: colors.primary }
                 ]}
-                onPress={() => setSelectedTimeRange('month')}
+                onPress={() => handleTimeRangeChange('month')}
               >
                 <Text style={[
                   styles.timeRangeText, 
@@ -340,7 +357,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
                   styles.timeRangeButton, 
                   selectedTimeRange === 'year' && { backgroundColor: colors.primary }
                 ]}
-                onPress={() => setSelectedTimeRange('year')}
+                onPress={() => handleTimeRangeChange('year')}
               >
                 <Text style={[
                   styles.timeRangeText, 
@@ -367,7 +384,7 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
               {healthInsights.map(insight => (
                 <View key={insight.id} style={[styles.insightCard, { backgroundColor: colors.card }]}>
                   <View style={[styles.insightIconContainer, { backgroundColor: insight.color + '15' }]}>
-                    <Ionicons name={insight.icon as any} size={24} color={insight.color} />
+                    <Ionicons name={insight.icon} size={24} color={insight.color} />
                   </View>
                   <View style={styles.insightContent}>
                     <Text style={[styles.insightTitle, { color: colors.text }]}>{insight.title}</Text>
@@ -383,14 +400,14 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
       default:
         return null;
     }
-  };
+  }, [activeTab, analyticsMetrics, analyticsCharts, healthInsights, renderChart, colors, selectedTimeRange]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <TopNavBar 
         title="Health Analytics" 
         showBackButton 
-        onBackPress={() => navigation.goBack()}
+        onBackPress={handleBackPress}
       />
       
       <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.contentContainer}>
@@ -422,10 +439,10 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
         <View style={styles.tabs}>
           <TouchableOpacity 
             style={[styles.tab, activeTab === 'overview' && styles.activeTab]} 
-            onPress={() => setActiveTab('overview')}
+            onPress={() => handleTabChange('overview')}
           >
             <Ionicons 
-              name="stats-chart-outline" 
+              name="stats-chart-outline"
               size={20} 
               color={activeTab === 'overview' ? colors.primary : colors.text + '60'} 
             />
@@ -435,10 +452,10 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.tab, activeTab === 'trends' && styles.activeTab]} 
-            onPress={() => setActiveTab('trends')}
+            onPress={() => handleTabChange('trends')}
           >
             <Ionicons 
-              name="trending-up-outline" 
+              name="trending-up-outline"
               size={20} 
               color={activeTab === 'trends' ? colors.primary : colors.text + '60'} 
             />
@@ -448,10 +465,10 @@ const FullAnalytics: React.FC<FullAnalyticsScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.tab, activeTab === 'insights' && styles.activeTab]} 
-            onPress={() => setActiveTab('insights')}
+            onPress={() => handleTabChange('insights')}
           >
             <Ionicons 
-              name="bulb-outline" 
+              name="bulb-outline"
               size={20} 
               color={activeTab === 'insights' ? colors.primary : colors.text + '60'} 
             />
@@ -715,4 +732,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default FullAnalytics; 
+export default React.memo(FullAnalytics); 

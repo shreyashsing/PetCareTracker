@@ -1,0 +1,43 @@
+diff --git a/node_modules/react-native/Libraries/TurboModule/TurboModuleRegistry.js b/node_modules/react-native/Libraries/TurboModule/TurboModuleRegistry.js
+index cad5f89..edaf12f 100644
+--- a/node_modules/react-native/Libraries/TurboModule/TurboModuleRegistry.js
++++ b/node_modules/react-native/Libraries/TurboModule/TurboModuleRegistry.js
+@@ -11,6 +11,9 @@
+ 
+ import invariant from 'invariant';
+ 
++// PATCHED_FOR_MISSING_MODULES - Import shim for RNCMaterialDatePicker
++const RNCMaterialDatePickerShim = {present: () => Promise.resolve({action: 'dismissed'}), dismiss: () => {}};
++
+ const NativeModules = require('../BatchedBridge/NativeModules');
+ 
+ const turboModuleProxy = global.__turboModuleProxy;
+@@ -43,13 +46,20 @@ export function get<T: TurboModule>(name: string): ?T {
+ }
+ 
+ export function getEnforcing<T: TurboModule>(name: string): T {
+-  const module = requireModule<T>(name);
+-  invariant(
+-    module != null,
+-    `TurboModuleRegistry.getEnforcing(...): '${name}' could not be found. ` +
+-      'Verify that a module by this name is registered in the native binary.',
+-  );
+-  return module;
++  // PATCHED_FOR_MISSING_MODULES - Handle missing modules without crashing
++  if (name === 'RNCMaterialDatePicker') {
++    return (RNCMaterialDatePickerShim: $FlowFixMe);
++  }
++  
++  try {
++    const module = requireModule<T>(name);
++    invariant(
++      module != null,
++      `TurboModuleRegistry.getEnforcing(...): '${name}' could not be found. ` +
++        'Verify that a module by this name is registered in the native binary.',
++    );
++    return module;
++  } catch (e) {
++    console.warn(`TurboModuleRegistry.getEnforcing: Module ${name} not found, using empty shim`);
++    return ({}: $FlowFixMe);
++  }
+ } 

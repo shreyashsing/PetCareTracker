@@ -1,24 +1,23 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
-import type { ComponentType } from 'react';
 
-// Import screens from correct locations
+// Import screens from pages directory (our primary implementation)
 import HomeScreen from '../pages/Home';
-import PetProfileScreen from '../screens/PetProfileScreen';
+import PetProfileScreen from '../pages/PetProfile';
 import AddPetScreen from '../pages/AddPet';
 import AddHealthRecordScreen from '../pages/AddHealthRecord';
 import AddMedicationScreen from '../pages/AddMedication';
 import AddTaskScreen from '../pages/AddTask';
 import AddMealScreen from '../pages/AddMeal';
+import AddFoodItemScreen from '../pages/AddFoodItem';
 import SettingsScreen from '../pages/Settings';
 import FullAnalyticsScreen from '../pages/FullAnalytics';
-// Import the missing screens
 import HealthScreen from '../pages/Health';
 import ScheduleScreen from '../pages/Schedule';
 import FeedingScreen from '../pages/Feeding';
 
-// Use Stack with 'any' to resolve type incompatibilities
+// Create stack navigator with correct type
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
 const MainStack = () => {
@@ -29,18 +28,19 @@ const MainStack = () => {
         headerShown: false,
       }}
     >
-      <Stack.Screen name="Home" component={HomeScreen as ComponentType<any>} />
-      <Stack.Screen name="PetProfile" component={PetProfileScreen as ComponentType<any>} />
-      <Stack.Screen name="AddPet" component={AddPetScreen as ComponentType<any>} />
-      <Stack.Screen name="AddHealthRecord" component={AddHealthRecordScreen as ComponentType<any>} />
-      <Stack.Screen name="AddMedication" component={AddMedicationScreen as ComponentType<any>} />
-      <Stack.Screen name="AddTask" component={AddTaskScreen as ComponentType<any>} />
-      <Stack.Screen name="AddMeal" component={AddMealScreen as ComponentType<any>} />
-      <Stack.Screen name="Settings" component={SettingsScreen as ComponentType<any>} />
-      <Stack.Screen name="FullAnalytics" component={FullAnalyticsScreen as ComponentType<any>} />
-      <Stack.Screen name="Health" component={HealthScreen as ComponentType<any>} />
-      <Stack.Screen name="Schedule" component={ScheduleScreen as ComponentType<any>} />
-      <Stack.Screen name="Feeding" component={FeedingScreen as ComponentType<any>} />
+      <Stack.Screen name="Home" component={HomeScreen} />
+      <Stack.Screen name="PetProfile" component={PetProfileScreen} />
+      <Stack.Screen name="AddPet" component={AddPetScreen} />
+      <Stack.Screen name="AddHealthRecord" component={AddHealthRecordScreen} />
+      <Stack.Screen name="AddMedication" component={AddMedicationScreen} />
+      <Stack.Screen name="AddTask" component={AddTaskScreen} />
+      <Stack.Screen name="AddMeal" component={AddMealScreen} />
+      <Stack.Screen name="AddFoodItem" component={AddFoodItemScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="FullAnalytics" component={FullAnalyticsScreen} />
+      <Stack.Screen name="Health" component={HealthScreen} />
+      <Stack.Screen name="Schedule" component={ScheduleScreen} />
+      <Stack.Screen name="Feeding" component={FeedingScreen} />
     </Stack.Navigator>
   );
 };

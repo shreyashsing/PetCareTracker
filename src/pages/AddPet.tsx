@@ -19,9 +19,9 @@ import {
   Input, 
   Button, 
   Select, 
-  DatePicker, 
   Switch, 
-  FormRow 
+  FormRow,
+  DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
@@ -469,22 +469,22 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             
             <DatePicker
               label="Birth Date"
-              value={formState.birthDate}
+              value={formState.birthDate || new Date()}
               onChange={(date) => handleChange('birthDate', date)}
-              placeholder="Select birth date"
+              mode="date"
               error={errors.birthDate}
-              touched={touched.birthDate}
               containerStyle={styles.inputContainer}
+              allowMonthYearSelection={true}
             />
             
             <DatePicker
               label="Adoption Date"
-              value={formState.adoptionDate}
+              value={formState.adoptionDate || new Date()}
               onChange={(date) => handleChange('adoptionDate', date)}
-              placeholder="Select adoption date"
+              mode="date"
               error={errors.adoptionDate}
-              touched={touched.adoptionDate}
               containerStyle={styles.inputContainer}
+              allowMonthYearSelection={true}
             />
             
             <Select
@@ -655,12 +655,12 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             
             <DatePicker
               label="Policy Expiry Date"
-              value={formState.insuranceInfo.expiryDate}
+              value={formState.insuranceInfo.expiryDate || new Date()}
               onChange={(date) => handleChange('insuranceInfo', {...formState.insuranceInfo, expiryDate: date})}
-              placeholder="Select expiry date"
+              mode="date"
               error={errors['insuranceInfo.expiryDate']}
-              touched={touched['insuranceInfo.expiryDate']}
               containerStyle={styles.inputContainer}
+              allowMonthYearSelection={true}
             />
           </View>
           

@@ -2,9 +2,15 @@ import { AsyncStorageService } from './asyncStorage';
 import { databaseManager } from '.';
 import { User } from '../../types/components';
 import { hashPassword } from '../auth/passwordService';
+import { supabase } from '../supabase';
+import { generateUUID } from '../../utils/helpers';
 
 // Migration version key
 const DB_MIGRATION_VERSION_KEY = 'db_migration_version';
+
+// Since we couldn't see any usage of uuidv4() in the code we viewed, we'll just make sure
+// it's available for potential usages throughout the file by assigning it as a variable
+const uuidv4 = generateUUID;
 
 // Migration interface
 interface Migration {
@@ -162,4 +168,156 @@ export async function getDatabaseVersion(): Promise<number> {
  */
 export async function setDatabaseVersion(version: number): Promise<void> {
   await AsyncStorageService.setItem(DB_MIGRATION_VERSION_KEY, version);
-} 
+}
+
+/**
+ * Run database migrations to ensure all required tables exist
+ * This runs automatically when the app starts
+ */
+export const runMigrationsToEnsureTablesExist = async (): Promise<boolean> => {
+  try {
+    console.log('Running database migrations to ensure tables exist...');
+    
+    // First, check if we're authenticated
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session?.user?.id) {
+      console.log('Not authenticated, skipping table creation check');
+      return false;
+    }
+    
+    const userId = data.session.user.id;
+    const userEmail = data.session.user.email || '';
+    const userMeta = data.session.user.user_metadata || {};
+    const userDisplayName = userMeta?.name || userEmail.split('@')[0] || 'User';
+
+    // Check and create profiles table record
+    try {
+      // Try to get the user's profile
+      const { data: profile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
+        .single();
+      
+      if (fetchError && fetchError.code === '42P01') {
+        console.log('Profiles table does not exist. You will need to create it in Supabase.');
+        console.log('Run the following SQL in the Supabase SQL Editor:');
+        console.log(`
+          CREATE TABLE public.profiles (
+            id UUID REFERENCES auth.users PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            username TEXT,
+            full_name TEXT,
+            avatar_url TEXT,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            email_confirmed BOOLEAN DEFAULT FALSE
+          );
+          
+          -- Set up Row Level Security
+          ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+          
+          -- Create policy to allow users to view and update their own profile
+          CREATE POLICY "Users can view and update their own profile"
+            ON public.profiles
+            FOR ALL
+            USING (auth.uid() = id)
+            WITH CHECK (auth.uid() = id);
+        `);
+      } else if (!profile) {
+        // Table exists but no profile for this user
+        // Create a minimal profile
+        const { error: insertError } = await supabase
+          .from('profiles')
+          .upsert([
+            {
+              id: userId,
+              email: userEmail,
+              username: userEmail.split('@')[0] || 'user',
+              full_name: userDisplayName,
+              updated_at: new Date().toISOString(),
+              email_confirmed: true
+            }
+          ]);
+        
+        if (insertError) {
+          console.log('Error creating profile record:', insertError);
+        } else {
+          console.log('Created profile record successfully');
+        }
+      } else {
+        console.log('Profiles table exists and user has a profile');
+      }
+    } catch (error) {
+      console.log('Error checking/creating profiles table:', error);
+    }
+    
+    // Check and create users table record
+    try {
+      // Try to get the user's record
+      const { data: user, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', userId)
+        .single();
+      
+      if (fetchError && fetchError.code === '42P01') {
+        console.log('Users table does not exist. You will need to create it in Supabase.');
+        console.log('Run the following SQL in the Supabase SQL Editor:');
+        console.log(`
+          CREATE TABLE public.users (
+            id UUID REFERENCES auth.users PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT,
+            display_name TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            last_login TIMESTAMP WITH TIME ZONE,
+            is_new_user BOOLEAN DEFAULT TRUE,
+            pet_ids TEXT[] DEFAULT '{}'::TEXT[]
+          );
+          
+          -- Set up Row Level Security
+          ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+          
+          -- Create policy to allow users to view and update their own data
+          CREATE POLICY "Users can view and update their own data"
+            ON public.users
+            FOR ALL
+            USING (auth.uid() = id)
+            WITH CHECK (auth.uid() = id);
+        `);
+      } else if (!user) {
+        // Table exists but no record for this user
+        // Create a minimal user record
+        const { error: insertError } = await supabase
+          .from('users')
+          .upsert([
+            {
+              id: userId,
+              email: userEmail,
+              name: userDisplayName,
+              display_name: userDisplayName,
+              created_at: new Date().toISOString(),
+              last_login: new Date().toISOString(),
+              is_new_user: false,
+              pet_ids: []
+            }
+          ]);
+        
+        if (insertError) {
+          console.log('Error creating user record:', insertError);
+        } else {
+          console.log('Created user record successfully');
+        }
+      } else {
+        console.log('Users table exists and user has a record');
+      }
+    } catch (error) {
+      console.log('Error checking/creating users table:', error);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Database migration check failed:', error);
+    return false;
+  }
+}; 

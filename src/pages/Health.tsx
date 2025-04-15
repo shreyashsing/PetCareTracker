@@ -1409,7 +1409,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           <View style={styles.header}>
             <View style={styles.petInfoContainer}>
               <Image 
-                source={{ uri: pet.image }} 
+                source={{ uri: typeof pet === 'object' && 'image' in pet && pet.image ? pet.image : 'https://via.placeholder.com/150' }} 
                 style={styles.petImage} 
                 resizeMode="cover"
               />

@@ -8,13 +8,14 @@ import { useAppColors } from '../hooks/useAppColors';
 import { 
   Input, 
   Select, 
-  DatePicker,
-  Switch
+  Switch,
+  DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
 import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { Medication } from '../types/components';
+import { generateUUID } from '../utils/helpers';
 
 type AddMedicationScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMedication'>;
 
@@ -221,7 +222,7 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       
       // Create medication record
       const medicationRecord: Partial<Medication> = {
-        id: isEditMode && medicationId ? medicationId : Date.now().toString(),
+        id: isEditMode && medicationId ? medicationId : generateUUID(),
         petId: effectivePetId,
         name: formState.name,
         type: formState.type,
@@ -377,13 +378,14 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
             </View>
           </View>
           
-              <DatePicker
-                label="Start Date"
-                value={formState.startDate}
-                onChange={(date) => handleChange('startDate', date || new Date())}
-                error={errors.startDate}
-                touched={touched.startDate}
-                containerStyle={styles.inputContainer}
+          <DatePicker
+            label="Start Date"
+            value={formState.startDate}
+            onChange={(date) => handleChange('startDate', date)}
+            mode="date"
+            error={errors.startDate}
+            containerStyle={styles.inputContainer}
+            allowMonthYearSelection={true}
           />
           
           <View style={styles.switchContainer}>
@@ -397,15 +399,15 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
             </View>
             
           {!formState.isOngoing && (
-              <DatePicker
-                label="End Date"
-                value={formState.endDate}
-                onChange={(date) => handleChange('endDate', date)}
-                error={errors.endDate}
-                touched={touched.endDate}
-                minDate={formState.startDate}
-                containerStyle={styles.inputContainer}
-              />
+            <DatePicker
+              label="End Date"
+              value={formState.endDate || new Date()}
+              onChange={(date) => handleChange('endDate', date)}
+              mode="date"
+              error={errors.endDate}
+              containerStyle={styles.inputContainer}
+              allowMonthYearSelection={true}
+            />
           )}
           
           <View style={styles.switchContainer}>

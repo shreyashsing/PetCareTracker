@@ -1,9 +1,22 @@
+// Import our app initialization first to apply all patches
+import './src/App.init';
+
+// Import error handler early to catch any initialization errors
+import { setupErrorHandling, setupLogBoxIgnores } from './src/utils/errorHandler';
+setupErrorHandling();
+
 import React, { useEffect, useState } from 'react';
 import { LogBox, View, Text, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
 import { enableScreens } from 'react-native-screens';
+
+// Import the ErrorBoundary component
+import { ErrorBoundary } from './src/components/ErrorBoundary';
+
+// Setup LogBox ignores
+setupLogBoxIgnores(LogBox);
 
 // Import providers directly with correct exports
 import { ToastProvider } from './src/hooks/use-toast';
@@ -14,23 +27,11 @@ import AppNavigator from './src/navigation/AppNavigator';
 // Disable screens - prevents the "tried to register two views with the same name" error
 enableScreens(false);
 
-// Disable warning messages
-LogBox.ignoreLogs([
-  'Invariant Violation: Tried to register two views with the same name',
-  'ViewPropTypes will be removed from React Native',
-  'AsyncStorage has been extracted from react-native',
-  'Possible Unhandled Promise Rejection',
-  'Warning: componentWillReceiveProps', // React Navigation warning
-  'Warning: componentWillMount'
-]);
-
 // Import database services 
 import { AsyncStorageService } from './src/services/db/asyncStorage';
 import { databaseManager, STORAGE_KEYS } from './src/services/db';
-import * as SecureStore from 'expo-secure-store';
-
-// Encryption key for sensitive data (in real app, should be securely stored)
-const ENCRYPTION_CHECK_KEY = 'encryption_initialized';
+import { securityService, SecurityMode } from './src/services/security';
+import { runMigrationsToEnsureTablesExist } from './src/services/db/migrations';
 
 // Create query client with defaultOptions to silence the 'no queryFn' warnings
 const queryClient = new QueryClient({
@@ -46,38 +47,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Simple error boundary component
-class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
-  constructor(props: {children: React.ReactNode}) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ color: 'red', fontSize: 18, fontWeight: 'bold', marginBottom: 10 }}>
-            Something went wrong
-          </Text>
-          <Text style={{ color: 'red', marginBottom: 20 }}>
-            {this.state.error?.message || 'Unknown error'}
-          </Text>
-          <View style={{ padding: 10, backgroundColor: '#f0f0f0', borderRadius: 5, width: '100%' }}>
-            <Text style={{ fontSize: 12 }}>{this.state.error?.stack}</Text>
-          </View>
-        </View>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
 // Create the App component
 export default function App() {
   const [dbInitialized, setDbInitialized] = useState<boolean>(false);
@@ -85,43 +54,38 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [securityInitialized, setSecurityInitialized] = useState<boolean>(false);
 
-  // Check if sensitive data encryption is available
+  // Initialize security service
   useEffect(() => {
-    const checkSecurity = async () => {
+    const initializeSecurity = async () => {
       try {
-        // Check if secure storage is available
-        const isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+        // Initialize the security service
+        const securityEnabled = await securityService.initialize();
+        setSecurityInitialized(true);
         
-        if (!isSecureStoreAvailable) {
+        // Log security mode for debugging
+        console.log('Security mode:', securityService.getSecurityMode());
+        
+        // If security is completely disabled, inform the user
+        if (securityService.getSecurityMode() === SecurityMode.DISABLED) {
           Alert.alert(
             "Security Warning",
-            "Secure storage is not available on this device. Some features may not work properly and your data may not be fully protected.",
+            "Your device does not support secure data storage. Sensitive information may not be fully protected.",
             [{ text: "Continue Anyway" }]
           );
         }
-        
-        // Set a test value to verify secure storage works
-        await SecureStore.setItemAsync(ENCRYPTION_CHECK_KEY, 'true');
-        const testValue = await SecureStore.getItemAsync(ENCRYPTION_CHECK_KEY);
-        
-        if (testValue !== 'true') {
-          throw new Error('Secure storage verification failed');
-        }
-        
-        setSecurityInitialized(true);
       } catch (error) {
         console.error('Security initialization error:', error);
+        // Continue anyway but with a warning
+        setSecurityInitialized(true);
         Alert.alert(
           "Security Error",
-          "Could not initialize secure storage. The app will continue but your sensitive data may not be properly protected.",
+          "Failed to initialize security features. Your data may not be properly protected.",
           [{ text: "Continue Anyway" }]
         );
-        // Allow app to continue despite security issues
-        setSecurityInitialized(true);
       }
     };
     
-    checkSecurity();
+    initializeSecurity();
   }, []);
 
   useEffect(() => {
@@ -164,6 +128,14 @@ export default function App() {
           }
         }
         
+        // Run migrations to ensure all necessary Supabase tables exist
+        try {
+          await runMigrationsToEnsureTablesExist();
+        } catch (migrationError) {
+          console.error('Error running migrations:', migrationError);
+          // Non-critical, continue app startup
+        }
+        
         setDbInitialized(true);
         setIsLoading(false);
       } catch (error) {
@@ -195,8 +167,17 @@ export default function App() {
     );
   }
 
+  // Handler for error boundary errors
+  const handleError = (error: Error, errorInfo: React.ErrorInfo): void => {
+    // Log to console for debugging
+    console.error('Error caught by root ErrorBoundary:', error, errorInfo);
+    
+    // In a production app, you would send this to a monitoring service like Sentry
+    // Example: Sentry.captureException(error);
+  };
+
   return (
-    <ErrorBoundary>
+    <ErrorBoundary onError={handleError} resetOnPropsChange={false}>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
           <ToastProvider>

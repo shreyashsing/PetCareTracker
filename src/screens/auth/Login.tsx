@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Alert,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
@@ -16,15 +17,20 @@ import { Button } from '../../components/Button';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppColors } from '../../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
+import { sendConfirmationEmail } from '../../utils/emailConfirmation';
 
 type LoginScreenProps = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
-  const { login, isLoading } = useAuth();
+  const { login, isLoading: authLoading } = useAuth();
   const { colors } = useAppColors();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [loginInProgress, setLoginInProgress] = useState(false);
+  
+  // Combined loading state from both local and auth context
+  const isLoading = loginInProgress || authLoading;
   
   const validateForm = (): boolean => {
     const newErrors: { email?: string; password?: string } = {};
@@ -53,10 +59,43 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const handleLogin = async () => {
     if (validateForm()) {
       try {
-        await login(email, password);
-        // If successful, the app will navigate to main screen via AppNavigator
-      } catch (error) {
+        setLoginInProgress(true);
+        const success = await login(email, password);
+        setLoginInProgress(false);
+        
+        if (!success) {
+          Alert.alert('Login Failed', 'Invalid email or password.');
+        }
+      } catch (error: any) {
+        setLoginInProgress(false);
         console.error('Login error:', error);
+        
+        if (error.message?.includes('Email not confirmed')) {
+          Alert.alert(
+            'Email Not Verified',
+            'Your email has not been verified. Would you like to resend the verification email?',
+            [
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+              {
+                text: 'Resend',
+                onPress: async () => {
+                  const sent = await sendConfirmationEmail(email);
+                  if (sent) {
+                    Alert.alert(
+                      'Verification Email Sent',
+                      'Please check your email inbox and follow the link to verify your account.'
+                    );
+                  }
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Login Failed', `An error occurred: ${error.message || 'Unknown error'}`);
+        }
       }
     }
   };

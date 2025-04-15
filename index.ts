@@ -1,8 +1,10 @@
-import { registerRootComponent } from 'expo';
+// This is the first file that is run when the app starts
+// Import any polyfills or shims needed for the application
 
+// Import our app
+import { registerRootComponent } from 'expo';
 import App from './App';
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
+// Register the root component
+// This tells Expo which component is the root component
 registerRootComponent(App);

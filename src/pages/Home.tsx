@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -48,7 +48,8 @@ type Activity = {
   category: string;
 };
 
-const PetStats: React.FC<PetStatsProps> = ({ tasksLoading, mealsLoading, tasks, meals }) => {
+// Memoize PetStats component to prevent unnecessary re-renders
+const PetStats: React.FC<PetStatsProps> = React.memo(({ tasksLoading, mealsLoading, tasks, meals }) => {
   const { colors, isDark } = useAppColors();
   
   return (
@@ -80,13 +81,15 @@ const PetStats: React.FC<PetStatsProps> = ({ tasksLoading, mealsLoading, tasks, 
       </View>
     </View>
   );
-};
+});
 
-const PetDetails = ({ pet, activities }: { pet: Pet, activities: any[] }) => {
+// Memoize PetDetails component
+const PetDetails = React.memo(({ pet, activities }: { pet: Pet, activities: any[] }) => {
   const { colors, isDark } = useAppColors();
   if (!pet) return null;
   
-  const getAge = (birthDate: Date) => {
+  // Use useCallback for functions that are passed as props or used in dependency arrays
+  const getAge = useCallback((birthDate: Date) => {
     const today = new Date();
     const birth = new Date(birthDate);
     let years = today.getFullYear() - birth.getFullYear();
@@ -98,9 +101,12 @@ const PetDetails = ({ pet, activities }: { pet: Pet, activities: any[] }) => {
     }
     
     return `${years}y ${months}m`;
-  };
+  }, []);
   
-  const petAge = pet.birthDate ? getAge(pet.birthDate) : 'Unknown';
+  // Memoize calculated values to prevent recalculation on each render
+  const petAge = useMemo(() => {
+    return pet.birthDate ? getAge(pet.birthDate) : 'Unknown';
+  }, [pet.birthDate, getAge]);
   
   return (
     <View style={{ marginTop: 16, marginBottom: 16 }}>
@@ -179,9 +185,10 @@ const PetDetails = ({ pet, activities }: { pet: Pet, activities: any[] }) => {
       </View>
     </View>
   );
-};
+});
 
-const RecentActivity = ({ activities }: { activities: any[] }) => {
+// Memoize RecentActivity component
+const RecentActivity = React.memo(({ activities }: { activities: any[] }) => {
   const { colors } = useAppColors();
   
   return (
@@ -220,9 +227,10 @@ const RecentActivity = ({ activities }: { activities: any[] }) => {
       </TouchableOpacity>
     </View>
   );
-};
+});
 
-const UpcomingTasks = ({ tasks }: { tasks: Task[] }) => {
+// Memoize UpcomingTasks component
+const UpcomingTasks = React.memo(({ tasks }: { tasks: Task[] }) => {
   const { colors } = useAppColors();
   return (
     <View style={styles.upcomingContainer}>
@@ -246,7 +254,7 @@ const UpcomingTasks = ({ tasks }: { tasks: Task[] }) => {
       ))}
     </View>
   );
-};
+});
 
 const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   const { toast } = useToast();
@@ -261,16 +269,94 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [hasPets, setHasPets] = useState(true);
   
-  const calculateNextCheckup = () => {
+  // Optimize with useCallback to prevent recreation on every render
+  const calculateNextCheckup = useCallback(() => {
     const today = new Date();
     const nextCheckup = new Date(today);
     nextCheckup.setMonth(today.getMonth() + 3); // Assume next checkup in 3 months
     
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return `${nextCheckup.getDate()} ${monthNames[nextCheckup.getMonth()]}`;
-  };
+  }, []);
   
-  const loadData = async () => {
+  // Use useCallback for the formatActivities function - move this before loadData
+  const formatActivities = useCallback((tasks: Task[], meals: Meal[], healthRecords: any[] = []): Activity[] => {
+    // Combine all activities
+    const allActivities: Activity[] = [];
+    
+    // Format tasks
+    tasks.forEach(task => {
+      if (task.status === 'completed' && task.completionDetails) {
+        allActivities.push({
+          id: `task-${task.id}`,
+          title: task.title,
+          time: task.completionDetails.completedAt ? format(new Date(task.completionDetails.completedAt), 'h:mm a') : '',
+          icon: 'checkmark-circle-outline',
+          iconColor: '#4CAF50',
+          iconBackground: '#4CAF5020',
+          completed: true,
+          category: 'task'
+        });
+      }
+    });
+    
+    // Format meals
+    meals.forEach(meal => {
+      if (meal.completed) {
+        // Create a food description
+        let foodDescription = meal.amount ? `${meal.amount}` : '';
+        if (meal.foods && meal.foods.length > 0) {
+          const firstFood = meal.foods[0];
+          foodDescription = `${firstFood.amount} ${firstFood.unit}`;
+        }
+        
+        allActivities.push({
+          id: `meal-${meal.id}`,
+          title: `${meal.type} - ${foodDescription}`,
+          time: meal.time ? format(new Date(meal.time), 'h:mm a') : '',
+          icon: 'restaurant-outline',
+          iconColor: '#FFA000',
+          iconBackground: '#FFA00020',
+          completed: true,
+          category: 'meal'
+        });
+      }
+    });
+    
+    // Format health records
+    healthRecords.forEach(record => {
+      allActivities.push({
+        id: `health-${record.id}`,
+        title: record.type,
+        description: record.notes,
+        time: record.date ? format(new Date(record.date), 'MMM d, h:mm a') : '',
+        icon: 'fitness-outline',
+        iconColor: '#2196F3',
+        iconBackground: '#2196F320',
+        completed: true,
+        category: 'health'
+      });
+    });
+    
+    // Sort activities by time (most recent first)
+    allActivities.sort((a, b) => {
+      // Parse time strings into Date objects for comparison
+      const getTimeValue = (time: string) => {
+        if (!time) return 0;
+        try {
+          return new Date(time).getTime();
+        } catch {
+          return 0;
+        }
+      };
+      
+      return getTimeValue(b.time) - getTimeValue(a.time);
+    });
+    
+    return allActivities;
+  }, []);
+  
+  const loadData = useCallback(async () => {
     try {
       console.log("Loading Home data...");
       setLoading(true);
@@ -355,12 +441,73 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, setActivePetId, formatActivities]);
   
+  // Use useCallback for the getTodaysActivities function
+  const getTodaysActivities = useCallback((allActivities: Activity[]): Activity[] => {
+    const today = new Date();
+    const todayString = format(today, 'MMM d, yyyy');
+    
+    return allActivities.filter(activity => {
+      if (!activity.time) return false;
+      
+      // Check if the activity time includes today's date
+      return activity.time.includes(todayString);
+    });
+  }, []);
+  
+  // Use useCallback for the status-related functions
+  const getHealthStatusColor = useCallback(() => {
+    switch (healthStatus) {
+      case 'healthy':
+        return '#4CAF50';
+      case 'recovering':
+        return '#FFA000';
+      case 'ill':
+        return '#F44336';
+      case 'chronic':
+        return '#9C27B0';
+      default:
+        return '#757575';
+    }
+  }, [healthStatus]);
+  
+  const getHealthStatusText = useCallback(() => {
+    switch (healthStatus) {
+      case 'healthy':
+        return 'Your pet is in good health! Continue regular care and monitoring.';
+      case 'recovering':
+        return 'Your pet is recovering. Follow vet-prescribed treatments carefully.';
+      case 'ill':
+        return 'Your pet needs special attention! Follow your vet\'s advice closely.';
+      case 'chronic':
+        return 'Your pet has ongoing care needs. Maintain medication and special care.';
+      default:
+        return 'Pet health status is unknown. Consider scheduling a checkup.';
+    }
+  }, [healthStatus]);
+  
+  // Use useMemo for derived values
+  const todayActivities = useMemo(() => {
+    return getTodaysActivities(activities);
+  }, [activities, getTodaysActivities]);
+  
+  const healthStatusColorValue = useMemo(() => {
+    return getHealthStatusColor();
+  }, [getHealthStatusColor]);
+  
+  const healthStatusTextValue = useMemo(() => {
+    return getHealthStatusText();
+  }, [getHealthStatusText]);
+  
+  const nextCheckupDate = useMemo(() => {
+    return calculateNextCheckup();
+  }, [calculateNextCheckup]);
+
   // Load data on initial mount
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
   
   // Reload data when screen is focused (coming back from AddPet)
   useEffect(() => {
@@ -369,218 +516,8 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     });
     
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, loadData]);
   
-  const formatActivities = (tasks: Task[], meals: Meal[], healthRecords: any[] = []): Activity[] => {
-    const formattedActivities: Activity[] = [];
-    
-    tasks.forEach(task => {
-      let formattedTime = '';
-      if (task.scheduleInfo.time instanceof Date) {
-        formattedTime = task.scheduleInfo.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      } else if (typeof task.scheduleInfo.time === 'string') {
-        formattedTime = task.scheduleInfo.time;
-      }
-      
-      let iconName = 'calendar-outline';
-      let iconColor = '#5e72e4';
-      let category = task.category;
-      
-      switch (task.category) {
-        case 'feeding':
-          iconName = 'fast-food-outline';
-          iconColor = '#fb6340';
-          break;
-        case 'exercise':
-          iconName = 'fitness-outline';
-          iconColor = '#2dce89';
-          break;
-        case 'medication':
-          iconName = 'medkit-outline';
-          iconColor = '#f5365c';
-          break;
-        case 'grooming':
-          iconName = 'cut-outline';
-          iconColor = '#11cdef';
-          break;
-        case 'veterinary':
-          iconName = 'medical-outline';
-          iconColor = '#5e72e4';
-          break;
-        case 'training':
-          iconName = 'school-outline';
-          iconColor = '#ffd600';
-          break;
-        default:
-          iconName = 'calendar-outline';
-          iconColor = '#5e72e4';
-      }
-      
-      formattedActivities.push({
-        id: task.id,
-        title: task.title,
-        time: formattedTime,
-        icon: iconName,
-        iconType: 'ionicons',
-        iconColor: iconColor,
-        iconBackground: iconColor + '15',
-        completed: task.status === 'completed',
-        category: category
-      });
-    });
-    
-    meals.forEach(meal => {
-      let formattedTime = '';
-      if (meal.time instanceof Date) {
-        formattedTime = meal.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      } else if (typeof meal.time === 'string') {
-        formattedTime = meal.time;
-      }
-      
-      let iconName = 'fast-food-outline';
-      let iconColor = '#fb6340';
-      
-      formattedActivities.push({
-        id: meal.id,
-        title: `${meal.type.charAt(0).toUpperCase() + meal.type.slice(1)} Time`,
-        time: formattedTime,
-        icon: iconName,
-        iconType: 'ionicons',
-        iconColor: iconColor,
-        iconBackground: iconColor + '15',
-        completed: meal.completed,
-        category: 'feeding'
-      });
-    });
-    
-    // Add health records to activities
-    healthRecords.forEach(record => {
-      let icon = 'medical-outline'; // Default Ionicons icon
-      let iconType: 'ionicons' | 'emoji' = 'ionicons'; // Default icon type with correct type annotation
-      let iconEmoji = ''; // For emoji icons
-      let iconColor = '#5e72e4'; // Default blue color
-      
-      // Assign an icon based on the record type
-      if (record.type === 'vaccination') {
-        iconEmoji = '💉';
-        iconType = 'emoji';
-        iconColor = '#4F46E5'; // Purple for vaccinations
-      } else if (record.type === 'surgery') {
-        iconEmoji = '🔪';
-        iconType = 'emoji';
-        iconColor = '#EF4444'; // Red for surgeries
-      } else if (record.type === 'dental') {
-        iconEmoji = '🦷';
-        iconType = 'emoji';
-        iconColor = '#6366F1'; // Indigo for dental
-      } else if (record.type === 'emergency') {
-        iconEmoji = '🚑';
-        iconType = 'emoji';
-        iconColor = '#F59E0B'; // Amber for emergencies
-      } else if (record.type === 'checkup') {
-        icon = 'medical-outline';
-        iconType = 'ionicons';
-        iconColor = '#10B981'; // Green for checkups
-      }
-      
-      // Format the date relative to today (e.g. "2 days ago")
-      const recordDate = new Date(record.date);
-      const today = new Date();
-      const diffTime = Math.abs(today.getTime() - recordDate.getTime());
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      
-      let timeString;
-      if (diffDays === 0) {
-        timeString = 'Today';
-      } else if (diffDays === 1) {
-        timeString = 'Yesterday';
-      } else {
-        timeString = `${diffDays} days ago`;
-      }
-      
-      formattedActivities.push({
-        id: `health-${record.id}`,
-        title: record.title || `${record.type.charAt(0).toUpperCase() + record.type.slice(1)}`,
-        description: record.description || `Visit to ${record.provider?.name || 'vet'}`,
-        time: timeString,
-        icon,
-        iconEmoji,
-        iconType,
-        iconColor,
-        iconBackground: iconColor + '15',
-        completed: record.status === 'completed',
-        category: 'health'
-      });
-    });
-    
-    // Sort by recency (most recent first)
-    return formattedActivities.sort((a, b) => {
-      // For tasks and meals that have specific times
-      if (a.time.includes(':') && b.time.includes(':')) {
-        try {
-          const timeA = new Date(`1970/01/01 ${a.time}`).getTime();
-          const timeB = new Date(`1970/01/01 ${b.time}`).getTime();
-          return timeA - timeB;
-        } catch (error) {
-          console.error('Error sorting activity times:', error);
-        }
-      }
-      
-      // For relative times like "Today", "Yesterday", "X days ago"
-      const getTimeValue = (time: string) => {
-        if (time === 'Today') return 0;
-        if (time === 'Yesterday') return 1;
-        const days = parseInt(time.split(' ')[0]);
-        return isNaN(days) ? 999 : days;
-      };
-      
-      return getTimeValue(a.time) - getTimeValue(b.time);
-    });
-  };
-  
-  const getTodaysActivities = (allActivities: Activity[]): Activity[] => {
-    // Filter out health record activities that don't have today's date
-    return allActivities.filter(activity => {
-      // Include all task and meal activities (which already are filtered by today)
-      if (activity.category !== 'health') {
-        return true;
-      }
-      
-      // Only include health activities that have "Today" as the time
-      return activity.time === 'Today';
-    });
-  };
-  
-  const getHealthStatusColor = () => {
-    switch (healthStatus) {
-      case 'healthy':
-        return '#2dce89';
-      case 'recovering':
-        return '#fb6340';
-      case 'ill':
-        return '#f5365c';
-      case 'chronic':
-        return '#11cdef';
-      default:
-        return '#525f7f';
-    }
-  };
-  
-  const getHealthStatusText = () => {
-    switch (healthStatus) {
-      case 'healthy':
-        return 'Healthy';
-      case 'recovering':
-        return 'Recovering';
-      case 'ill':
-        return 'Ill';
-      case 'chronic':
-        return 'Chronic Condition';
-      default:
-        return 'Unknown';
-    }
-  };
-
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -704,16 +641,16 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                       <View
                         style={[
                           styles.healthIndicator,
-                          { backgroundColor: getHealthStatusColor() + '20' },
+                          { backgroundColor: healthStatusColorValue + '20' },
                         ]}
                       >
                         <Text
                           style={[
                             styles.healthIndicatorText,
-                            { color: getHealthStatusColor() },
+                            { color: healthStatusColorValue },
                           ]}
                         >
-                          {getHealthStatusText()}
+                          {healthStatusTextValue}
                         </Text>
                       </View>
                       <Text style={[styles.petStatLabel, { color: colors.text + '60' }]}>Status</Text>
@@ -758,15 +695,15 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
 
               {/* Use filtered activities (today only) for Today's Schedule */}
-              {getTodaysActivities(activities).length > 0 ? (
+              {todayActivities.length > 0 ? (
                 <View style={styles.scheduleList}>
-                  {getTodaysActivities(activities).map((activity, index) => (
+                  {todayActivities.map((activity, index) => (
                     <TouchableOpacity
                       key={`${activity.id}-${index}`}
                       style={[
                         styles.scheduleItem,
                         { backgroundColor: colors.card },
-                        index === getTodaysActivities(activities).length - 1 ? { marginBottom: 0 } : null,
+                        index === todayActivities.length - 1 ? { marginBottom: 0 } : null,
                       ]}
                     >
                       <View
@@ -826,8 +763,8 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 </View>
                 <View style={styles.healthCardContent}>
                   <Text style={[styles.healthCardTitle, { color: colors.text }]}>Overall Health</Text>
-                  <Text style={[styles.healthCardValue, { color: getHealthStatusColor() }]}>
-                    {getHealthStatusText()}
+                  <Text style={[styles.healthCardValue, { color: healthStatusColorValue }]}>
+                    {healthStatusTextValue}
                   </Text>
                 </View>
               </View>
@@ -839,7 +776,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 <View style={styles.healthCardContent}>
                   <Text style={[styles.healthCardTitle, { color: colors.text }]}>Next Checkup</Text>
                   <Text style={[styles.healthCardValue, { color: colors.text }]}>
-                    {calculateNextCheckup()}
+                    {nextCheckupDate}
                   </Text>
                 </View>
               </View>
@@ -1242,4 +1179,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Home; 
+// Export with React.memo for better performance
+export default React.memo(Home); 

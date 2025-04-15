@@ -316,10 +316,12 @@ const AddFirstPet: React.FC<AddFirstPetScreenProps> = ({ navigation }) => {
           
           <DatePicker
             label="Birth Date (Approximate)"
-            value={formState.birthDate}
+            value={formState.birthDate || new Date()}
             onChange={(value) => handleChange('birthDate', value)}
             placeholder="Select birth date"
             maxDate={new Date()}
+            allowMonthYearSelection={true}
+            mode="date"
           />
           
           <Select

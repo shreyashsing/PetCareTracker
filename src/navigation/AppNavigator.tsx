@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -8,11 +8,20 @@ import AuthStack from './AuthStack';
 import MainStack from './MainStack';
 import { ThemedStatusBar } from './ThemedStatusBar';
 import AddFirstPetScreen from '../pages/AddFirstPet';
+import { initializeDeepLinks } from '../utils/deepLinks';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const AppNavigator = () => {
   const { user, isLoading } = useAuth();
+  const navigationRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (navigationRef.current) {
+      // Initialize deep links handling with the navigation reference
+      initializeDeepLinks(navigationRef.current);
+    }
+  }, [navigationRef.current]);
 
   if (isLoading) {
     return (
@@ -23,12 +32,13 @@ const AppNavigator = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <ThemedStatusBar />
       <Stack.Navigator 
         screenOptions={{ 
           headerShown: false,
-          animation: 'fade',
+          animation: 'slide_from_right',
+          animationTypeForReplace: 'pop'
         }}
       >
         {user ? (

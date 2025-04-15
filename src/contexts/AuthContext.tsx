@@ -1,7 +1,9 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { authService } from '../services/auth/authService';
 import { migratePetsToUser } from '../services/db';
-import * as SecureStore from 'expo-secure-store';
+import { securityService } from '../services/security';
+import { Alert } from 'react-native';
+import { sendConfirmationEmail as sendEmailConfirmation } from '../utils/emailConfirmation';
 
 // Define the User type
 export interface User {
@@ -23,6 +25,7 @@ interface AuthContextType {
   forgotPassword: (email: string) => Promise<void>;
   clearError: () => void;
   completeOnboarding: () => Promise<void>;
+  sendEmailVerification: (email: string) => Promise<boolean>;
 }
 
 // Create the auth context
@@ -39,6 +42,11 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     const checkAuthStatus = async () => {
       try {
         setIsLoading(true);
+        
+        // Make sure security service is initialized
+        if (!securityService.isInitialized()) {
+          await securityService.initialize();
+        }
         
         // Get current user from auth service
         const currentUser = await authService.getCurrentUser();
@@ -103,11 +111,19 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         setIsLoading(false);
         return false;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login failed', error);
-      setError('Login failed. Please try again.');
+      
+      if (error.message && error.message.includes('Email not confirmed')) {
+        setError('Email not confirmed. Please check your email for verification link.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
+      
+      setUser(null);
       setIsLoading(false);
-      return false;
+      // Re-throw the error to be caught by the LoginScreen
+      throw error;
     }
   };
 
@@ -189,13 +205,31 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     setError(null);
     try {
       // Use auth service to request password reset
-      await authService.requestPasswordReset(email);
+      const success = await authService.requestPasswordReset(email);
+      if (success) {
+        Alert.alert(
+          "Password Reset",
+          "If an account exists with this email, you will receive instructions to reset your password.",
+          [{ text: "OK" }]
+        );
+      }
       // Don't provide feedback on whether email exists for security
     } catch (error) {
       console.error('Forgot password failed', error);
       setError('An error occurred. Please try again later.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Add a method for sending email verification
+  const sendEmailVerification = async (email: string): Promise<boolean> => {
+    try {
+      return await sendEmailConfirmation(email);
+    } catch (error) {
+      console.error('Error sending verification email:', error);
+      setError('Failed to send verification email');
+      return false;
     }
   };
 
@@ -210,7 +244,8 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         logout,
         forgotPassword,
         clearError,
-        completeOnboarding
+        completeOnboarding,
+        sendEmailVerification
       }}
     >
       {children}

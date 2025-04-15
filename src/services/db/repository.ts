@@ -1,4 +1,7 @@
 import { AsyncStorageService } from './asyncStorage';
+import { STORAGE_KEYS } from './constants';
+import { validateData, validationSchemas, formatValidationErrors } from '../validation';
+import { Alert } from 'react-native';
 
 /**
  * Base repository class for managing entities in AsyncStorage
@@ -43,7 +46,21 @@ export class BaseRepository<T extends { id: string }> {
   async create(entity: T): Promise<T> {
     try {
       console.log('CREATE DEBUG: Creating entity in', this.storageKey);
-      console.log('CREATE DEBUG: Entity data:', JSON.stringify(entity, null, 2));
+      
+      // Validate the entity data using Zod schema if available
+      if (this.storageKey in validationSchemas) {
+        const schema = validationSchemas[this.storageKey];
+        if (schema) {
+          const validation = validateData(entity, schema);
+          
+          if (!validation.valid && validation.errors) {
+            const errorMessage = formatValidationErrors(validation.errors);
+            console.error(`Validation failed for ${this.storageKey}:`, errorMessage);
+            Alert.alert('Validation Error', errorMessage);
+            throw new Error(`Validation failed: ${errorMessage}`);
+          }
+        }
+      }
       
       const entities = await this.getAll();
       
@@ -61,13 +78,6 @@ export class BaseRepository<T extends { id: string }> {
       const verifyEntities = await this.getAll();
       const savedEntity = verifyEntities.find(e => e.id === entity.id);
       console.log('CREATE DEBUG: Entity saved successfully?', !!savedEntity);
-      if (savedEntity) {
-        // Check if type property exists and shows expected vaccination value
-        if ('type' in entity && entity.type === 'vaccination') {
-          console.log('CREATE DEBUG: This is a vaccination record');
-          console.log('CREATE DEBUG: Saved entity type:', (savedEntity as any).type);
-        }
-      }
       
       return entity;
     } catch (error) {
@@ -92,6 +102,22 @@ export class BaseRepository<T extends { id: string }> {
       }
       
       const updatedEntity = { ...entities[entityIndex], ...update } as T;
+      
+      // Validate the updated entity data using Zod schema if available
+      if (this.storageKey in validationSchemas) {
+        const schema = validationSchemas[this.storageKey];
+        if (schema) {
+          const validation = validateData(updatedEntity, schema);
+          
+          if (!validation.valid && validation.errors) {
+            const errorMessage = formatValidationErrors(validation.errors);
+            console.error(`Validation failed for ${this.storageKey} update:`, errorMessage);
+            Alert.alert('Validation Error', errorMessage);
+            throw new Error(`Validation failed: ${errorMessage}`);
+          }
+        }
+      }
+      
       entities[entityIndex] = updatedEntity;
       
       await AsyncStorageService.setItem(this.storageKey, entities);
@@ -181,6 +207,23 @@ export class BaseRepository<T extends { id: string }> {
       
       if (duplicates.length > 0) {
         throw new Error(`Some ${this.storageKey} already exist: ${duplicates.map(e => e.id).join(', ')}`);
+      }
+      
+      // Validate all entities
+      if (this.storageKey in validationSchemas) {
+        const schema = validationSchemas[this.storageKey];
+        if (schema) {
+          // Validate each entity
+          for (const entity of entities) {
+            const validation = validateData(entity, schema);
+            if (!validation.valid && validation.errors) {
+              const errorMessage = formatValidationErrors(validation.errors);
+              console.error(`Validation failed for ${this.storageKey} in createMany:`, errorMessage);
+              Alert.alert('Validation Error', errorMessage);
+              throw new Error(`Validation failed: ${errorMessage}`);
+            }
+          }
+        }
       }
       
       const updatedEntities = [...existingEntities, ...entities];

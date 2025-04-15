@@ -756,7 +756,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   };
 
   // Empty state component
-  const EmptyState = () => (
+  const EmptyState = React.memo(() => (
     <View style={[styles.emptyStateContainer, {backgroundColor: colors.card}]}>
       <Ionicons
         name="restaurant-outline"
@@ -779,10 +779,10 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         <Text style={styles.buttonText}>Add First Meal</Text>
       </TouchableOpacity>
     </View>
-  );
+  ));
 
   // Meal card component
-  const MealCard = ({ meal }: { meal: SimpleMeal }) => (
+  const MealCard = React.memo(({ meal }: { meal: SimpleMeal }) => (
     <TouchableOpacity 
       style={[styles.mealCard, {backgroundColor: colors.card}]}
       onPress={() => navigation.navigate({
@@ -833,10 +833,10 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         />
       </TouchableOpacity>
     </TouchableOpacity>
-  );
+  ));
 
   // Recent meal row component
-  const RecentMealRow = ({ meal }: { meal: SimpleMeal }) => (
+  const RecentMealRow = React.memo(({ meal }: { meal: SimpleMeal }) => (
     <TouchableOpacity 
       style={[styles.recentMealRow, {backgroundColor: colors.card}]}
       onPress={() => navigation.navigate({
@@ -868,7 +868,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         </View>
       )}
     </TouchableOpacity>
-  );
+  ));
 
   // Update tab selection and load appropriate data
   const handleTabChange = useCallback((tab: TabType) => {
@@ -2102,4 +2102,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Feeding; 
+export default React.memo(Feeding); 

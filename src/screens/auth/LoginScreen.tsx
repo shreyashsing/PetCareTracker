@@ -21,11 +21,12 @@ import { Ionicons } from '@expo/vector-icons';
 type LoginScreenProps = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
-  const { login, isLoading, error, clearError } = useAuth();
+  const { login, isLoading, error, clearError, sendEmailVerification } = useAuth();
   const { colors } = useAppColors();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string; auth?: string }>({});
+  const [loginInProgress, setLoginInProgress] = useState(false);
   
   // Clear previous auth errors when unmounting
   useEffect(() => {
@@ -72,20 +73,45 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   };
   
   const handleLogin = async () => {
-    // Clear any previous auth errors
-    clearError();
-    
     if (validateForm()) {
       try {
+        setLoginInProgress(true);
         const success = await login(email, password);
+        setLoginInProgress(false);
         
         if (!success) {
-          // Focus on the email field if login fails
-          // This is handled by the auth error effect now
+          Alert.alert('Login Failed', 'Invalid email or password.');
         }
-        // If successful, the app will navigate to main screen via AppNavigator
-      } catch (error) {
+      } catch (error: any) {
+        setLoginInProgress(false);
         console.error('Login error:', error);
+        
+        if (error.message?.includes('Email not confirmed')) {
+          Alert.alert(
+            'Email Not Verified',
+            'Your email has not been verified. Would you like to resend the verification email?',
+            [
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+              {
+                text: 'Resend',
+                onPress: async () => {
+                  const sent = await sendEmailVerification(email);
+                  if (sent) {
+                    Alert.alert(
+                      'Verification Email Sent',
+                      'Please check your email inbox and follow the link to verify your account.'
+                    );
+                  }
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Login Failed', `An error occurred: ${error.message || 'Unknown error'}`);
+        }
       }
     }
   };
@@ -159,9 +185,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           </View>
           
           <Button
-            title={isLoading ? "Signing in..." : "Sign In"}
+            title={loginInProgress ? "Signing in..." : "Sign In"}
             onPress={handleLogin}
-            disabled={isLoading}
+            disabled={loginInProgress}
             style={styles.loginButton}
           />
           

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -68,16 +68,17 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   
-  const foodCategoryOptions = [
+  // Use useMemo for static arrays to prevent recreating them on each render
+  const foodCategoryOptions = useMemo(() => [
     { label: 'Dry Food', value: 'dry' },
     { label: 'Wet Food', value: 'wet' },
     { label: 'Treats', value: 'treats' },
     { label: 'Supplements', value: 'supplements' },
     { label: 'Prescription Food', value: 'prescription' },
     { label: 'Other', value: 'other' },
-  ];
+  ], []);
   
-  const unitOptions = [
+  const unitOptions = useMemo(() => [
     { label: 'kg', value: 'kg' },
     { label: 'g', value: 'g' },
     { label: 'lb', value: 'lb' },
@@ -85,7 +86,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     { label: 'cups', value: 'cups' },
     { label: 'packages', value: 'packages' },
     { label: 'cans', value: 'cans' },
-  ];
+  ], []);
   
   // Load existing food item if in edit mode
   useEffect(() => {
@@ -124,7 +125,8 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     loadFoodItem();
   }, [route.params?.itemId]);
   
-  const handleChange = (name: keyof FormState, value: string | Date | boolean) => {
+  // Use useCallback for event handlers to prevent recreating them on each render
+  const handleChange = useCallback((name: keyof FormState, value: string | Date | boolean) => {
     setFormState(prev => ({
       ...prev,
       [name]: value,
@@ -134,9 +136,9 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       ...prev,
       [name]: true,
     }));
-  };
+  }, []);
   
-  const handleDateChange = (name: 'purchaseDate' | 'expiryDate', date: Date | undefined) => {
+  const handleDateChange = useCallback((name: 'purchaseDate' | 'expiryDate', date: Date | undefined) => {
     setFormState(prev => ({
       ...prev,
       [name]: date,
@@ -146,9 +148,9 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       ...prev,
       [name]: true,
     }));
-  };
+  }, []);
   
-  const validate = (): boolean => {
+  const validate = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
     
     if (!formState.name.trim()) {
@@ -185,9 +187,9 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     setTouched(newTouched);
     
     return Object.keys(newErrors).length === 0;
-  };
+  }, [formState]);
   
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!validate()) return;
     
     setIsLoading(true);
@@ -266,9 +268,9 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [activePetId, formState, isEditMode, itemId, navigation, validate]);
   
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     if (!itemId) return;
     
     setIsLoading(true);
@@ -280,7 +282,15 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [itemId, navigation]);
+  
+  const handleCancel = useCallback(() => {
+    navigation.goBack();
+  }, [navigation]);
+  
+  // Memoize header text based on edit mode
+  const headerTitle = useMemo(() => isEditMode ? 'Edit Food Item' : 'Add Food Item', [isEditMode]);
+  const buttonText = useMemo(() => isEditMode ? 'Update' : 'Save', [isEditMode]);
   
   if (!activePetId) {
     return (
@@ -299,7 +309,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         end={{ x: 1, y: 1 }}
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>{isEditMode ? 'Edit Food Item' : 'Add Food Item'}</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{headerTitle}</Text>
           <Text style={[styles.subtitle, { color: colors.text + '80' }]}>Keep track of your pet's food inventory</Text>
         </View>
       </LinearGradient>
@@ -403,21 +413,21 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
                 value={formState.purchaseDate}
                 onChange={(date) => handleDateChange('purchaseDate', date || new Date())}
                 error={errors.purchaseDate}
-                touched={touched.purchaseDate}
                 containerStyle={styles.inputContainer}
+                allowMonthYearSelection={true}
               />
             </View>
             
             <View style={[styles.formRowItem, { flex: 1 }]}>
               <DatePicker
                 label="Expiry Date"
-                value={formState.expiryDate}
+                value={formState.expiryDate || new Date()}
                 onChange={(date) => handleDateChange('expiryDate', date)}
                 placeholder="Select expiry date"
                 error={errors.expiryDate}
-                touched={touched.expiryDate}
-                minDate={formState.purchaseDate}
                 containerStyle={styles.inputContainer}
+                allowMonthYearSelection={true}
+                minDate={formState.purchaseDate}
               />
             </View>
           </FormRow>
@@ -445,7 +455,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         <View style={styles.buttonContainer}>
           <TouchableOpacity 
             style={[styles.button, styles.cancelButton, { borderColor: colors.border }]}
-            onPress={() => navigation.goBack()}
+            onPress={handleCancel}
           >
             <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
           </TouchableOpacity>
@@ -460,7 +470,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
                 <Ionicons name="sync" size={20} color="white" style={styles.spinner} />
               </View>
             ) : (
-              <Text style={styles.buttonText}>{isEditMode ? 'Update' : 'Save'}</Text>
+              <Text style={styles.buttonText}>{buttonText}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -468,6 +478,9 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     </View>
   );
 };
+
+// Export as a memoized component to prevent unnecessary re-renders
+export default React.memo(AddFoodItem);
 
 const styles = StyleSheet.create({
   container: {
@@ -574,6 +587,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
   },
-});
-
-export default AddFoodItem; 
+}); 

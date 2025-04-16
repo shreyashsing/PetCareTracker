@@ -4,13 +4,13 @@ import { AuthStackParamList } from '../types/navigation';
 import type { ComponentType } from 'react';
 
 // Import auth screens
-import LoginScreen from '../screens/auth/LoginScreen';
-import RegisterScreen from '../screens/auth/RegisterScreen';
-import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
-import ResetPasswordScreen from '../screens/auth/ResetPassword';
+import LoginScreen from '../pages/auth/LoginScreen';
+import RegisterScreen from '../pages/auth/RegisterScreen';
+import ForgotPasswordScreen from '../pages/auth/ForgotPasswordScreen';
+import ResetPasswordScreen from '../pages/auth/ResetPassword';
 // Import onboarding screens
-import { Onboarding } from '../screens/onboarding/Onboarding';
-import { OnboardingFeatures } from '../screens/onboarding/OnboardingFeatures';
+import { Onboarding } from '../pages/onboarding/Onboarding';
+import { OnboardingFeatures } from '../pages/onboarding/OnboardingFeatures';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 

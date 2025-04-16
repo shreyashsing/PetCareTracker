@@ -5,9 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 // Import screens
-import HomeScreen from '../screens/HomeScreen';
-import PetProfileScreen from '../screens/PetProfileScreen';
-import SettingsScreen from '../screens/SettingsScreen';
+import HomeScreen from '../pages/Home';
+import PetProfileScreen from '../pages/PetProfile';
+import SettingsScreen from '../pages/Settings';
 
 // Define the tab navigator param list
 type HomeTabParamList = {

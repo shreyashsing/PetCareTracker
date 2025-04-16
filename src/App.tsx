@@ -6,6 +6,10 @@ import { useColorScheme, View, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { databaseManager } from './services/db';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+// Import App initialization
+import { appInitialized } from './App.init';
+// Import error boundary for wrapping the app
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Screens
 import Home from './pages/Home';
@@ -51,28 +55,33 @@ export default function App() {
     };
     
     initializeDatabase();
+    
+    // Log initialization status
+    console.log('App component mounted, app initialized:', appInitialized);
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-        <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Home" component={Home} />
-          <Stack.Screen name="Feeding" component={Feeding} />
-          <Stack.Screen name="Schedule" component={Schedule} />
-          <Stack.Screen name="Health" component={Health} />
-          <Stack.Screen name="Exercise" component={Exercise} />
-          <Stack.Screen name="Settings" component={Settings} />
-          <Stack.Screen name="AddPet" component={AddPet} />
-          <Stack.Screen name="AddMeal" component={AddMeal} />
-          <Stack.Screen name="AddTask" component={AddTask} />
-          <Stack.Screen name="AddFoodItem" component={AddFoodItem} />
-          <Stack.Screen name="AddMedication" component={AddMedication} />
-          <Stack.Screen name="AddHealthRecord" component={AddHealthRecord} />
-          <Stack.Screen name="FullAnalytics" component={FullAnalytics} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <NavigationContainer>
+          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Home" component={Home} />
+            <Stack.Screen name="Feeding" component={Feeding} />
+            <Stack.Screen name="Schedule" component={Schedule} />
+            <Stack.Screen name="Health" component={Health} />
+            <Stack.Screen name="Exercise" component={Exercise} />
+            <Stack.Screen name="Settings" component={Settings} />
+            <Stack.Screen name="AddPet" component={AddPet} />
+            <Stack.Screen name="AddMeal" component={AddMeal} />
+            <Stack.Screen name="AddTask" component={AddTask} />
+            <Stack.Screen name="AddFoodItem" component={AddFoodItem} />
+            <Stack.Screen name="AddMedication" component={AddMedication} />
+            <Stack.Screen name="AddHealthRecord" component={AddHealthRecord} />
+            <Stack.Screen name="FullAnalytics" component={FullAnalytics} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 } 

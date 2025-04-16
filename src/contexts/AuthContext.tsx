@@ -12,6 +12,11 @@ export interface User {
   displayName?: string;
   name?: string;
   isNewUser?: boolean; // Flag to track if user needs to add their first pet
+  preferences?: {
+    emailNotifications?: boolean;
+    pushNotifications?: boolean;
+    theme?: 'light' | 'dark' | 'system';
+  };
 }
 
 // Define the auth context type

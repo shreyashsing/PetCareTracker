@@ -1,6 +1,7 @@
 import { FoodItem } from '../../types/components';
 import { STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
+import { notificationService } from '../notifications';
 
 /**
  * Repository for managing FoodItem entities
@@ -120,13 +121,24 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
       daysRemaining,
       reorderAlert: daysRemaining <= foodItem.inventory.lowStockThreshold
     };
+
+    // Check if we're crossing below the low stock threshold
+    const isLowStock = daysRemaining <= foodItem.inventory.lowStockThreshold;
+    const wasLowStock = foodItem.inventory.currentAmount <= foodItem.inventory.lowStockThreshold;
     
     // Update the food item
-    return this.update(id, {
+    const updatedFoodItem = await this.update(id, {
       ...foodItem,
       inventory: updatedInventory,
-      lowStock: daysRemaining <= foodItem.inventory.lowStockThreshold
+      lowStock: isLowStock
     });
+    
+    // If the item is now low on stock but wasn't before, schedule an inventory alert
+    if (isLowStock && !wasLowStock && updatedFoodItem) {
+      await notificationService.scheduleInventoryAlert(updatedFoodItem);
+    }
+    
+    return updatedFoodItem;
   }
 
   /**

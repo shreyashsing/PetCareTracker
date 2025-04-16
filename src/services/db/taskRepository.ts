@@ -15,6 +15,27 @@ export class TaskRepository extends BaseRepository<Task> {
   }
 
   /**
+   * Ensure scheduleInfo dates are proper Date objects
+   * @param task The task to process
+   * @returns Task with ensured Date objects
+   */
+  private ensureDates(task: Task): Task {
+    if (task.scheduleInfo) {
+      // Convert scheduleInfo.date to a Date object if it's not already
+      if (!(task.scheduleInfo.date instanceof Date)) {
+        task.scheduleInfo.date = new Date(task.scheduleInfo.date);
+      }
+      
+      // Convert scheduleInfo.time to a Date object if it's not already
+      if (!(task.scheduleInfo.time instanceof Date)) {
+        task.scheduleInfo.time = new Date(task.scheduleInfo.time);
+      }
+    }
+    
+    return task;
+  }
+
+  /**
    * Get all tasks for a specific pet
    * @param petId Pet ID
    * @returns Array of tasks for the pet
@@ -142,16 +163,32 @@ export class TaskRepository extends BaseRepository<Task> {
    * @returns Updated task if found, null otherwise
    */
   async markAsCompleted(id: string, completedBy: string, notes?: string): Promise<Task | null> {
-    const completionDetails = {
-      completedAt: new Date(),
-      completedBy,
-      notes
-    };
-    
-    return this.update(id, {
-      status: 'completed',
-      completionDetails
-    });
+    try {
+      // Get the existing task first
+      const existingTask = await this.getById(id);
+      if (!existingTask) {
+        return null;
+      }
+      
+      // Ensure dates are proper Date objects
+      const taskWithDates = this.ensureDates(existingTask);
+      
+      const completionDetails = {
+        completedAt: new Date(),
+        completedBy,
+        notes
+      };
+      
+      // Call the parent class update method
+      return super.update(id, {
+        ...taskWithDates,
+        status: 'completed',
+        completionDetails
+      });
+    } catch (error) {
+      console.error('Error marking task as completed:', error);
+      throw error;
+    }
   }
 
   /**
@@ -181,12 +218,55 @@ export class TaskRepository extends BaseRepository<Task> {
   }
 
   /**
+   * Update a task
+   * @param id Task ID
+   * @param update Updates to apply
+   * @returns Updated task if found, null otherwise
+   */
+  async update(id: string, update: Partial<Task>): Promise<Task | null> {
+    try {
+      // Get the existing task first
+      const existingTask = await this.getById(id);
+      if (!existingTask) {
+        return null;
+      }
+      
+      // Merge the existing task with the update
+      const mergedTask = { ...existingTask, ...update };
+      
+      // Ensure dates are proper Date objects
+      const taskWithDates = this.ensureDates(mergedTask);
+      
+      // Call the parent class update method
+      return super.update(id, taskWithDates);
+    } catch (error) {
+      console.error('Error updating task:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Update task status
    * @param id Task ID
    * @param status New task status
    * @returns Updated task if found, null otherwise
    */
   async updateStatus(id: string, status: Task['status']): Promise<Task | null> {
-    return this.update(id, { status });
+    try {
+      // Get the existing task first
+      const existingTask = await this.getById(id);
+      if (!existingTask) {
+        return null;
+      }
+      
+      // Ensure dates are proper Date objects
+      const taskWithDates = this.ensureDates(existingTask);
+      
+      // Update the status
+      return super.update(id, { ...taskWithDates, status });
+    } catch (error) {
+      console.error('Error updating task status:', error);
+      throw error;
+    }
   }
 } 

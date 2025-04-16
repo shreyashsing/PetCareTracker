@@ -17,6 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { FoodItem } from '../types/components';
 import { databaseManager } from '../services/db';
+import { notificationService } from '../services/notifications';
 
 // Helper function to generate a UUID
 const generateUUID = (): string => {
@@ -202,6 +203,12 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       // Calculate days remaining
       const daysRemaining = totalQuantity / dailyQuantity;
       
+      // Calculate low stock threshold
+      const lowStockThreshold = Math.max(7, Math.floor(daysRemaining * 0.2)); // 20% of total days or 7 days, whichever is higher
+      
+      // Check if item will be low stock at creation time
+      const isLowStock = Math.floor(daysRemaining) <= lowStockThreshold;
+      
       // Build the food item object
       const foodItemData: Omit<FoodItem, 'id'> = {
         petId: activePetId as string,
@@ -223,8 +230,8 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
           dailyFeedingAmount: dailyQuantity,
           dailyFeedingUnit: formState.dailyFeedingUnit as 'g' | 'kg' | 'lb' | 'oz' | 'cups' | 'packages' | 'cans',
           daysRemaining: Math.floor(daysRemaining),
-          lowStockThreshold: Math.max(7, Math.floor(daysRemaining * 0.2)), // 20% of total days or 7 days, whichever is higher
-          reorderAlert: false
+          lowStockThreshold: lowStockThreshold,
+          reorderAlert: isLowStock
         },
         purchaseDetails: {
           date: formState.purchaseDate,
@@ -243,32 +250,44 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         specialNotes: formState.notes,
         // UI-specific properties
         amount: `${totalQuantity} ${formState.unit}`,
-        lowStock: false,
+        lowStock: isLowStock,
         nextPurchase: 'Not scheduled'
       };
       
+      // Use appropriate method based on whether we're creating or updating
+      let savedFoodItem: FoodItem;
+      
       if (isEditMode && itemId) {
         // Update existing food item
-        await databaseManager.foodItems.update(itemId, foodItemData);
+        const updated = await databaseManager.foodItems.update(itemId, foodItemData);
+        if (!updated) {
+          throw new Error('Failed to update food item');
+        }
+        savedFoodItem = updated;
       } else {
         // Create new food item
         const newFoodItem: FoodItem = {
           id: generateUUID(),
           ...foodItemData
         };
-        await databaseManager.foodItems.create(newFoodItem);
+        savedFoodItem = await databaseManager.foodItems.create(newFoodItem);
       }
       
-      // Navigate back
-      navigation.goBack();
+      // Check if item needs a low stock alert
+      if (isLowStock) {
+        await notificationService.scheduleInventoryAlert(savedFoodItem);
+      }
+      
+      // Navigate back to the Feeding screen with refresh parameter
+      navigation.navigate('Feeding', { refresh: true });
+      
     } catch (error) {
       console.error('Error saving food item:', error);
-      // Show error to user
-      Alert.alert('Error', 'Failed to save food item. Please try again.');
+      Alert.alert('Error', 'Failed to save food item');
     } finally {
       setIsLoading(false);
     }
-  }, [activePetId, formState, isEditMode, itemId, navigation, validate]);
+  }, [formState, navigation, validate, activePetId, isEditMode, itemId]);
   
   const handleDelete = useCallback(async () => {
     if (!itemId) return;

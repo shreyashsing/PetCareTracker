@@ -24,6 +24,7 @@ import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
+import { notificationService } from '../services/notifications';
 
 // Simple button components
 const BackButton = ({ color }: { color: string }) => (
@@ -69,6 +70,8 @@ const Settings = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [reminderTimes, setReminderTimes] = useState<string>('15'); // Default 15 minutes
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const { colors, isDark } = useAppColors();
   const { user, logout } = useAuth();
   const [profileImage, setProfileImage] = useState<string | null>(null);
@@ -79,6 +82,12 @@ const Settings = () => {
   // Load pets on component mount
   useEffect(() => {
     loadPets();
+  }, []);
+  
+  // Load user preferences and notification permissions on component mount
+  useEffect(() => {
+    loadUserPreferences();
+    checkNotificationPermissions();
   }, []);
   
   const loadPets = async () => {
@@ -93,6 +102,74 @@ const Settings = () => {
       setPets(userPets);
     } catch (error) {
       console.error('Error loading pets:', error);
+    }
+  };
+
+  // Load user preferences from database
+  const loadUserPreferences = async () => {
+    try {
+      if (user && user.preferences) {
+        setNotificationsEnabled(user.preferences.pushNotifications || false);
+      }
+    } catch (error) {
+      console.error('Error loading user preferences:', error);
+    }
+  };
+  
+  // Check notification permissions using the notification service
+  const checkNotificationPermissions = async () => {
+    const hasPermission = await notificationService.hasPermission();
+    if (!hasPermission) {
+      setNotificationsEnabled(false);
+    }
+  };
+  
+  // Toggle notifications and request permission if needed
+  const toggleNotifications = async (value: boolean) => {
+    try {
+      if (value) {
+        // If enabling notifications, make sure we have permission
+        const hasPermission = await notificationService.hasPermission();
+        
+        if (!hasPermission) {
+          // Request permission
+          const granted = await notificationService.requestPermission();
+          
+          if (!granted) {
+            Alert.alert(
+              'Permission Required',
+              'Notification permission is required to receive reminders for your pet care tasks.',
+              [{ text: 'OK' }]
+            );
+            return;
+          }
+        }
+        
+        // If we get here, permission was granted
+        // Schedule notifications for all pending tasks
+        await notificationService.rescheduleAllNotifications();
+      } else {
+        // If disabling notifications, cancel all scheduled notifications
+        await notificationService.cancelTaskNotifications('all');
+      }
+      
+      // Update user preferences in database
+      if (user) {
+        // Update local state
+        setNotificationsEnabled(value);
+        
+        // Update user preferences in database
+        const updatedUser = { ...user } as any;
+        if (!updatedUser.preferences) {
+          updatedUser.preferences = {};
+        }
+        updatedUser.preferences.pushNotifications = value;
+        
+        await databaseManager.users.update(user.id, updatedUser);
+      }
+    } catch (error) {
+      console.error('Error toggling notifications:', error);
+      Alert.alert('Error', 'Failed to update notification settings');
     }
   };
 
@@ -422,22 +499,74 @@ const Settings = () => {
           <View style={styles.optionIconContainer}>
             <IconWrapper name="notifications-outline" color={colors.text} />
           </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Update notifications</Text>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Enable notifications</Text>
           <Switch
             value={notificationsEnabled}
-            onValueChange={setNotificationsEnabled}
+            onValueChange={toggleNotifications}
             trackColor={{ false: colors.disabled, true: colors.primary }}
             thumbColor="#fff"
           />
         </View>
 
-        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="time-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Set Habit Time</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
+        {notificationsEnabled && (
+          <>
+            <View style={[styles.optionItem, dynamicStyles.optionItem]}>
+              <View style={styles.optionIconContainer}>
+                <IconWrapper name="volume-high-outline" color={colors.text} />
+              </View>
+              <Text style={[styles.optionText, dynamicStyles.optionText]}>Enable sounds</Text>
+              <Switch
+                value={soundEnabled}
+                onValueChange={setSoundEnabled}
+                trackColor={{ false: colors.disabled, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            </View>
+            
+            <TouchableOpacity 
+              style={[styles.optionItem, dynamicStyles.optionItem]}
+              onPress={() => {
+                Alert.alert(
+                  'Default Reminder Time',
+                  'How many minutes before a task should we remind you?',
+                  [
+                    {
+                      text: '5 minutes',
+                      onPress: () => setReminderTimes('5')
+                    },
+                    {
+                      text: '15 minutes',
+                      onPress: () => setReminderTimes('15')
+                    },
+                    {
+                      text: '30 minutes',
+                      onPress: () => setReminderTimes('30')
+                    },
+                    {
+                      text: '1 hour',
+                      onPress: () => setReminderTimes('60')
+                    },
+                    {
+                      text: 'Cancel',
+                      style: 'cancel'
+                    }
+                  ]
+                );
+              }}
+            >
+              <View style={styles.optionIconContainer}>
+                <IconWrapper name="time-outline" color={colors.text} />
+              </View>
+              <Text style={[styles.optionText, dynamicStyles.optionText]}>Default reminder time</Text>
+              <View style={styles.valueContainer}>
+                <Text style={[styles.valueText, { color: colors.primary }]}>
+                  {reminderTimes === '60' ? '1 hour before' : `${reminderTimes} min before`}
+                </Text>
+                <ForwardArrow color={colors.text + '80'} />
+              </View>
+            </TouchableOpacity>
+          </>
+        )}
 
         {/* Pet Management Section */}
         <View style={styles.sectionHeader}>
@@ -755,6 +884,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,
+  },
+  valueContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  valueText: {
+    fontSize: 14,
+    marginRight: 8,
   },
 });
 

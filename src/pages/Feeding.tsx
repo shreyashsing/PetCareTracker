@@ -11,7 +11,8 @@ import {
   Image,
   Dimensions,
   TextInput,
-  Switch
+  Switch,
+  Alert
 } from 'react-native';
 import { useActivePet } from '../hooks/useActivePet';
 import { format } from 'date-fns';
@@ -25,6 +26,8 @@ import { Meal, FoodItem, Pet } from '../types/components';
 import { databaseManager } from '../services/db';
 import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
+import { notificationService } from '../services/notifications';
+import { useToast } from '../hooks/use-toast';
 
 type FeedingScreenProps = NativeStackScreenProps<RootStackParamList, 'Feeding'>;
 
@@ -65,6 +68,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     completedMealsCount: 0,
     completionRate: 0
   });
+  const { toast } = useToast();
 
   // Show mock meal while waiting
   const addMockMeal = useCallback(() => {
@@ -225,19 +229,86 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       
       if (isCompleted) {
         await databaseManager.meals.markAsCompleted(mealId);
+        
+        // If marking as completed, reschedule or cancel notifications as needed
+        const meal = await databaseManager.meals.getById(mealId);
+        if (meal) {
+          // If the meal is completed, we may want to cancel its notifications
+          // since they're no longer needed
+          await notificationService.cancelMealNotifications(mealId);
+        }
       } else {
         const meal = await databaseManager.meals.getById(mealId);
         if (meal) {
           await databaseManager.meals.update(mealId, { ...meal, completed: false });
+          
+          // If un-completing a meal scheduled for the future, we might want to
+          // schedule notifications again
+          const mealTime = new Date(meal.time);
+          if (mealTime > new Date()) {
+            try {
+              await notificationService.scheduleMealNotifications(meal);
+            } catch (notifError) {
+              console.error('Error re-scheduling meal notifications:', notifError);
+            }
+          }
         }
       }
       
-      // Refresh meals
-      loadMeals();
+      // Refresh meal data
+      await loadMeals();
+      
     } catch (error) {
       console.error('Error toggling meal completion:', error);
     }
   }, [loadMeals]);
+
+  // Delete a meal
+  const handleDeleteMeal = useCallback(async (mealId: string) => {
+    try {
+      if (mealId === 'mock-meal') return; // Don't process mock meal
+      
+      // Show confirmation dialog
+      Alert.alert(
+        'Delete Meal',
+        'Are you sure you want to delete this meal?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                // Cancel notifications for this meal first
+                await notificationService.cancelMealNotifications(mealId);
+                
+                // Delete the meal from database
+                await databaseManager.meals.delete(mealId);
+                
+                // Show success toast
+                toast({
+                  title: 'Meal deleted',
+                  description: 'The meal has been removed from the schedule'
+                });
+                
+                // Refresh meal data
+                await loadMeals();
+              } catch (error) {
+                console.error('Error deleting meal:', error);
+                toast({
+                  title: 'Error',
+                  description: 'Failed to delete the meal',
+                  variant: 'destructive'
+                });
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error in handleDeleteMeal:', error);
+    }
+  }, [loadMeals, toast]);
 
   // Reload meals data when screen comes into focus or refresh param changes
   useFocusEffect(
@@ -783,56 +854,76 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
 
   // Meal card component
   const MealCard = React.memo(({ meal }: { meal: SimpleMeal }) => (
-    <TouchableOpacity 
-      style={[styles.mealCard, {backgroundColor: colors.card}]}
-      onPress={() => navigation.navigate({
-        name: 'AddMeal',
-        params: { 
-          petId: activePetId || undefined,
-          mealId: meal.id !== 'mock-meal' ? meal.id : undefined 
-        }
-      })}
-    >
+    <View style={[styles.mealCard, {backgroundColor: colors.card}]}>
       <View style={[styles.mealStatusIndicator, { 
         backgroundColor: meal.completed ? colors.success : colors.warning 
       }]} />
       
-      <View style={styles.mealTimeColumn}>
-        <Text style={[styles.mealTime, {color: colors.text}]}>{meal.time}</Text>
-        <View style={[styles.mealTypeTag, {backgroundColor: colors.primary + '20'}]}>
-          <Text style={[styles.mealTypeText, {color: colors.primary}]}>{meal.title}</Text>
+      <TouchableOpacity 
+        style={styles.mealCardContent}
+        onPress={() => navigation.navigate({
+          name: 'AddMeal',
+          params: { 
+            petId: activePetId || undefined,
+            mealId: meal.id !== 'mock-meal' ? meal.id : undefined 
+          }
+        })}
+      >
+        <View style={styles.mealTimeColumn}>
+          <Text style={[styles.mealTime, {color: colors.text}]}>{meal.time}</Text>
+          <View style={[styles.mealTypeTag, {backgroundColor: colors.primary + '20'}]}>
+            <Text style={[styles.mealTypeText, {color: colors.primary}]}>{meal.title}</Text>
+          </View>
         </View>
-      </View>
-      
-      <View style={styles.mealDetailsColumn}>
-        <Text style={[styles.mealAmount, {color: colors.text}]}>{meal.amount}</Text>
-        <Text style={[styles.mealCalories, {color: colors.text + '80'}]}>
-          {meal.calories} calories
-        </Text>
-        {meal.notes && (
-          <Text 
-            style={[styles.mealNotes, {color: colors.text + '60'}]} 
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {meal.notes}
+        
+        <View style={styles.mealDetailsColumn}>
+          <Text style={[styles.mealAmount, {color: colors.text}]}>{meal.amount}</Text>
+          <Text style={[styles.mealCalories, {color: colors.text + '80'}]}>
+            {meal.calories} calories
           </Text>
+          {meal.notes && (
+            <Text 
+              style={[styles.mealNotes, {color: colors.text + '60'}]} 
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {meal.notes}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+      
+      <View style={styles.mealActions}>
+        <TouchableOpacity
+          style={[styles.mealActionButton, {
+            backgroundColor: meal.completed ? colors.success + '20' : colors.warning + '20'
+          }]}
+          onPress={() => toggleMealCompletion(meal.id, !meal.completed)}
+        >
+          <Ionicons 
+            name={meal.completed ? "checkmark-circle" : "restaurant-outline"} 
+            size={22} 
+            color={meal.completed ? colors.success : colors.warning} 
+          />
+        </TouchableOpacity>
+        
+        {meal.id !== 'mock-meal' && (
+          <TouchableOpacity
+            style={[styles.mealActionButton, {
+              backgroundColor: colors.error + '15',
+              marginTop: 8
+            }]}
+            onPress={() => handleDeleteMeal(meal.id)}
+          >
+            <Ionicons 
+              name="trash-outline" 
+              size={22} 
+              color={colors.error || '#ff3b30'} 
+            />
+          </TouchableOpacity>
         )}
       </View>
-      
-      <TouchableOpacity
-        style={[styles.mealStatusButton, {
-          backgroundColor: meal.completed ? colors.success + '20' : colors.warning + '20'
-        }]}
-        onPress={() => toggleMealCompletion(meal.id, !meal.completed)}
-      >
-        <Ionicons 
-          name={meal.completed ? "checkmark-circle" : "restaurant-outline"} 
-          size={24} 
-          color={meal.completed ? colors.success : colors.warning} 
-        />
-      </TouchableOpacity>
-    </TouchableOpacity>
+    </View>
   ));
 
   // Recent meal row component
@@ -899,6 +990,82 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       }
     }, [loadMeals, loadHistoryData, loadInventoryData, activeTab, route.params?.refresh])
   );
+
+  // Function to check inventory and trigger alerts for low stock
+  const checkInventoryAlerts = useCallback(async () => {
+    try {
+      if (!activePetId) return;
+      
+      // Get low stock items
+      const lowStockItems = await databaseManager.foodItems.getLowStock(activePetId);
+      
+      if (lowStockItems.length === 0) {
+        // Show toast that no items are low in stock
+        toast({
+          title: 'No low stock items',
+          description: 'All food items have adequate inventory levels'
+        });
+        return;
+      }
+      
+      // Schedule alerts for each low stock item
+      for (const item of lowStockItems) {
+        await notificationService.scheduleInventoryAlert(item);
+      }
+      
+      // Show toast with count of low stock items
+      toast({
+        title: `${lowStockItems.length} items low in stock`,
+        description: 'Alerts have been scheduled for these items'
+      });
+    } catch (error) {
+      console.error('Error checking inventory alerts:', error);
+      toast({
+        title: 'Error checking inventory',
+        description: 'Failed to check inventory and schedule alerts',
+        variant: 'destructive'
+      });
+    }
+  }, [activePetId, toast]);
+
+  // Add function to handle food item deletion
+  const handleDeleteFoodItem = useCallback(async (itemId: string) => {
+    try {
+      // Show confirmation alert
+      Alert.alert(
+        "Delete Food Item",
+        "Are you sure you want to delete this food item? This action cannot be undone.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Delete", 
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await databaseManager.foodItems.delete(itemId);
+                // Refresh the inventory list
+                loadInventoryData();
+                // Show success toast
+                toast({
+                  title: "Food item deleted",
+                  description: "The food item has been removed from inventory"
+                });
+              } catch (error) {
+                console.error('Error deleting food item:', error);
+                toast({
+                  title: "Error",
+                  description: "Failed to delete food item",
+                  variant: "destructive"
+                });
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error in handleDeleteFoodItem:', error);
+    }
+  }, [loadInventoryData, toast]);
 
   // Return UI
   if (!activePetId) {
@@ -1336,16 +1503,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                 <Text style={[styles.inventoryTitle, {color: colors.text}]}>
                   Food Inventory
                 </Text>
-                <TouchableOpacity
-                  style={[styles.addInventoryButton, {backgroundColor: colors.primary}]}
-                  onPress={() => navigation.navigate({
-                    name: 'AddFoodItem',
-                    params: { petId: activePetId || undefined }
-                  })}
-                >
-                  <Ionicons name="add" size={16} color="white" />
-                  <Text style={styles.addInventoryText}>Add Item</Text>
-                </TouchableOpacity>
+                <View style={styles.tabActions}>
+                  <TouchableOpacity 
+                    style={[styles.iconButton, {backgroundColor: colors.card}]}
+                    onPress={() => navigation.navigate('AddFoodItem', { petId: activePetId })}
+                  >
+                    <Ionicons name="add" size={22} color={colors.primary} />
+                  </TouchableOpacity>
+                </View>
               </View>
               
               {/* Search Bar */}
@@ -1363,18 +1528,17 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
               {/* Inventory Items */}
               {foodInventory.length > 0 ? (
                 foodInventory.map((item) => (
-                  <TouchableOpacity 
-                    key={item.id}
-                    style={[styles.inventoryItem, {backgroundColor: colors.card}]}
-                    onPress={() => navigation.navigate({
-                      name: 'AddFoodItem',
-                      params: { 
-                        petId: activePetId || undefined,
-                        itemId: item.id 
-                      }
-                    })}
-                  >
-                    <View style={styles.inventoryItemMainContent}>
+                  <View key={item.id} style={[styles.inventoryItem, {backgroundColor: colors.card}]}>
+                    <TouchableOpacity 
+                      style={styles.inventoryItemMainContent}
+                      onPress={() => navigation.navigate({
+                        name: 'AddFoodItem',
+                        params: { 
+                          petId: activePetId || undefined,
+                          itemId: item.id 
+                        }
+                      })}
+                    >
                       <View style={styles.inventoryItemHeader}>
                         <Text style={[styles.inventoryItemName, {color: colors.text}]}>{item.name}</Text>
                         <Text style={[styles.inventoryItemBrand, {color: colors.text + '80'}]}>
@@ -1412,6 +1576,28 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                           </Text>
                         </View>
                       </View>
+                    </TouchableOpacity>
+                    
+                    <View style={styles.inventoryItemActions}>
+                      <TouchableOpacity
+                        style={[styles.inventoryItemActionButton, {backgroundColor: colors.error + '15'}]}
+                        onPress={() => handleDeleteFoodItem(item.id)}
+                      >
+                        <Ionicons name="trash-outline" size={18} color={colors.error} />
+                      </TouchableOpacity>
+                      
+                      <TouchableOpacity
+                        style={[styles.inventoryItemActionButton, {backgroundColor: colors.primary + '15'}]}
+                        onPress={() => navigation.navigate({
+                          name: 'AddFoodItem',
+                          params: { 
+                            petId: activePetId || undefined,
+                            itemId: item.id 
+                          }
+                        })}
+                      >
+                        <Ionicons name="create-outline" size={18} color={colors.primary} />
+                      </TouchableOpacity>
                     </View>
                     
                     {item.inventory.daysRemaining <= 7 && (
@@ -1427,7 +1613,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                         </TouchableOpacity>
                       </View>
                     )}
-                  </TouchableOpacity>
+                  </View>
                 ))
               ) : (
                 <View style={styles.emptyInventoryContainer}>
@@ -1558,8 +1744,12 @@ const styles = StyleSheet.create({
     width: 6,
     height: '100%',
   },
-  mealTimeColumn: {
+  mealCardContent: {
+    flex: 1,
+    flexDirection: 'row',
     padding: 12,
+  },
+  mealTimeColumn: {
     width: 100,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1595,10 +1785,18 @@ const styles = StyleSheet.create({
   mealNotes: {
     fontSize: 12,
   },
-  mealStatusButton: {
-    width: 50,
+  mealActions: {
+    padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  mealActionButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 4,
+    borderRadius: 8,
   },
   recentMealRow: {
     flexDirection: 'row',
@@ -1961,18 +2159,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  addInventoryButton: {
+  tabActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
   },
-  addInventoryText: {
-    color: 'white',
-    fontWeight: '500',
-    marginLeft: 6,
-    fontSize: 14,
+  iconButton: {
+    padding: 8,
+    borderRadius: 8,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -2085,6 +2278,17 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingHorizontal: 8,
+  },
+  inventoryItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 8,
+  },
+  inventoryItemActionButton: {
+    padding: 8,
+    borderRadius: 8,
+    marginHorizontal: 4
   },
   metricSummaryValue: {
     fontSize: 22,

@@ -24,6 +24,8 @@ import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
 // Add import for Footer
 import Footer from '../components/layout/Footer';
+// Import the MedicationReminders component
+import MedicationReminders from '../components/MedicationReminders';
 
 const { width } = Dimensions.get('window');
 
@@ -1220,6 +1222,14 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               </TouchableOpacity>
             </View>
 
+            {/* Add MedicationReminders component */}
+            <View style={[styles.medicationRemindersContainer, { marginBottom: 16 }]}>
+              <MedicationReminders 
+                petId={activePetId || undefined}
+                onMedicationPress={handleViewMedicationDetails}
+              />
+            </View>
+
             <View style={styles.medicationTypesContainer}>
               <LinearGradient
                 colors={[colors.background, 'transparent']}
@@ -2184,6 +2194,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 40,
     zIndex: 1,
+  },
+  medicationRemindersContainer: {
+    marginHorizontal: 16,
+    marginTop: 8,
   },
 });
 

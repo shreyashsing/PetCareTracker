@@ -15,7 +15,7 @@ export class MedicationRepository extends BaseRepository<Medication> {
   }
 
   /**
-   * Get all medications for a specific pet
+   * Get medications for a specific pet
    * @param petId Pet ID
    * @returns Array of medications for the pet
    */

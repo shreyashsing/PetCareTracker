@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
@@ -13,8 +13,9 @@ import {
   DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
-import { databaseManager } from '../services/db';
+import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { generateUUID } from '../utils/helpers';
+import { notificationService } from '../services/notifications';
 
 type AddTaskScreenProps = NativeStackScreenProps<RootStackParamList, 'AddTask'>;
 
@@ -239,11 +240,27 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
       if (isEditMode) {
         // Update existing task
         await databaseManager.tasks.update(taskId as string, taskData);
-        alert('Task updated successfully!');
+        
+        // Schedule notifications if reminders are enabled and task is not completed
+        if (formState.reminderEnabled && !formState.isCompleted) {
+          await notificationService.scheduleTaskNotifications(taskData);
+        } else {
+          // Cancel any notifications for this task if reminders are disabled or task is completed
+          await notificationService.cancelTaskNotifications(taskData.id);
+        }
+        
+        Alert.alert('Success', 'Task updated successfully!');
       } else {
         // Create new task
         await databaseManager.tasks.create(taskData);
-        alert('Task created successfully!');
+        
+        // Schedule notifications if reminders are enabled and task is not completed
+        if (formState.reminderEnabled && !formState.isCompleted) {
+          await notificationService.scheduleTaskNotifications(taskData);
+          console.log('Notifications scheduled for task:', taskData.id);
+        }
+        
+        Alert.alert('Success', 'Task created successfully!');
       }
       
       // Instead of navigating directly to Schedule, go back to previous screen
@@ -251,7 +268,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
     } catch (error) {
       console.error('Error saving task:', error);
       // Handle error (show alert, etc.)
-      alert(`Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      Alert.alert('Error', `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }

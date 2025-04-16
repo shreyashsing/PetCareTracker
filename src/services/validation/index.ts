@@ -165,17 +165,23 @@ export const medicationSchema = z.object({
 // User validation schema
 export const userSchema = z.object({
   id: z.string().min(1, { message: "User ID is required" }),
-  username: z.string().min(3, { message: "Username must be at least 3 characters" }),
   email: z.string().email({ message: "Invalid email address" }),
-  displayName: z.string().min(1, { message: "Display name is required" }),
   passwordHash: z.string().min(1, { message: "Password hash is required" }),
-  salt: z.string().min(1, { message: "Salt is required" }),
+  name: z.string().min(1, { message: "Name is required" }),
+  displayName: z.string().optional(),
+  createdAt: z.date({ message: "Created date must be a valid date" }),
+  petIds: z.array(z.string()).default([]),
+  lastLogin: z.date().optional(),
+  isVerified: z.boolean().optional(),
+  role: z.enum(['user', 'admin']).optional(),
   isNewUser: z.boolean().default(true),
   preferences: z.object({
-    darkMode: z.boolean().optional(),
-    notifications: z.boolean().default(true),
-    language: z.string().default("en"),
+    emailNotifications: z.boolean().optional(),
+    pushNotifications: z.boolean().optional(),
+    theme: z.enum(['light', 'dark', 'system']).optional(),
   }).optional(),
+  resetPasswordToken: z.string().optional(),
+  resetPasswordExpires: z.date().optional(),
 });
 
 // Generic schema that all entities must follow

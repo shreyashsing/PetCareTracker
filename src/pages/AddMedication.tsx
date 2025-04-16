@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
@@ -16,6 +16,7 @@ import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { Medication } from '../types/components';
 import { generateUUID } from '../utils/helpers';
+import { notificationService } from '../services/notifications';
 
 type AddMedicationScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMedication'>;
 
@@ -197,25 +198,18 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
   };
   
   const handleSubmit = async () => {
-    const validationResult = validate();
-    // Get the effective pet ID - prefer the real one from AsyncStorage
-    const effectivePetId = realPetId || activePetId;
-    
-    if (!validationResult || !effectivePetId) {
-      console.log('Validation failed or no effective pet ID');
-      if (!validationResult) {
-        console.log('Validation errors:', errors);
-      }
-      if (!effectivePetId) {
-        console.log('Missing effective pet ID');
-      }
-      
-      // Show error to user
-      alert(`Cannot save medication: ${!validationResult ? 'Please fix the form errors' : 'No pet selected'}`);
-      return;
-    }
+    if (!validate()) return;
     
     setIsLoading(true);
+    
+    // Use effective pet ID (either from params or active pet)
+    const effectivePetId = route.params?.petId || activePetId;
+    
+    if (!effectivePetId) {
+      Alert.alert('Error', 'No pet selected. Please select a pet first.');
+      setIsLoading(false);
+      return;
+    }
     
     try {
       console.log('Using effective pet ID:', effectivePetId);
@@ -263,23 +257,37 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       if (isEditMode && medicationId) {
         console.log('Updating medication:', JSON.stringify(medicationRecord, null, 2));
         await databaseManager.medications.update(medicationId, medicationRecord as Medication);
+        
+        // Handle notification scheduling for updated medication
+        if (formState.reminderEnabled) {
+          // Schedule notifications for this medication
+          await notificationService.scheduleMedicationNotifications(medicationRecord as Medication);
+          console.log('Medication notifications scheduled successfully');
+        } else {
+          // Cancel any existing notifications for this medication
+          await notificationService.cancelMedicationNotifications(medicationId);
+          console.log('Medication notifications canceled');
+        }
       } else {
         console.log('Creating new medication:', JSON.stringify(medicationRecord, null, 2));
         await databaseManager.medications.create(medicationRecord as Medication);
+        
+        // Schedule notifications if reminders are enabled
+        if (formState.reminderEnabled) {
+          await notificationService.scheduleMedicationNotifications(medicationRecord as Medication);
+          console.log('Medication notifications scheduled successfully');
+        }
       }
       
       console.log('Medication saved successfully!');
-      alert(isEditMode ? 'Medication updated successfully!' : 'Medication added successfully!');
-      
-      // Navigate back with refresh parameter
-      if (navigation.canGoBack()) {
-      navigation.goBack();
-      } else {
-        navigation.navigate('Main', { screen: 'Health', params: { refresh: Date.now().toString() } } as any);
-      }
+      Alert.alert(
+        'Success', 
+        isEditMode ? 'Medication updated successfully!' : 'Medication added successfully!',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
     } catch (error) {
       console.error('Error saving medication:', error);
-      alert(`Failed to save medication: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      Alert.alert('Error', `Failed to save medication: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }

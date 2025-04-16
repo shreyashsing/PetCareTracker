@@ -15,6 +15,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { databaseManager } from '../services/db';
 import { generateUUID } from '../utils/helpers';
+import { notificationService } from '../services/notifications';
+import { useToast } from '../hooks/use-toast';
 
 type AddMealScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMeal'>;
 
@@ -33,6 +35,7 @@ interface FormState {
 const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors  } = useAppColors();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [mealId, setMealId] = useState<string | null>(null);
@@ -184,10 +187,28 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
     
     try {
       if (isEditMode) {
+        // If editing, first cancel existing notifications
+        await notificationService.cancelMealNotifications(mealId as string);
+        
+        // Update the meal
         await databaseManager.meals.update(mealId as string, mealData);
       } else {
+        // Create a new meal
         await databaseManager.meals.create(mealData);
       }
+      
+      // Schedule notifications for the meal if it's not already completed
+      // and the meal time is in the future
+      if (!formState.isCompleted && combinedDateTime > new Date()) {
+        try {
+          await notificationService.scheduleMealNotifications(mealData);
+          console.log('Meal notifications scheduled successfully');
+        } catch (notificationError) {
+          console.error('Error scheduling meal notifications:', notificationError);
+          // Don't fail the whole operation if notifications fail
+        }
+      }
+      
       return true;
     } catch (error) {
       console.error('Error saving meal:', error);
@@ -204,7 +225,15 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       const success = await saveMeal();
       
       if (success) {
-        // Navigate back with refresh flag (using boolean instead of timestamp)
+        // Show success toast
+        toast({
+          title: isEditMode ? 'Meal updated' : 'Meal added',
+          description: isEditMode ? 
+            'Your pet\'s meal has been updated successfully' : 
+            'Your pet\'s meal has been added successfully'
+        });
+        
+        // Navigate back with refresh flag
         navigation.navigate({
           name: 'Feeding',
           params: { refresh: true }
@@ -218,6 +247,49 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
     } finally {
       setIsLoading(false);
     }
+  };
+  
+  // Handle meal deletion
+  const handleDelete = async () => {
+    if (!isEditMode || !mealId) return;
+    
+    Alert.alert(
+      'Delete Meal',
+      'Are you sure you want to delete this meal? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            setIsLoading(true);
+            try {
+              // Cancel notifications for this meal
+              await notificationService.cancelMealNotifications(mealId);
+              
+              // Delete from database
+              await databaseManager.meals.delete(mealId);
+              
+              toast({
+                title: 'Meal deleted',
+                description: 'The meal has been deleted successfully'
+              });
+              
+              // Navigate back
+              navigation.navigate({
+                name: 'Feeding',
+                params: { refresh: true }
+              });
+            } catch (error) {
+              console.error('Error deleting meal:', error);
+              Alert.alert('Error', 'Failed to delete meal');
+            } finally {
+              setIsLoading(false);
+            }
+          }
+        }
+      ]
+    );
   };
   
   if (!activePetId) {
@@ -319,6 +391,16 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
             <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
           </TouchableOpacity>
           
+          {isEditMode && (
+            <TouchableOpacity 
+              style={[styles.button, styles.deleteButton, { backgroundColor: colors.error || '#ff3b30' }]}
+              onPress={handleDelete}
+              disabled={isLoading}
+            >
+              <Text style={[styles.buttonText, { color: 'white' }]}>Delete</Text>
+            </TouchableOpacity>
+          )}
+          
           <TouchableOpacity 
             style={[styles.button, styles.saveButton, { backgroundColor: colors.primary }]}
             onPress={handleSubmit}
@@ -407,6 +489,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   saveButton: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  deleteButton: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,

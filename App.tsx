@@ -6,7 +6,7 @@ import { setupErrorHandling, setupLogBoxIgnores } from './src/utils/errorHandler
 setupErrorHandling();
 
 import React, { useEffect, useState } from 'react';
-import { LogBox, View, Text, ActivityIndicator, Alert } from 'react-native';
+import { LogBox, View, Text, ActivityIndicator, Alert, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import { enableScreens } from 'react-native-screens';
 
 // Import the ErrorBoundary component
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { notificationService } from './src/services/notifications';
 
 // Setup LogBox ignores
 setupLogBoxIgnores(LogBox);
@@ -49,10 +50,12 @@ const queryClient = new QueryClient({
 
 // Create the App component
 export default function App() {
+  const colorScheme = useColorScheme();
   const [dbInitialized, setDbInitialized] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [securityInitialized, setSecurityInitialized] = useState<boolean>(false);
+  const [notificationsInitialized, setNotificationsInitialized] = useState<boolean>(false);
 
   // Initialize security service
   useEffect(() => {
@@ -147,6 +150,49 @@ export default function App() {
     
     initializeDatabase();
   }, [securityInitialized]);
+
+  // Initialize notifications
+  useEffect(() => {
+    const initializeNotifications = async () => {
+      try {
+        // Initialize notification service
+        const initialized = await notificationService.initialize();
+        
+        if (initialized) {
+          // Reschedule all pending notifications
+          await notificationService.rescheduleAllNotifications();
+          
+          // The rescheduleAllNotifications method now includes meal and inventory alerts
+          console.log('Notifications rescheduled successfully');
+          
+          // Setup a periodic check for inventory alerts (every 24 hours)
+          const checkPeriod = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+          setInterval(async () => {
+            await notificationService.checkAndScheduleInventoryAlerts();
+          }, checkPeriod);
+        } else {
+          console.warn('Notification service initialization failed or permissions not granted');
+        }
+        
+        setNotificationsInitialized(true);
+      } catch (error) {
+        console.error('Error initializing notifications:', error);
+        setNotificationsInitialized(true); // Set to true anyway to let the app load
+      }
+    };
+    
+    initializeNotifications();
+  }, []);
+
+  // Show loading screen until everything is initialized
+  if (!dbInitialized || !securityInitialized || !notificationsInitialized) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+        <Text style={{ marginTop: 10 }}>Initializing app...</Text>
+      </View>
+    );
+  }
 
   // Handle loading state
   if (isLoading) {

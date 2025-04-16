@@ -13,6 +13,7 @@ import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
+import { notificationService } from '../services/notifications';
 
 type ScheduleScreenProps = NativeStackScreenProps<RootStackParamList, 'Schedule'>;
 
@@ -23,6 +24,7 @@ type Task = {
   completed: boolean;
   category?: 'feeding' | 'medication' | 'exercise' | 'grooming' | 'training' | 'veterinary' | 'social' | 'other';
   icon?: keyof typeof Ionicons.glyphMap;
+  hasReminders: boolean;
 };
 
 type UpcomingEvent = {
@@ -104,7 +106,8 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
             title: task.title,
             completed: task.status === 'completed',
             category: task.category,
-            icon: icon as keyof typeof Ionicons.glyphMap
+            icon: icon as keyof typeof Ionicons.glyphMap,
+            hasReminders: task.reminderSettings.enabled
           };
         });
         
@@ -227,11 +230,36 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
   // Toggle task completion status
   const toggleTaskCompletion = async (taskId: string, currentStatus: boolean) => {
     try {
+      console.log(`Toggling task ${taskId} completion status. Current status: ${currentStatus}`);
+      
+      // First get the task to ensure we have the latest data
+      const task = await databaseManager.tasks.getById(taskId);
+      
+      if (!task) {
+        console.error(`Task with ID ${taskId} not found`);
+        return;
+      }
+      
+      // Convert the status boolean to the task status enum value
       const newStatus = currentStatus ? 'pending' : 'completed';
+      console.log(`Setting task status to: ${newStatus}`);
+      
+      // Use the repository method to update the status
       await databaseManager.tasks.updateStatus(taskId, newStatus);
-      loadData(); // Reload data after status change
+      
+      // If the task was completed, cancel any notifications
+      if (newStatus === 'completed') {
+        await notificationService.cancelTaskNotifications(taskId);
+      } else if (task.reminderSettings.enabled) {
+        // If the task was uncompleted and has reminders enabled, reschedule notifications
+        await notificationService.scheduleTaskNotifications(task);
+      }
+      
+      // Reload data after status change
+      loadData();
     } catch (error) {
       console.error('Error updating task status:', error);
+      Alert.alert('Error', 'Failed to update task status. Please try again.');
     }
   };
 
@@ -397,7 +425,25 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                     <Text style={[styles.taskTime, { color: getCategoryColor(task.category) }]}>{task.time}</Text>
                   </View>
                   <View style={styles.taskContent}>
-                    <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
+                    <View style={styles.taskHeader}>
+                      <Text 
+                        style={[
+                          styles.taskTitle, 
+                          { 
+                            color: colors.text,
+                            textDecorationLine: task.completed ? 'line-through' : 'none' 
+                          }
+                        ]}
+                      >
+                        {task.title}
+                      </Text>
+                      
+                      {task.hasReminders && (
+                        <View style={styles.reminderBadge}>
+                          <Ionicons name="notifications" size={12} color="#fff" />
+                        </View>
+                      )}
+                    </View>
                     <TouchableOpacity 
                       style={[
                         styles.taskStatusButton,
@@ -637,6 +683,10 @@ const styles = StyleSheet.create({
     padding: 12,
     justifyContent: 'center',
   },
+  taskHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   taskTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -758,5 +808,14 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
     fontSize: 12,
+  },
+  reminderBadge: {
+    backgroundColor: '#FF9800',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8
   },
 }); 

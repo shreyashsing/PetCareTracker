@@ -16,6 +16,7 @@ import FullAnalyticsScreen from '../pages/FullAnalytics';
 import HealthScreen from '../pages/Health';
 import ScheduleScreen from '../pages/Schedule';
 import FeedingScreen from '../pages/Feeding';
+import ChatAssistantScreen from '../pages/ChatAssistant';
 
 // Create stack navigator with correct type
 const Stack = createNativeStackNavigator<MainStackParamList>();
@@ -41,6 +42,7 @@ const MainStack = () => {
       <Stack.Screen name="Health" component={HealthScreen} />
       <Stack.Screen name="Schedule" component={ScheduleScreen} />
       <Stack.Screen name="Feeding" component={FeedingScreen} />
+      <Stack.Screen name="ChatAssistant" component={ChatAssistantScreen} />
     </Stack.Navigator>
   );
 };

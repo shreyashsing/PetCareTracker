@@ -126,6 +126,23 @@ export default function App() {
             // Check active pet
             const activePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
             console.log('Active pet ID:', activePetId);
+            
+            // Debug Supabase connection and tables
+            try {
+              const { checkSupabaseTables } = require('./src/utils/debugUtils');
+              await checkSupabaseTables();
+              
+              // If user is authenticated, also check permissions
+              const { supabase } = require('./src/services/supabase');
+              const { data: { user } } = await supabase.auth.getUser();
+              
+              if (user) {
+                const { checkPetsInsertPermission } = require('./src/utils/debugUtils');
+                await checkPetsInsertPermission(user.id);
+              }
+            } catch (debugError) {
+              console.error('Error running debug checks:', debugError);
+            }
           } catch (e) {
             console.error('Error checking pets:', e);
           }

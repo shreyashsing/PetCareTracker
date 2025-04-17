@@ -29,6 +29,7 @@ export type MainStackParamList = {
   Health: undefined;
   Exercise: undefined;
   AddFirstPet: undefined;
+  ChatAssistant: { petId?: string; sessionId?: string };
 };
 
 // Root stack combining all param lists
@@ -51,6 +52,7 @@ export type RootStackParamList = {
   Health: undefined;
   Exercise: undefined;
   AddFirstPet: undefined;
+  ChatAssistant: { petId?: string; sessionId?: string };
   // Add this placeholder for navigation.reset() to work
   Main: undefined;
   // Add onboarding screens

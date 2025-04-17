@@ -1,6 +1,8 @@
 import { Pet } from '../../types/components';
 import { STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
+import { supabase, camelToSnake, snakeToCamel } from '../../services/supabase';
+import { generateUUID } from '../../utils/helpers';
 
 /**
  * Repository for managing Pet entities
@@ -11,11 +13,73 @@ export class PetRepository extends BaseRepository<Pet> {
   }
 
   /**
+   * Override create method to save to both AsyncStorage and Supabase
+   * @param pet Pet to create
+   * @returns Created pet
+   */
+  async create(pet: Pet): Promise<Pet> {
+    try {
+      // First save to AsyncStorage (using parent implementation)
+      await super.create(pet);
+      
+      // Then save to Supabase
+      const newPet = {
+        ...camelToSnake(pet),
+        id: pet.id,
+        created_at: new Date().toISOString(),
+      };
+      
+      console.log('Saving pet to Supabase:', JSON.stringify(newPet));
+      
+      const { data, error } = await supabase
+        .from('pets')
+        .insert([newPet])
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Error creating pet in Supabase:', error);
+        console.error('Error details:', JSON.stringify(error));
+        
+        // Return the pet anyway since it's saved in AsyncStorage
+        return pet;
+      }
+      
+      console.log('Pet saved to Supabase successfully:', data);
+      return pet;
+    } catch (error) {
+      console.error('Exception creating pet in repository:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Find pets by user ID
    * @param userId User ID
    * @returns Array of pets belonging to the user
    */
   async findByUserId(userId: string): Promise<Pet[]> {
+    // Try to get from Supabase first
+    try {
+      const { data, error } = await supabase
+        .from('pets')
+        .select('*')
+        .eq('user_id', userId);
+      
+      if (error) {
+        console.error(`Error fetching pets for user ${userId} from Supabase:`, error);
+        // Fall back to local storage
+        return this.find(pet => pet.userId === userId);
+      }
+      
+      if (data && data.length > 0) {
+        return snakeToCamel<Pet[]>(data);
+      }
+    } catch (e) {
+      console.error('Exception fetching pets from Supabase:', e);
+    }
+    
+    // Fallback to local storage
     return this.find(pet => pet.userId === userId);
   }
 

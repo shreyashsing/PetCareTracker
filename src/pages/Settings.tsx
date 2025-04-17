@@ -300,7 +300,13 @@ const Settings = () => {
   };
 
   const handleManagePets = () => {
-    setShowPetModal(true);
+    // @ts-ignore - Workaround for type mismatch in navigation
+    navigation.navigate('AddPet');
+  };
+  
+  const handleOpenChatAssistant = () => {
+    // @ts-ignore - Workaround for type mismatch in navigation
+    navigation.navigate('ChatAssistant', { petId: activePetId });
   };
   
   const handleDeletePet = (pet: Pet) => {
@@ -573,26 +579,26 @@ const Settings = () => {
           <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>PET MANAGEMENT</Text>
         </View>
         
-            <TouchableOpacity
-          style={[styles.optionItem, dynamicStyles.optionItem]}
+        <TouchableOpacity 
+          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
           onPress={handleManagePets}
         >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="paw-outline" color={colors.text} />
+          <View style={styles.settingsItemLeft}>
+            <IconWrapper name="paw" color={colors.primary} />
+            <Text style={[styles.settingsItemText, { color: colors.text }]}>Manage Pets</Text>
           </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Manage Pets</Text>
-          <ForwardArrow color={colors.text + '80'} />
-            </TouchableOpacity>
+          <ForwardArrow color={colors.secondary} />
+        </TouchableOpacity>
         
         <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => navigation.navigate('AddPet' as never)}
+          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
+          onPress={handleOpenChatAssistant}
         >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="add-circle-outline" color={colors.text} />
-        </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Add New Pet</Text>
-          <ForwardArrow color={colors.text + '80'} />
+          <View style={styles.settingsItemLeft}>
+            <IconWrapper name="chatbubble-ellipses" color={colors.primary} />
+            <Text style={[styles.settingsItemText, { color: colors.text }]}>Pet Assistant</Text>
+          </View>
+          <ForwardArrow color={colors.secondary} />
         </TouchableOpacity>
 
         {/* General Section */}
@@ -892,6 +898,22 @@ const styles = StyleSheet.create({
   valueText: {
     fontSize: 14,
     marginRight: 8,
+  },
+  settingsItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+  },
+  settingsItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  settingsItemText: {
+    fontSize: 16,
+    marginLeft: 16,
   },
 });
 

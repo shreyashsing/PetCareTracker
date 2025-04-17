@@ -3,37 +3,48 @@ module.exports = function(api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      // Add module resolver for CodedError
-      [
-        'module-resolver',
-        {
-          alias: {
-            './errors/CodedError': './src/errors/CodedError',
-            '../errors/CodedError': './src/errors/CodedError',
-            'expo-modules-core/src/errors/CodedError': './src/errors/CodedError',
-            'expo-modules-core/build/errors/CodedError': './src/errors/CodedError',
-            // For UnavailabilityError which may import CodedError
-            'expo-modules-core/src/errors': './src/errors',
-            // For SharedObject/SharedRef
-            './SharedObject': './src/errors/SharedObject',
-            './SharedRef': './src/errors/SharedRef',
-            'expo-modules-core/src/SharedObject': './src/errors/SharedObject',
-            'expo-modules-core/build/SharedObject': './src/errors/SharedObject',
-            'expo-modules-core/src/SharedRef': './src/errors/SharedRef',
-            'expo-modules-core/build/SharedRef': './src/errors/SharedRef',
-            // For DatePicker
-            'RNCMaterialDatePicker': './src/shims/RNCMaterialDatePicker'
-          }
-        }
-      ],
+      // Add react-native-dotenv
       ["module:react-native-dotenv", {
         "moduleName": "@env",
         "path": ".env",
         "blacklist": null,
-        "whitelist": ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+        "whitelist": null,
         "safe": false,
         "allowUndefined": true
-      }]
+      }],
+      'react-native-reanimated/plugin',
+      // Combined module-resolver with all aliases and a unique name
+      ["module-resolver", {
+        root: ["./src"],
+        alias: {
+          // App module aliases
+          "@components": "./src/components",
+          "@screens": "./src/screens",
+          "@utils": "./src/utils",
+          "@config": "./src/config",
+          "@assets": "./assets",
+          "@hooks": "./src/hooks",
+          "@contexts": "./src/contexts",
+          "@services": "./src/services",
+          "@navigation": "./src/navigation",
+          "@forms": "./src/forms",
+          "@pages": "./src/pages",
+          
+          // Error fixes and shims
+          "./errors/CodedError": "./src/errors/CodedError",
+          "../errors/CodedError": "./src/errors/CodedError",
+          "expo-modules-core/src/errors/CodedError": "./src/errors/CodedError",
+          "expo-modules-core/build/errors/CodedError": "./src/errors/CodedError",
+          "expo-modules-core/src/errors": "./src/errors",
+          "./SharedObject": "./src/errors/SharedObject",
+          "./SharedRef": "./src/errors/SharedRef",
+          "expo-modules-core/src/SharedObject": "./src/errors/SharedObject",
+          "expo-modules-core/build/SharedObject": "./src/errors/SharedObject",
+          "expo-modules-core/src/SharedRef": "./src/errors/SharedRef",
+          "expo-modules-core/build/SharedRef": "./src/errors/SharedRef",
+          "RNCMaterialDatePicker": "./src/shims/RNCMaterialDatePicker"
+        }
+      }, "combined-module-resolver"]
     ]
   };
 }; 

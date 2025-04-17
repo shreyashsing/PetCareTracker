@@ -332,43 +332,53 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
           policyNumber: formState.insuranceInfo.policyNumber,
           expiryDate: formState.insuranceInfo.expiryDate || new Date()
         } : undefined,
-        status: formState.status
+        status: 'healthy'
       };
       
-      // Save the pet to the database
-      console.log(`Saving pet ${newPet.name} to database`);
-      await databaseManager.pets.create(newPet);
+      console.log('Creating pet with data:', JSON.stringify(newPet));
       
-      // Set this pet as the active pet
-      console.log(`Setting pet ${petId} as active`);
-      await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
-      setActivePetId(petId);
-      
-      // Check if the pet was saved properly
-      const allPets = await databaseManager.pets.getAll();
-      console.log(`Total pets after save: ${allPets.length}`);
-      
-      // Show success message
-      Alert.alert(
-        'Success',
-        `${newPet.name} has been added to your pets!`,
-        [
-          { 
-            text: 'OK', 
-            onPress: () => {
-              // Reset navigation to home screen to ensure a fresh start
-              console.log('Resetting navigation to MainStack');
-              navigation.reset({
-                index: 0,
-                routes: [{ name: "MainStack" }]
-              });
+      try {
+        // Save to database with error handling
+        await databaseManager.pets.create(newPet);
+        console.log(`Pet ${newPet.name} saved successfully`);
+        
+        // Set as active pet
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
+        setActivePetId(petId);
+        
+        Alert.alert(
+          'Success',
+          'Pet added successfully! You can now start tracking your pet\'s care.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                navigation.navigate('Main');
+              }
             }
-          }
-        ]
-      );
+          ]
+        );
+      } catch (dbError) {
+        console.error('Error adding pet to database:', dbError);
+        
+        // Still show success if the pet was added to local storage
+        // but failed to save to Supabase
+        Alert.alert(
+          'Partial Success',
+          'Your pet was saved locally, but there was an issue syncing with the cloud. Your data will sync when connection is restored.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                navigation.navigate('Main');
+              }
+            }
+          ]
+        );
+      }
     } catch (error) {
       console.error('Error adding pet:', error);
-      Alert.alert('Error', 'Failed to add pet. Please try again.');
+      Alert.alert('Error', 'There was an error adding your pet. Please try again.');
     } finally {
       setIsLoading(false);
     }

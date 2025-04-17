@@ -98,7 +98,7 @@ export const AddFirstPet: React.FC = () => {
         breed: petBreed,
         birthDate: birthDate,
         gender: petGender,
-        weight: parseFloat(petWeight),
+        weight: parseFloat(petWeight) || 0,
         weightUnit: 'kg', // Default to kg
         microchipped: microchipped,
         microchipId: microchipped ? microchipId : undefined,
@@ -117,36 +117,54 @@ export const AddFirstPet: React.FC = () => {
         status: 'healthy' // Default to healthy
       };
       
-      // Save the pet to the database using the same database service
-      console.log(`Saving pet ${newPet.name} to database`);
-      await databaseManager.pets.create(newPet);
-      
-      // Set this pet as the active pet
-      console.log(`Setting pet ${petId} as active`);
-      await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
-      setActivePetId(petId);
-      
-      // Check if the pet was saved properly
-      const allPets = await databaseManager.pets.getAll();
-      console.log(`Total pets after save: ${allPets.length}`);
-      
-      toast({ 
-        title: 'Success', 
-        description: `${newPet.name} has been added to your pets!`,
-        variant: 'default'
-      });
-      
-      // Fix the navigation call
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'MainStack', params: { screen: 'Home' } }]
-      });
+      try {
+        // Save the pet to the database using the same database service
+        console.log(`Saving pet ${newPet.name} to database`);
+        await databaseManager.pets.create(newPet);
+        
+        // Set this pet as the active pet
+        console.log(`Setting pet ${petId} as active`);
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
+        setActivePetId(petId);
+        
+        // Navigate to the main app and show welcome message
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'MainStack' }],
+        });
+        
+        toast({
+          title: "Pet Added Successfully",
+          description: `Welcome to Pet Care Tracker! You can now start tracking ${petName}'s care.`,
+          variant: "default"
+        });
+      } catch (dbError) {
+        console.error('Error saving pet to database:', dbError);
+        
+        // Continue with local storage version if Supabase fails
+        console.log(`Setting pet ${petId} as active (local only)`);
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
+        setActivePetId(petId);
+        
+        // Navigate to main app with warning
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'MainStack' }],
+        });
+        
+        toast({
+          title: "Pet Added With Warning",
+          description: "Your pet was saved locally but there was an issue syncing to the cloud. Your data will sync when connection is restored.",
+          variant: "destructive"
+        });
+      }
     } catch (error) {
-      console.error('Error adding pet:', error);
-      toast({ 
-        title: 'Error', 
-        description: 'Failed to add pet. Please try again.', 
-        variant: 'destructive' 
+      console.error('Error in add pet flow:', error);
+      setIsLoading(false);
+      toast({
+        title: "Error Adding Pet",
+        description: "There was a problem adding your pet. Please try again.",
+        variant: "destructive"
       });
     } finally {
       setIsLoading(false);

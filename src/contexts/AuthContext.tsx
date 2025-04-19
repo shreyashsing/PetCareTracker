@@ -3,7 +3,8 @@
  * Re-exports from providers/AuthProvider to maintain backward compatibility
  */
 
-import { useAuth, AuthProvider, AuthContextType } from '../providers/AuthProvider';
+import { useAuth, AuthProvider } from '../providers/AuthProvider';
+import type { AuthContextType } from '../providers/AuthProvider';
 import { User } from '@supabase/supabase-js';
 
 // Re-export for backward compatibility

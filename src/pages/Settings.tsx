@@ -14,7 +14,7 @@ import {
   FlatList,
   TextInput
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
@@ -305,12 +305,19 @@ const Settings = () => {
   const handleLogout = async () => {
     try {
       await signOut();
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'AuthStack' as keyof MainStackParamList }],
-      });
+      
+      // Using direct component replacement approach
+      // This approach relies on the AuthContext to handle navigation
+      // When user is set to null, AppNavigator automatically shows AuthStack
+      
+      // We don't need any explicit navigation - just let the AuthProvider handle it
+      // The app's root navigator will detect the user is null and show the auth screens
+      
+      // If needed, we can add a message to show the logout was successful
+      Alert.alert("Logged Out", "You have been successfully logged out.");
     } catch (error) {
       console.error('Logout error:', error);
+      Alert.alert("Error", "There was a problem logging out. Please try again.");
     }
   };
 

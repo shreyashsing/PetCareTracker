@@ -1,20 +1,32 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import { useAuth } from '../../contexts/AuthContext';
 import { useAppColors } from '../../hooks/useAppColors';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
+import { supabase } from '../../services/supabase';
 
 type ForgotPasswordScreenProps = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
 
 const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({ navigation }) => {
   const [email, setEmail] = React.useState('');
-  const { forgotPassword } = useAuth();
+  const [isLoading, setIsLoading] = React.useState(false);
   const { colors } = useAppColors();
 
   const handleResetPassword = async () => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+    
+    setIsLoading(true);
+    
     try {
-      await forgotPassword(email);
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      
+      if (error) {
+        throw error;
+      }
+      
       Alert.alert(
         'Password Reset Email Sent',
         'Check your email for instructions to reset your password.',
@@ -23,6 +35,8 @@ const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({ navigation 
     } catch (error) {
       console.error('Forgot password request failed', error);
       Alert.alert('Error', 'Failed to send password reset email. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 

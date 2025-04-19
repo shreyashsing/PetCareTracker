@@ -28,36 +28,58 @@ export type MainStackParamList = {
   Schedule: undefined;
   Health: undefined;
   Exercise: undefined;
+  AddActivity: undefined;
   AddFirstPet: undefined;
   ChatAssistant: { petId?: string; sessionId?: string };
+  SupabaseSetup: undefined;
+  SQLViewer: { scriptType: 'pets' | 'chat' };
+  PetDebug: undefined;
+  ChatDebug: undefined;
+  PetSyncDebug: undefined;
+  ManagePets: undefined;
+  EditPet: { petId: string };
 };
 
 // Root stack combining all param lists
 export type RootStackParamList = {
-  AuthStack: NavigatorScreenParams<AuthStackParamList>;
-  MainStack: NavigatorScreenParams<MainStackParamList>;
-  // Include all screens from MainStackParamList for direct access
+  Auth: undefined;
+  Main: undefined;
   Home: undefined;
-  PetProfile: { petId: string };
-  AddPet: undefined;
-  AddHealthRecord: { petId: string; recordToEdit?: any };
-  AddMedication: { petId: string; medicationToEdit?: any };
-  AddTask: { petId?: string; taskId?: string };
-  AddMeal: { petId?: string; mealId?: string };
-  AddFoodItem: { petId?: string; itemId?: string };
-  Settings: undefined;
-  FullAnalytics: { petId?: string };
   Feeding: { refresh?: boolean };
   Schedule: undefined;
   Health: undefined;
   Exercise: undefined;
-  AddFirstPet: undefined;
-  ChatAssistant: { petId?: string; sessionId?: string };
-  // Add this placeholder for navigation.reset() to work
-  Main: undefined;
-  // Add onboarding screens
-  Onboarding: undefined;
-  OnboardingFeatures: undefined;
+  Settings: undefined;
+  AddPet: undefined;
+  AddMeal: { petId?: string; mealId?: string };
+  AddTask: { petId?: string; taskId?: string };
+  AddFoodItem: { petId?: string; itemId?: string };
+  AddMedication: { petId: string; medicationToEdit?: any };
+  AddHealthRecord: { petId: string; recordToEdit?: any };
+  FullAnalytics: { petId?: string };
+  ViewPet: { petId: string };
+  EnterMedication: undefined;
+  AddActivity: undefined;
+  Pet: { id: string };
+  Profile: undefined;
+  PetDetails: { petId: string };
+  EditPet: { petId: string };
+  PetAssistant: { petId?: string };
+  FoodTracker: { petId?: string };
+  CreateNote: { petId: string };
+  VetVisits: { petId?: string };
+  AddVetVisit: { petId: string };
+  HealthMetrics: { petId?: string };
+  LocalNotificationSettings: undefined;
+  RecommendedFeeds: { petId?: string, petType?: string, breed?: string };
+  SupabaseSetup: undefined;
+  SQLViewer: { scriptType: 'pets' | 'chat' };
+  ChatDebug: undefined;
+  PetDebug: undefined;
+  PetSyncDebug: undefined;
+  AuthStack: NavigatorScreenParams<AuthStackParamList>;
+  MainStack: NavigatorScreenParams<MainStackParamList>;
+  ManagePets: undefined;
 };
 
 // Export a custom navigation type for use in components

@@ -21,11 +21,6 @@ export interface Pet {
     phone: string;
     clinic: string;
   };
-  insuranceInfo?: {
-    provider: string;
-    policyNumber: string;
-    expiryDate: Date;
-  };
   status: 'healthy' | 'recovering' | 'ill' | 'chronic' | 'unknown';
   
   // Nutritional info

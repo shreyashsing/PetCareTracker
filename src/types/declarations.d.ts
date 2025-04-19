@@ -1,3 +1,8 @@
+/**
+ * Global type declarations
+ */
+
+// Expo Notifications
 declare module 'expo-notifications' {
   export interface NotificationRequest {
     identifier: string;
@@ -65,6 +70,7 @@ declare module 'expo-notifications' {
   export function cancelAllScheduledNotificationsAsync(): Promise<void>;
 }
 
+// Expo Device
 declare module 'expo-device' {
   export const isDevice: boolean;
   export const brand: string;
@@ -83,4 +89,11 @@ declare module 'expo-device' {
   export const osBuildFingerprint: string;
   export const platformApiLevel: number;
   export const deviceName: string;
-} 
+}
+
+// Environment variables
+declare module '@env' {
+  export const SUPABASE_URL: string;
+  export const SUPABASE_ANON_KEY: string;
+  export const GEMINI_API_KEY: string;
+}

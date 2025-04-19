@@ -14,14 +14,14 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
 import { Input } from '../../components/Input';
 import { Button } from '../../components/Button';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../providers/AuthProvider';
 import { useAppColors } from '../../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 
 type LoginScreenProps = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
-  const { login, isLoading, error, clearError, sendEmailVerification } = useAuth();
+  const { signIn, isLoading } = useAuth();
   const { colors } = useAppColors();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,22 +31,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   // Clear previous auth errors when unmounting
   useEffect(() => {
     return () => {
-      clearError();
+      // Clear any errors on unmount
+      setErrors({});
     };
-  }, [clearError]);
-  
-  // Update local errors when auth context error changes
-  useEffect(() => {
-    if (error) {
-      setErrors(prev => ({ ...prev, auth: error }));
-    } else {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors.auth;
-        return newErrors;
-      });
-    }
-  }, [error]);
+  }, []);
   
   const validateForm = (): boolean => {
     const newErrors: { email?: string; password?: string } = {};
@@ -76,42 +64,31 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     if (validateForm()) {
       try {
         setLoginInProgress(true);
-        const success = await login(email, password);
-        setLoginInProgress(false);
+        const { error } = await signIn(email, password);
         
-        if (!success) {
-          Alert.alert('Login Failed', 'Invalid email or password.');
+        if (error) {
+          setErrors(prev => ({ ...prev, auth: error.message }));
+          Alert.alert('Login Failed', error.message || 'Invalid email or password.');
         }
       } catch (error: any) {
-        setLoginInProgress(false);
         console.error('Login error:', error);
         
-        if (error.message?.includes('Email not confirmed')) {
+        if (error.message?.includes('Email not verified')) {
           Alert.alert(
             'Email Not Verified',
-            'Your email has not been verified. Would you like to resend the verification email?',
+            'Your email has not been verified. Please check your email inbox.',
             [
               {
-                text: 'Cancel',
-                style: 'cancel',
-              },
-              {
-                text: 'Resend',
-                onPress: async () => {
-                  const sent = await sendEmailVerification(email);
-                  if (sent) {
-                    Alert.alert(
-                      'Verification Email Sent',
-                      'Please check your email inbox and follow the link to verify your account.'
-                    );
-                  }
-                },
-              },
+                text: 'OK',
+                style: 'default',
+              }
             ]
           );
         } else {
           Alert.alert('Login Failed', `An error occurred: ${error.message || 'Unknown error'}`);
         }
+      } finally {
+        setLoginInProgress(false);
       }
     }
   };

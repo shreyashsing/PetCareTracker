@@ -21,48 +21,68 @@ class ChatRepository {
   // Create a new chat session
   async createSession(userId: string, petId?: string): Promise<string | null> {
     try {
-      // If petId is provided, verify it exists first
-      if (petId) {
-        const { data: pet, error: petError } = await supabase
-          .from('pets')
-          .select('id')
-          .eq('id', petId)
-          .single();
+      if (!userId) {
+        console.error('Error: Cannot create chat session - no user ID provided');
+        throw new Error('User ID is required to create a chat session');
+      }
+
+      console.log(`Creating chat session for user: ${userId}, pet: ${petId || 'none'}`);
+      
+      // Verify user exists in auth.users
+      try {
+        const { data: userCheck, error: userError } = await supabase.auth.admin.getUserById(userId);
         
-        // If pet doesn't exist or error occurred, create session without pet_id
-        if (petError || !pet) {
-          console.log('Warning: Pet ID not found, creating session without pet reference');
-          const { data, error } = await supabase
-            .from('chat_sessions')
-            .insert({
-              user_id: userId,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            })
-            .select('id')
-            .single();
-
-          if (error) {
-            console.error('Error creating chat session:', error);
-            return null;
-          }
-
-          return data?.id || null;
+        if (userError) {
+          console.log('Cannot verify user directly through auth admin API, continuing anyway');
+        } else if (!userCheck?.user) {
+          console.warn(`Warning: User ID ${userId} not found in auth.users, but continuing`);
+        } else {
+          console.log(`User ${userId} verified through auth API`);
         }
+      } catch (authError) {
+        // This might fail if admin privileges aren't available
+        console.log('Auth verification skipped, continuing with session creation');
       }
       
-      // Create session with pet_id if it exists or was verified
+      // Prepare session data
       const sessionData: any = {
         user_id: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       
-      // Only add pet_id if it was provided and verified
+      // Only add pet_id if it was provided
       if (petId) {
-        sessionData.pet_id = petId;
+        // Verify pet exists and belongs to user
+        try {
+          const { data: pet, error: petError } = await supabase
+            .from('pets')
+            .select('id')
+            .eq('id', petId)
+            .eq('user_id', userId)  // Ensure pet belongs to this user
+            .single();
+          
+          if (!petError && pet) {
+            // Pet found and belongs to user, include it in session
+            sessionData.pet_id = petId;
+            console.log(`Pet ${petId} verified and added to session`);
+          } else {
+            // Pet not found or doesn't belong to user
+            console.log(`Warning: Pet ID ${petId} not found or doesn't belong to user, creating session without pet reference`);
+            // Continue without pet_id
+          }
+        } catch (petError) {
+          console.error('Error verifying pet:', petError);
+          // Continue without pet_id
+        }
       }
       
+      console.log('Creating chat session with data:', JSON.stringify(sessionData));
+      
+      // Make sure auth is refreshed before creating the session
+      await this.refreshAuthIfNeeded();
+      
+      // Create the session
       const { data, error } = await supabase
         .from('chat_sessions')
         .insert(sessionData)
@@ -71,19 +91,53 @@ class ChatRepository {
 
       if (error) {
         console.error('Error creating chat session:', error);
+        console.error('Error details:', JSON.stringify(error));
         return null;
       }
 
+      console.log(`Chat session created with ID: ${data?.id}`);
       return data?.id || null;
     } catch (error) {
       console.error('Exception creating chat session:', error);
+      if (error instanceof Error) {
+        console.error('Error details:', error.message);
+        if (error.stack) console.error('Stack trace:', error.stack);
+      }
       return null;
+    }
+  }
+  
+  // Helper method to refresh auth token if needed
+  private async refreshAuthIfNeeded(): Promise<void> {
+    try {
+      // Get the current session
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // If no session or it's about to expire, refresh it
+      if (!session) {
+        console.log('ChatRepository: No active session, attempting to refresh');
+        await supabase.auth.refreshSession();
+        return;
+      }
+      
+      // Check if token will expire in the next 5 minutes
+      const tokenExpiry = session.expires_at ? new Date(session.expires_at * 1000) : null;
+      const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+      
+      if (tokenExpiry && tokenExpiry < fiveMinutesFromNow) {
+        console.log('ChatRepository: Token expiring soon, refreshing session');
+        await supabase.auth.refreshSession();
+      }
+    } catch (error) {
+      console.error('ChatRepository: Error refreshing auth:', error);
     }
   }
 
   // Update the session's last update time
   async updateSessionTimestamp(sessionId: string): Promise<void> {
     try {
+      await this.refreshAuthIfNeeded();
+      
       const { error } = await supabase
         .from('chat_sessions')
         .update({ updated_at: new Date().toISOString() })
@@ -105,29 +159,54 @@ class ChatRepository {
     tokens?: number
   ): Promise<string | null> {
     try {
+      if (!sessionId) {
+        console.error('Error: Cannot add message - no session ID provided');
+        throw new Error('Session ID is required to add a message');
+      }
+
+      console.log(`Adding message to session ${sessionId}, role: ${role}, content length: ${content.length}`);
+      
       // Update the session timestamp
       await this.updateSessionTimestamp(sessionId);
 
+      const messageData = {
+        session_id: sessionId,
+        content,
+        role,
+        timestamp: new Date().toISOString(),
+        tokens
+      };
+
+      console.log('Message data prepared:', JSON.stringify({
+        session_id: sessionId,
+        role,
+        content_length: content.length,
+        tokens
+      }));
+      
+      // Ensure auth is refreshed before adding message
+      await this.refreshAuthIfNeeded();
+
       const { data, error } = await supabase
         .from('chat_messages')
-        .insert({
-          session_id: sessionId,
-          content,
-          role,
-          timestamp: new Date().toISOString(),
-          tokens
-        })
+        .insert(messageData)
         .select('id')
         .single();
 
       if (error) {
         console.error('Error adding chat message:', error);
+        console.error('Error details:', JSON.stringify(error));
         return null;
       }
 
+      console.log(`Message added successfully with ID: ${data?.id}`);
       return data?.id || null;
     } catch (error) {
       console.error('Exception adding chat message:', error);
+      if (error instanceof Error) {
+        console.error('Error details:', error.message);
+        if (error.stack) console.error('Stack trace:', error.stack);
+      }
       return null;
     }
   }
@@ -135,6 +214,8 @@ class ChatRepository {
   // Get all messages for a session
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
+      await this.refreshAuthIfNeeded();
+      
       const { data, error } = await supabase
         .from('chat_messages')
         .select('*')
@@ -156,6 +237,8 @@ class ChatRepository {
   // Get recent sessions for a user
   async getUserSessions(userId: string, limit: number = 10): Promise<ChatSession[]> {
     try {
+      await this.refreshAuthIfNeeded();
+      
       const { data, error } = await supabase
         .from('chat_sessions')
         .select('*')
@@ -178,6 +261,8 @@ class ChatRepository {
   // Delete a chat session and its messages
   async deleteSession(sessionId: string): Promise<boolean> {
     try {
+      await this.refreshAuthIfNeeded();
+      
       // First delete all messages in the session
       const { error: messagesError } = await supabase
         .from('chat_messages')

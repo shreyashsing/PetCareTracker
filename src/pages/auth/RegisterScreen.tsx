@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { useAuth } from '../../contexts/AuthContext';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { useAuth } from '../../providers/AuthProvider';
 import { useAppColors } from '../../hooks/useAppColors';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
@@ -11,16 +11,26 @@ const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) => {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
-  const { register } = useAuth();
+  const { signUp } = useAuth();
   const { colors } = useAppColors();
 
   const handleRegister = async () => {
     try {
-      await register(email, password, displayName);
-      // Navigation will be handled by AppNavigator
-    } catch (error) {
+      const { error, data } = await signUp(email, password);
+      
+      if (error) {
+        Alert.alert('Registration Failed', error.message || 'Unable to create account');
+        return;
+      }
+      
+      // If successful, navigation will be handled by AppNavigator
+      Alert.alert(
+        'Registration Successful', 
+        'Your account has been created. Please check your email for verification instructions.'
+      );
+    } catch (error: any) {
       console.error('Registration failed', error);
-      // Handle error (show message)
+      Alert.alert('Registration Failed', error.message || 'An unexpected error occurred');
     }
   };
 

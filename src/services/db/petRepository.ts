@@ -3,6 +3,8 @@ import { STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
 import { supabase, camelToSnake, snakeToCamel } from '../../services/supabase';
 import { generateUUID } from '../../utils/helpers';
+import { formatDateForSupabase } from '../../utils/dateUtils';
+import { createPetForSupabase } from '../../utils/petSync';
 
 /**
  * Repository for managing Pet entities
@@ -18,34 +20,63 @@ export class PetRepository extends BaseRepository<Pet> {
    * @returns Created pet
    */
   async create(pet: Pet): Promise<Pet> {
+    console.log('PetRepository.create called with pet:', JSON.stringify({
+      id: pet.id,
+      name: pet.name, 
+      userId: pet.userId
+    }));
+    
     try {
       // First save to AsyncStorage (using parent implementation)
       await super.create(pet);
+      console.log('Pet saved to AsyncStorage successfully');
       
-      // Then save to Supabase
-      const newPet = {
-        ...camelToSnake(pet),
-        id: pet.id,
-        created_at: new Date().toISOString(),
-      };
-      
-      console.log('Saving pet to Supabase:', JSON.stringify(newPet));
-      
-      const { data, error } = await supabase
-        .from('pets')
-        .insert([newPet])
-        .select()
-        .single();
-      
-      if (error) {
-        console.error('Error creating pet in Supabase:', error);
-        console.error('Error details:', JSON.stringify(error));
+      // Then try to save to Supabase using the correct schema structure
+      try {
+        // Use the same function that works during sync to ensure schema compatibility
+        const petData = createPetForSupabase(pet);
         
-        // Return the pet anyway since it's saved in AsyncStorage
-        return pet;
+        console.log('Attempting to save pet to Supabase:', JSON.stringify({
+          id: petData.id,
+          name: petData.name,
+          user_id: petData.user_id
+        }));
+        
+        const { data, error } = await supabase
+          .from('pets')
+          .insert([petData])
+          .select()
+          .single();
+        
+        if (error) {
+          console.error('Error creating pet in Supabase:', error);
+          console.error('Error details:', JSON.stringify(error));
+          
+          // Additional diagnostics for specific error types
+          if (error.code === '42P01') {
+            console.error('The pets table does not exist in Supabase');
+          } else if (error.code === '42703') {
+            console.error('Column error - schema mismatch between app and Supabase');
+            console.error('Error message:', error.message);
+            // Log the full petData object to see what fields might be causing issues
+            console.error('Pet data structure:', Object.keys(petData).join(', '));
+          } else if (error.code === '23505') {
+            console.error('Unique constraint violation - pet ID already exists');
+          } else if (error.code === '23503') {
+            console.error('Foreign key constraint violation - user_id may not exist');
+          }
+          
+          console.log('Pet was saved to local storage only. Will sync later when Supabase is available.');
+        } else {
+          console.log('Pet saved to Supabase successfully:', data);
+          return snakeToCamel<Pet>(data);
+        }
+      } catch (supabaseError) {
+        console.error('Exception saving to Supabase:', supabaseError);
+        console.log('Pet was saved to local storage only. Will sync later when Supabase is available.');
       }
       
-      console.log('Pet saved to Supabase successfully:', data);
+      // Return the pet regardless of whether Supabase save succeeded
       return pet;
     } catch (error) {
       console.error('Exception creating pet in repository:', error);
@@ -73,14 +104,19 @@ export class PetRepository extends BaseRepository<Pet> {
       }
       
       if (data && data.length > 0) {
+        console.log(`Found ${data.length} pets in Supabase for user ${userId}`);
         return snakeToCamel<Pet[]>(data);
+      } else {
+        console.log(`No pets found in Supabase for user ${userId}, checking local storage...`);
       }
     } catch (e) {
       console.error('Exception fetching pets from Supabase:', e);
     }
     
     // Fallback to local storage
-    return this.find(pet => pet.userId === userId);
+    const localPets = await this.find(pet => pet.userId === userId);
+    console.log(`Found ${localPets.length} pets in local storage for user ${userId}`);
+    return localPets;
   }
 
   /**

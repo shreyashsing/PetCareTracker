@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { 
   Form, 
   Input, 
@@ -31,10 +31,17 @@ import { Pet } from '../types/components';
 import { databaseManager, STORAGE_KEYS } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../providers/AuthProvider';
 import { generateUUID } from '../utils/helpers';
 
-type AddFirstPetScreenProps = NativeStackScreenProps<RootStackParamList, 'AddFirstPet'>;
+// Define a simple type for our App Navigator parameter list that only contains what we need
+type AppRootStackParamList = {
+  AddFirstPet: undefined;
+  MainStack: undefined;
+};
+
+// Use the AppRootStackParamList for the component props
+type AddFirstPetScreenProps = NativeStackScreenProps<AppRootStackParamList, 'AddFirstPet'>;
 
 type PetType = 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
 
@@ -234,8 +241,17 @@ const AddFirstPet: React.FC<AddFirstPetScreenProps> = ({ navigation }) => {
         [
           {
             text: 'OK',
-            onPress: () => {
-              // Navigation will automatically redirect to Main screen due to AppNavigator logic
+            onPress: async () => {
+              // Instead of trying to navigate, we'll rely on the AppNavigator's
+              // automatic re-rendering when returning to the app
+              // This will trigger AppNavigator to detect that we now have pets
+              
+              // Nothing needs to be done here - the AppNavigator will automatically
+              // detect that pets have been added the next time it checks
+              // (which happens when components re-render after we dismiss this alert)
+              
+              // If the app's UI doesn't update automatically, restart the app
+              console.log("Pet added successfully - returning to home");
             }
           }
         ]

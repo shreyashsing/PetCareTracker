@@ -28,7 +28,7 @@ import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate, calculateAge } from '../utils/helpers';
 import { useAppColors } from '../hooks/useAppColors';
 import Footer from '../components/layout/Footer';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../providers/AuthProvider';
 
 const { width } = Dimensions.get('window');
 
@@ -802,6 +802,25 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 <Text style={styles.actionButtonText}>View Full Health Record</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Pet Assistant Card */}
+            <TouchableOpacity 
+              style={[styles.petAssistantCard, { backgroundColor: colors.card }]}
+              onPress={() => navigation.navigate('ChatAssistant' as any, { petId: activePetId })}
+            >
+              <View style={styles.petAssistantIconContainer}>
+                <Ionicons name="chatbubble-ellipses" size={28} color={colors.primary} />
+              </View>
+              <View style={styles.petAssistantContent}>
+                <Text style={[styles.petAssistantTitle, { color: colors.text }]}>
+                  Pet Assistant
+                </Text>
+                <Text style={[styles.petAssistantDescription, { color: colors.text + '99' }]}>
+                  Get answers to all your pet care questions
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={24} color={colors.text + '80'} />
+            </TouchableOpacity>
           </>
         )}
       </ScrollView>
@@ -1176,6 +1195,39 @@ const styles = StyleSheet.create({
     fontSize: 20,
     textAlign: 'center',
     lineHeight: 24,
+  },
+  petAssistantCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginVertical: 12,
+    padding: 16,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  petAssistantIconContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  petAssistantContent: {
+    flex: 1,
+  },
+  petAssistantTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  petAssistantDescription: {
+    fontSize: 14,
   },
 });
 

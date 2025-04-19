@@ -113,7 +113,7 @@ export const AddFirstPet: React.FC = () => {
           phone: '',
           clinic: ''
         },
-        insuranceInfo: undefined, // Not collecting this in the first pet flow
+         // Not collecting this in the first pet flow
         status: 'healthy' // Default to healthy
       };
       

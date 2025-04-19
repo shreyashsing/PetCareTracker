@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -11,13 +11,15 @@ import {
   Alert,
   Platform,
   Modal,
-  FlatList
+  FlatList,
+  TextInput
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
+import { AppUser } from '../contexts/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
 import Footer from '../components/layout/Footer';
 import { databaseManager, STORAGE_KEYS } from '../services/db';
@@ -25,6 +27,8 @@ import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
 import { notificationService } from '../services/notifications';
+import { MainStackParamList } from '../types/navigation';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 // Simple button components
 const BackButton = ({ color }: { color: string }) => (
@@ -55,7 +59,7 @@ const IconWrapper = ({
   size = 20, 
   color = "#666" 
 }: { 
-  name: any; // Using any as a temporary workaround for the Ionicons name type
+  name: keyof typeof Ionicons.glyphMap; // Fix any type to proper Ionicons type
   size?: number; 
   color?: string;
 }) => (
@@ -67,30 +71,32 @@ const IconWrapper = ({
 );
 
 const Settings = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [reminderTimes, setReminderTimes] = useState<string>('15'); // Default 15 minutes
   const [soundEnabled, setSoundEnabled] = useState(true);
   const { colors, isDark } = useAppColors();
-  const { user, logout } = useAuth();
+  const { user, signOut } = useAuth();
+  const appUser = user as AppUser; // Cast to AppUser type for TypeScript
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [pets, setPets] = useState<Pet[]>([]);
   const [showPetModal, setShowPetModal] = useState(false);
   const { activePetId, setActivePetId } = useActivePet();
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalType, setModalType] = useState<'profile' | 'apiKey'>('profile');
+  const [apiKey, setApiKey] = useState('');
   
-  // Load pets on component mount
-  useEffect(() => {
-    loadPets();
-  }, []);
-  
-  // Load user preferences and notification permissions on component mount
-  useEffect(() => {
-    loadUserPreferences();
-    checkNotificationPermissions();
-  }, []);
-  
-  const loadPets = async () => {
+  // Check notification permissions using the notification service
+  const checkNotificationPermissions = async () => {
+    const hasPermission = await notificationService.hasPermission();
+    if (!hasPermission) {
+      setNotificationsEnabled(false);
+    }
+  };
+
+  // Load pets from database
+  const loadPets = useCallback(async () => {
     try {
       if (!user) {
         console.error('No user logged in');
@@ -103,26 +109,31 @@ const Settings = () => {
     } catch (error) {
       console.error('Error loading pets:', error);
     }
-  };
+  }, [user]);
 
   // Load user preferences from database
-  const loadUserPreferences = async () => {
+  const loadUserPreferences = useCallback(async () => {
     try {
-      if (user && user.preferences) {
-        setNotificationsEnabled(user.preferences.pushNotifications || false);
+      if (appUser?.preferences) {
+        // Use optional chaining with our appUser
+        const pushNotifications = appUser.preferences.pushNotifications;
+        setNotificationsEnabled(pushNotifications !== undefined ? pushNotifications : false);
       }
     } catch (error) {
       console.error('Error loading user preferences:', error);
     }
-  };
+  }, [appUser]);
   
-  // Check notification permissions using the notification service
-  const checkNotificationPermissions = async () => {
-    const hasPermission = await notificationService.hasPermission();
-    if (!hasPermission) {
-      setNotificationsEnabled(false);
-    }
-  };
+  // Load data on component mount
+  useEffect(() => {
+    loadPets();
+  }, [loadPets]); 
+  
+  // Load user preferences and notification permissions on component mount
+  useEffect(() => {
+    loadUserPreferences();
+    checkNotificationPermissions();
+  }, [loadUserPreferences]);
   
   // Toggle notifications and request permission if needed
   const toggleNotifications = async (value: boolean) => {
@@ -158,14 +169,16 @@ const Settings = () => {
         // Update local state
         setNotificationsEnabled(value);
         
-        // Update user preferences in database
-        const updatedUser = { ...user } as any;
-        if (!updatedUser.preferences) {
-          updatedUser.preferences = {};
-        }
-        updatedUser.preferences.pushNotifications = value;
+        // Update user preferences in database using the appUser
+        const updatedPrefs = {
+          ...(appUser.preferences || {}),
+          pushNotifications: value
+        };
         
-        await databaseManager.users.update(user.id, updatedUser);
+        // We only update the preferences part to avoid type issues with other User fields
+        await databaseManager.users.update(user.id, {
+          preferences: updatedPrefs
+        });
       }
     } catch (error) {
       console.error('Error toggling notifications:', error);
@@ -179,14 +192,14 @@ const Settings = () => {
 
   // Get the user's initial for the avatar
   const getUserInitial = () => {
-    if (!user) return '?';
+    if (!appUser) return '?';
     
-    if (user.displayName && user.displayName.length > 0) {
-      return user.displayName.charAt(0).toUpperCase();
+    if (appUser.displayName && appUser.displayName.length > 0) {
+      return appUser.displayName.charAt(0).toUpperCase();
     }
     
-    if (user.email && user.email.length > 0) {
-      return user.email.charAt(0).toUpperCase();
+    if (appUser.email && appUser.email.length > 0) {
+      return appUser.email.charAt(0).toUpperCase();
     }
     
     return '?';
@@ -194,15 +207,15 @@ const Settings = () => {
   
   // Get user's display name
   const getDisplayName = () => {
-    if (!user) return 'Guest';
+    if (!appUser) return 'Guest';
     
-    if (user.displayName) {
-      return user.displayName;
+    if (appUser.displayName) {
+      return appUser.displayName;
     }
     
     // If no display name, use the part of the email before @
-    if (user.email) {
-      const emailParts = user.email.split('@');
+    if (appUser.email) {
+      const emailParts = appUser.email.split('@');
       if (emailParts.length > 0) {
         // Capitalize the first letter
         const name = emailParts[0];
@@ -291,17 +304,19 @@ const Settings = () => {
   
   const handleLogout = async () => {
     try {
-      await logout();
-      // Navigation will automatically redirect to login via AppNavigator
+      await signOut();
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'AuthStack' as keyof MainStackParamList }],
+      });
     } catch (error) {
-      console.error('Error logging out:', error);
-      Alert.alert('Error', 'There was an error logging out. Please try again.');
+      console.error('Logout error:', error);
     }
   };
 
   const handleManagePets = () => {
-    // @ts-ignore - Workaround for type mismatch in navigation
-    navigation.navigate('AddPet');
+    // Navigate to the dedicated ManagePets screen
+    navigation.navigate('ManagePets');
   };
   
   const handleOpenChatAssistant = () => {
@@ -400,6 +415,10 @@ const Settings = () => {
         </View>
       </View>
     );
+  };
+
+  const handleOpenChatDebug = () => {
+    navigation.navigate('ChatDebug');
   };
 
   // Dynamic styles based on theme
@@ -579,7 +598,7 @@ const Settings = () => {
           <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>PET MANAGEMENT</Text>
         </View>
         
-        <TouchableOpacity 
+            <TouchableOpacity
           style={[styles.settingsItem, { borderBottomColor: colors.border }]}
           onPress={handleManagePets}
         >
@@ -588,7 +607,7 @@ const Settings = () => {
             <Text style={[styles.settingsItemText, { color: colors.text }]}>Manage Pets</Text>
           </View>
           <ForwardArrow color={colors.secondary} />
-        </TouchableOpacity>
+            </TouchableOpacity>
         
         <TouchableOpacity 
           style={[styles.settingsItem, { borderBottomColor: colors.border }]}
@@ -597,7 +616,7 @@ const Settings = () => {
           <View style={styles.settingsItemLeft}>
             <IconWrapper name="chatbubble-ellipses" color={colors.primary} />
             <Text style={[styles.settingsItemText, { color: colors.text }]}>Pet Assistant</Text>
-          </View>
+        </View>
           <ForwardArrow color={colors.secondary} />
         </TouchableOpacity>
 
@@ -605,6 +624,33 @@ const Settings = () => {
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>GENERAL</Text>
         </View>
+        
+        {/* Add Supabase section */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>DEVELOPER</Text>
+        </View>
+
+        <TouchableOpacity 
+          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
+          onPress={() => navigation.navigate('SupabaseSetup')}
+        >
+          <View style={styles.settingsItemLeft}>
+            <IconWrapper name="cloud-outline" color={colors.primary} />
+            <Text style={[styles.settingsItemText, { color: colors.text }]}>Supabase Setup</Text>
+          </View>
+          <ForwardArrow color={colors.secondary} />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
+          onPress={() => navigation.navigate('PetDebug')}
+        >
+          <View style={styles.settingsItemLeft}>
+            <IconWrapper name="bug-outline" color={colors.primary} />
+            <Text style={[styles.settingsItemText, { color: colors.text }]}>Pet Debug Tools</Text>
+          </View>
+          <ForwardArrow color={colors.secondary} />
+        </TouchableOpacity>
         
         <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
           <View style={styles.optionIconContainer}>
@@ -628,6 +674,63 @@ const Settings = () => {
           </View>
           <Text style={[styles.optionText, { color: '#F44336' }]}>Logout</Text>
           <ForwardArrow color="#F44336" />
+        </TouchableOpacity>
+
+        {/* Diagnostic Tools Section */}
+        <View style={[styles.sectionHeader, { backgroundColor: colors.card }]}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostic Tools</Text>
+          </View>
+          <TouchableOpacity style={styles.menuItem} onPress={handleOpenChatDebug}>
+            <View style={styles.menuItemLeft}>
+              <IconWrapper name="bug" color={colors.primary} />
+              <Text style={[styles.menuItemText, { color: colors.text }]}>Chat System Diagnostics</Text>
+            </View>
+            <ForwardArrow color={colors.secondary} />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => navigation.navigate('PetDebug')}
+          >
+            <View style={styles.menuItemLeft}>
+              <IconWrapper name="medkit" color={colors.primary} />
+              <Text style={[styles.menuItemText, { color: colors.text }]}>Pet Database Diagnostics</Text>
+            </View>
+            <ForwardArrow color={colors.secondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Pet Assistant API Key */}
+        <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>
+          Pet Assistant
+        </Text>
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => {
+            Alert.alert(
+              'Configure Gemini API Key',
+              'Enter your Gemini API key to use the Pet Assistant. You can get one from https://makersuite.google.com/',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { 
+                  text: 'Configure', 
+                  onPress: () => {
+                    // Open a dialog to input the API key
+                    // Since React Native doesn't have Alert.prompt on Android,
+                    // we'll create a modal for this
+                    setModalVisible(true);
+                    setModalType('apiKey');
+                  } 
+                }
+              ]
+            );
+          }}
+        >
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="key-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Configure API Key</Text>
+          <ForwardArrow color={colors.text + '80'} />
         </TouchableOpacity>
       </ScrollView>
       
@@ -657,7 +760,7 @@ const Settings = () => {
                   style={[styles.addPetButton, { backgroundColor: colors.primary }]}
                   onPress={() => {
                     setShowPetModal(false);
-                    navigation.navigate('AddPet' as never);
+                    navigation.navigate('AddPet');
                   }}
                 >
                   <Text style={{ color: 'white', fontWeight: 'bold' }}>Add a Pet</Text>
@@ -675,11 +778,95 @@ const Settings = () => {
         </View>
       </Modal>
       
+      {/* API Key Input Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible && modalType === 'apiKey'}
+        onRequestClose={() => {
+          setModalVisible(false);
+        }}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Configure Gemini API Key</Text>
+            <Text style={[styles.modalDescription, { color: colors.text + '99' }]}>
+              Enter your Gemini API key to enable the Pet Assistant. You can get one from Google MakerSuite.
+            </Text>
+            
+            <TextInput
+              style={[styles.modalInput, { 
+                backgroundColor: colors.background, 
+                color: colors.text,
+                borderColor: colors.border
+              }]}
+              placeholder="Enter Gemini API key"
+              placeholderTextColor={colors.text + '80'}
+              value={apiKey}
+              onChangeText={setApiKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.background }]}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.primary }]}
+                onPress={async () => {
+                  try {
+                    if (!apiKey.trim()) {
+                      Alert.alert('Error', 'Please enter a valid API key');
+                      return;
+                    }
+                    
+                    console.log('Settings: Attempting to set Gemini API key...');
+                    
+                    // Import the pet assistant service
+                    const { petAssistantService } = await import('../services/petAssistant');
+                    
+                    // Save the API key
+                    console.log('Settings: Calling petAssistantService.setApiKey()...');
+                    await petAssistantService.setApiKey(apiKey.trim());
+                    
+                    // Check if it's valid
+                    console.log('Settings: Calling petAssistantService.hasApiKey()...');
+                    const isValid = await petAssistantService.hasApiKey();
+                    console.log('Settings: API key validation result:', isValid);
+                    
+                    if (isValid) {
+                      console.log('Settings: API key configured successfully');
+                      Alert.alert('Success', 'API key configured successfully. You can now use the Pet Assistant.');
+                      setModalVisible(false);
+                      setApiKey('');
+                    } else {
+                      console.error('Settings: API key validation failed');
+                      Alert.alert('Error', 'Failed to validate API key. Please check and try again.');
+                    }
+                  } catch (error) {
+                    console.error('Settings: Error saving API key:', error);
+                    Alert.alert('Error', 'Failed to save API key. Please try again.');
+                  }
+                }}
+              >
+                <Text style={styles.modalButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
       <Footer />
     </View>
   );
 };
 
+// Define styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -779,6 +966,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     letterSpacing: 1,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
   iconPlaceholder: {
     alignItems: 'center',
@@ -814,6 +1005,13 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  modalDescription: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    marginTop: 10,
   },
   petList: {
     paddingHorizontal: 20,
@@ -915,6 +1113,88 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginLeft: 16,
   },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+  },
+  menuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  menuItemRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  menuItemText: {
+    flex: 1,
+    fontSize: 16,
+  },
+  menuItemValue: {
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  appInfo: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  appVersion: {
+    fontSize: 14,
+  },
+  section: {
+    padding: 20,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  settingTextContainer: {
+    flex: 1,
+  },
+  settingTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  settingDescription: {
+    fontSize: 14,
+  },
+  // API Key Modal styles
+  modalInput: {
+    width: '90%',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 20,
+    marginTop: 10,
+    alignSelf: 'center',
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '90%',
+    alignSelf: 'center',
+  },
+  modalButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    flex: 1,
+    marginHorizontal: 5,
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
 });
 
-export default Settings; 
+export default Settings;

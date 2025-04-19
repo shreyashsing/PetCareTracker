@@ -22,6 +22,7 @@ import { MedicationRepository } from './medicationRepository';
 import { PetRepository } from './petRepository';
 import { TaskRepository } from './taskRepository';
 import { UserRepository } from './userRepository';
+import { ActivitySessionRepository } from './activitySessionRepository';
 import { generateUUID } from '../../utils/helpers';
 import { Pet, Task, Meal, FoodItem, Medication, HealthRecord, WeightRecord, ActivitySession, User } from '../../types/components';
 import { supabase } from '../supabase';
@@ -39,6 +40,7 @@ export class DatabaseManager {
   healthRecords: HealthRecordRepository;
   medications: MedicationRepository;
   users: UserRepository;
+  activitySessions: ActivitySessionRepository;
 
   constructor() {
     // Initialize repositories
@@ -49,6 +51,7 @@ export class DatabaseManager {
     this.healthRecords = new HealthRecordRepository();
     this.medications = new MedicationRepository();
     this.users = new UserRepository();
+    this.activitySessions = new ActivitySessionRepository();
   }
 
   /**
@@ -140,11 +143,6 @@ export class DatabaseManager {
         name: "Dr. Sarah Johnson",
         phone: "555-123-4567",
         clinic: "Pawsome Veterinary Clinic"
-      },
-      insuranceInfo: {
-        provider: "PetProtect Insurance",
-        policyNumber: "PP-76543210",
-        expiryDate: new Date(2023, 11, 31) // December 31, 2023
       },
       status: "healthy"
     };

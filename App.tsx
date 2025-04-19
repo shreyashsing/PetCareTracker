@@ -21,7 +21,7 @@ setupLogBoxIgnores(LogBox);
 
 // Import providers directly with correct exports
 import { ToastProvider } from './src/hooks/use-toast';
-import { AuthProvider } from './src/contexts/AuthContext';
+import { AuthProvider } from './src/providers/AuthProvider';
 import { ActivePetProvider } from './src/hooks/useActivePet';
 import AppNavigator from './src/navigation/AppNavigator';
 
@@ -33,6 +33,7 @@ import { AsyncStorageService } from './src/services/db/asyncStorage';
 import { databaseManager, STORAGE_KEYS } from './src/services/db';
 import { securityService, SecurityMode } from './src/services/security';
 import { runMigrationsToEnsureTablesExist } from './src/services/db/migrations';
+import { supabase, checkSession } from './src/services/supabase';
 
 // Create query client with defaultOptions to silence the 'no queryFn' warnings
 const queryClient = new QueryClient({
@@ -56,6 +57,38 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [securityInitialized, setSecurityInitialized] = useState<boolean>(false);
   const [notificationsInitialized, setNotificationsInitialized] = useState<boolean>(false);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
+
+  // Initialize and check authentication
+  useEffect(() => {
+    const checkAuthentication = async () => {
+      try {
+        console.log('App: Checking authentication on startup...');
+        // First check if we have a valid session, if not, attempt to refresh
+        const hasValidSession = await checkSession();
+        
+        if (!hasValidSession) {
+          console.log('App: No valid session detected, attempting refresh...');
+          // Try to get the current session and refresh it
+          const { data } = await supabase.auth.refreshSession();
+          
+          if (data.session) {
+            console.log('App: Session successfully refreshed on startup');
+          } else {
+            console.log('App: No session available, user needs to log in');
+          }
+        } else {
+          console.log('App: Valid authentication session confirmed');
+        }
+      } catch (error) {
+        console.error('App: Error checking authentication:', error);
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    
+    checkAuthentication();
+  }, []);
 
   // Initialize security service
   useEffect(() => {
@@ -90,6 +123,9 @@ export default function App() {
     
     initializeSecurity();
   }, []);
+
+  // Wait for all initialization steps to complete
+  const isInitialized = securityInitialized && dbInitialized && notificationsInitialized && authChecked;
 
   useEffect(() => {
     const initializeDatabase = async () => {
@@ -133,7 +169,6 @@ export default function App() {
               await checkSupabaseTables();
               
               // If user is authenticated, also check permissions
-              const { supabase } = require('./src/services/supabase');
               const { data: { user } } = await supabase.auth.getUser();
               
               if (user) {

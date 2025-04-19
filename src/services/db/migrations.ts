@@ -350,187 +350,277 @@ export const runMigrationsToEnsureTablesExist = async (): Promise<boolean> => {
 
 // Add the chat tables SQL
 export const createChatTablesSQL = `
--- Chat Sessions table
-CREATE TABLE IF NOT EXISTS chat_sessions (
+-- Enable UUID extension if not already enabled
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Check if chat_sessions table exists and modify/create it
+DO $$
+BEGIN
+    -- Check if chat_sessions table exists
+    IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'chat_sessions') THEN
+        -- Table exists, try to modify the foreign key if it exists
+        BEGIN
+            -- Drop existing constraint if it exists (might fail if it doesn't exist)
+            ALTER TABLE chat_sessions DROP CONSTRAINT IF EXISTS chat_sessions_pet_id_fkey;
+            
+            -- Add a more flexible foreign key constraint
+            ALTER TABLE chat_sessions ADD CONSTRAINT chat_sessions_pet_id_fkey 
+            FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+            
+            RAISE NOTICE 'Modified chat_sessions foreign key constraint';
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Error modifying foreign key constraint: %', SQLERRM;
+        END;
+    ELSE
+        -- Create chat_sessions table if it doesn't exist
+        CREATE TABLE chat_sessions (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID NOT NULL,
+            pet_id UUID,
+            title TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_message TEXT,
+            last_message_at TIMESTAMPTZ,
+            CONSTRAINT chat_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+            CONSTRAINT chat_sessions_pet_id_fkey FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
+        );
+        
+        -- Create indexes for chat_sessions
+        CREATE INDEX chat_sessions_user_id_idx ON chat_sessions(user_id);
+        CREATE INDEX chat_sessions_pet_id_idx ON chat_sessions(pet_id);
+        
+        RAISE NOTICE 'Created chat_sessions table';
+    END IF;
+    
+    -- Check if chat_messages table exists
+    IF NOT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'chat_messages') THEN
+        -- Create chat_messages table if it doesn't exist
+        CREATE TABLE chat_messages (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            session_id UUID NOT NULL,
+            user_id UUID NOT NULL,
+            content TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT chat_messages_session_id_fkey FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            CONSTRAINT chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+        );
+        
+        -- Create indexes for chat_messages
+        CREATE INDEX chat_messages_session_id_idx ON chat_messages(session_id);
+        CREATE INDEX chat_messages_user_id_idx ON chat_messages(user_id);
+        
+        RAISE NOTICE 'Created chat_messages table';
+    END IF;
+    
+    -- Enable Row Level Security on chat_sessions
+    ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+    
+    -- Drop existing policies if they exist
+    DROP POLICY IF EXISTS "Users can view their own chat sessions" ON chat_sessions;
+    DROP POLICY IF EXISTS "Users can insert their own chat sessions" ON chat_sessions;
+    DROP POLICY IF EXISTS "Users can update their own chat sessions" ON chat_sessions;
+    DROP POLICY IF EXISTS "Users can delete their own chat sessions" ON chat_sessions;
+    
+    -- Create policies for chat_sessions
+    CREATE POLICY "Users can view their own chat sessions" 
+        ON chat_sessions FOR SELECT 
+        USING (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can insert their own chat sessions" 
+        ON chat_sessions FOR INSERT 
+        WITH CHECK (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can update their own chat sessions" 
+        ON chat_sessions FOR UPDATE 
+        USING (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can delete their own chat sessions" 
+        ON chat_sessions FOR DELETE 
+        USING (auth.uid() = user_id);
+        
+    -- Enable Row Level Security on chat_messages
+    ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+    
+    -- Drop existing policies if they exist
+    DROP POLICY IF EXISTS "Users can view their own chat messages" ON chat_messages;
+    DROP POLICY IF EXISTS "Users can insert their own chat messages" ON chat_messages;
+    DROP POLICY IF EXISTS "Users can update their own chat messages" ON chat_messages;
+    DROP POLICY IF EXISTS "Users can delete their own chat messages" ON chat_messages;
+    
+    -- Create policies for chat_messages
+    CREATE POLICY "Users can view their own chat messages" 
+        ON chat_messages FOR SELECT 
+        USING (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can insert their own chat messages" 
+        ON chat_messages FOR INSERT 
+        WITH CHECK (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can update their own chat messages" 
+        ON chat_messages FOR UPDATE 
+        USING (auth.uid() = user_id);
+    
+    CREATE POLICY "Users can delete their own chat messages" 
+        ON chat_messages FOR DELETE 
+        USING (auth.uid() = user_id);
+    
+    -- Grant permissions to authenticated users
+    GRANT ALL ON chat_sessions TO authenticated;
+    GRANT ALL ON chat_messages TO authenticated;
+    
+    RAISE NOTICE 'Set up RLS policies and permissions for chat tables';
+END $$;
+`;
+
+const createPetsTableSQL = `
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS pets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  pet_id UUID REFERENCES pets(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  breed TEXT,
+  birth_date TIMESTAMP WITH TIME ZONE,
+  gender TEXT,
+  weight NUMERIC,
+  weight_unit TEXT DEFAULT 'kg',
+  microchipped BOOLEAN DEFAULT false,
+  microchip_id TEXT,
+  neutered BOOLEAN DEFAULT false,
+  adoption_date TIMESTAMP WITH TIME ZONE,
+  color TEXT,
+  image TEXT,
+  medical_conditions TEXT[] DEFAULT '{}',
+  allergies TEXT[] DEFAULT '{}',
+  status TEXT DEFAULT 'healthy',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Add indexes for chat_sessions
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_pet_id ON chat_sessions(pet_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at ON chat_sessions(updated_at);
+-- Add indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id);
 
--- Chat Messages table
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  content TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
-  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  tokens INTEGER,
-  CONSTRAINT valid_content CHECK (length(content) > 0)
-);
+-- Set up Row Level Security
+ALTER TABLE pets ENABLE ROW LEVEL SECURITY;
 
--- Add indexes for chat_messages
-CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
+-- Create policies to allow users to view and modify their own pets
+CREATE POLICY "Users can view their own pets" 
+  ON pets 
+  FOR SELECT 
+  USING (auth.uid() = user_id);
 
--- RLS Policies for chat_sessions
-ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can insert their own pets" 
+  ON pets 
+  FOR INSERT 
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY chat_sessions_select_policy ON chat_sessions 
-  FOR SELECT USING (auth.uid() = user_id);
-  
-CREATE POLICY chat_sessions_insert_policy ON chat_sessions 
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-  
-CREATE POLICY chat_sessions_update_policy ON chat_sessions 
-  FOR UPDATE USING (auth.uid() = user_id);
-  
-CREATE POLICY chat_sessions_delete_policy ON chat_sessions 
-  FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "Users can update their own pets" 
+  ON pets 
+  FOR UPDATE 
+  USING (auth.uid() = user_id);
 
--- RLS Policies for chat_messages (through session)
-ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY chat_messages_select_policy ON chat_messages 
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM chat_sessions 
-      WHERE chat_sessions.id = session_id 
-      AND chat_sessions.user_id = auth.uid()
-    )
-  );
-  
-CREATE POLICY chat_messages_insert_policy ON chat_messages 
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM chat_sessions 
-      WHERE chat_sessions.id = session_id 
-      AND chat_sessions.user_id = auth.uid()
-    )
-  );
-  
-CREATE POLICY chat_messages_update_policy ON chat_messages 
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM chat_sessions 
-      WHERE chat_sessions.id = session_id 
-      AND chat_sessions.user_id = auth.uid()
-    )
-  );
-  
-CREATE POLICY chat_messages_delete_policy ON chat_messages 
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM chat_sessions 
-      WHERE chat_sessions.id = session_id 
-      AND chat_sessions.user_id = auth.uid()
-    )
-  );
+CREATE POLICY "Users can delete their own pets" 
+  ON pets 
+  FOR DELETE 
+  USING (auth.uid() = user_id);
 `;
 
 export const ensurePetsTableExists = async (): Promise<boolean> => {
-  console.log('Ensuring pets table exists in Supabase...');
-  
   try {
-    // Get the SQL from the file
-    const createPetsTableSQL = `
-      -- Create the pets table needed for the chat sessions foreign key
-      CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    // Check if the pets table exists
+    const { data, error } = await supabase
+      .from('pets')
+      .select('id, name')
+      .limit(1);
 
-      CREATE TABLE IF NOT EXISTS pets (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        breed TEXT,
-        birth_date TIMESTAMP WITH TIME ZONE,
-        gender TEXT,
-        weight NUMERIC,
-        weight_unit TEXT DEFAULT 'kg',
-        microchipped BOOLEAN DEFAULT false,
-        microchip_id TEXT,
-        neutered BOOLEAN DEFAULT false,
-        adoption_date TIMESTAMP WITH TIME ZONE,
-        color TEXT,
-        image TEXT,
-        medical_conditions TEXT[] DEFAULT '{}',
-        allergies TEXT[] DEFAULT '{}',
-        status TEXT DEFAULT 'healthy',
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Add indexes for better query performance
-      CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id);
-
-      -- Set up Row Level Security
-      ALTER TABLE pets ENABLE ROW LEVEL SECURITY;
-
-      -- Create policy to allow users to view and modify their own pets
-      CREATE POLICY "Users can view their own pets" 
-        ON pets 
-        FOR SELECT 
-        USING (auth.uid() = user_id);
-
-      CREATE POLICY "Users can insert their own pets" 
-        ON pets 
-        FOR INSERT 
-        WITH CHECK (auth.uid() = user_id);
-
-      CREATE POLICY "Users can update their own pets" 
-        ON pets 
-        FOR UPDATE 
-        USING (auth.uid() = user_id);
-
-      CREATE POLICY "Users can delete their own pets" 
-        ON pets 
-        FOR DELETE 
-        USING (auth.uid() = user_id);
-    `;
-    
-    // Execute SQL to create the pets table if needed
-    const { error } = await supabase.rpc('exec_sql', { sql: createPetsTableSQL });
-    
     if (error) {
-      console.error('Error creating pets table:', error);
-      
-      // If exec_sql function doesn't exist, try a more direct approach
-      if (error.message?.includes('function "exec_sql" does not exist')) {
-        console.log('exec_sql function not found, checking if pets table exists...');
-        
-        const { data: tablesData, error: tablesError } = await supabase
-          .from('information_schema.tables')
-          .select('table_name')
-          .eq('table_name', 'pets')
-          .eq('table_schema', 'public');
-          
-        if (tablesError) {
-          console.error('Error checking if pets table exists:', tablesError);
-          return false;
-        }
-        
-        if (!tablesData || tablesData.length === 0) {
-          console.log('Pets table not found. It needs to be created in the Supabase console.');
-          console.log('Please run the SQL from src/services/sql/create_pets_table.sql in the Supabase SQL Editor.');
-          return false;
-        }
-        
-        console.log('Pets table exists in Supabase.');
-        return true;
-      }
-      
+      console.log('Error checking pets table, it might not exist:', error.message);
+      console.log('To create the pets table, please run the SQL script in the Supabase SQL Editor:');
+      console.log(createPetsTableSQL);
       return false;
     }
+
+    console.log('Pets table exists and is accessible');
     
-    console.log('Pets table has been created or already exists in Supabase.');
+    // Get a count of pets to verify accessibility
+    const { count, error: countError } = await supabase
+      .from('pets')
+      .select('*', { count: 'exact', head: true });
+    
+    if (!countError) {
+      console.log(`Found ${count || 0} pets in the database`);
+    }
+    
+    // Try to run a manual check for the insurance_info column by attempting to query it
+    try {
+      const { error: insuranceError } = await supabase
+        .from('pets')
+        .select('insurance_info')
+        .limit(1);
+      
+      if (insuranceError && insuranceError.code === '42703') {
+        console.log('insurance_info column does not exist (good)');
+      } else if (!insuranceError) {
+        console.warn('The pets table has an insurance_info column that may cause issues!');
+        console.warn('Consider running the fix_pets_table.sql script in the Supabase SQL Editor.');
+      }
+    } catch (e) {
+      // Ignore this error, it's expected if the column doesn't exist
+    }
+    
     return true;
   } catch (error) {
-    console.error('Exception ensuring pets table exists:', error);
+    console.error('Error in ensurePetsTableExists:', error);
     return false;
+  }
+};
+
+export const ensureChatTablesExist = async (): Promise<boolean> => {
+  try {
+    // Check if the chat_sessions table exists
+    const { data: sessionData, error: sessionError } = await supabase
+      .from('chat_sessions')
+      .select('id')
+      .limit(1);
+
+    // Check if the chat_messages table exists
+    const { data: messageData, error: messageError } = await supabase
+      .from('chat_messages')
+      .select('id')
+      .limit(1);
+
+    if (sessionError || messageError) {
+      console.log('Error checking chat tables, they might not exist:', 
+        sessionError?.message || messageError?.message);
+      console.log('To create the chat tables, please run the SQL script in the Supabase SQL Editor:');
+      console.log(createChatTablesSQL);
+      return false;
+    }
+
+    console.log('Chat tables exist and are accessible');
+    return true;
+  } catch (error) {
+    console.error('Error in ensureChatTablesExist:', error);
+    return false;
+  }
+};
+
+export const initializeDatabase = async (): Promise<void> => {
+  try {
+    console.log('Starting database initialization...');
+    
+    // Ensure pets table exists
+    const petsTableExists = await ensurePetsTableExists();
+    console.log(`Pets table exists or was created: ${petsTableExists}`);
+    
+    // Ensure chat tables exist
+    const chatTablesExist = await ensureChatTablesExist();
+    console.log(`Chat tables exist or were created: ${chatTablesExist}`);
+    
+    console.log('Database initialization completed successfully');
+  } catch (error) {
+    console.error('Error initializing database:', error);
   }
 }; 

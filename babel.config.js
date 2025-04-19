@@ -42,7 +42,10 @@ module.exports = function(api) {
           "expo-modules-core/build/SharedObject": "./src/errors/SharedObject",
           "expo-modules-core/src/SharedRef": "./src/errors/SharedRef",
           "expo-modules-core/build/SharedRef": "./src/errors/SharedRef",
-          "RNCMaterialDatePicker": "./src/shims/RNCMaterialDatePicker"
+          "RNCMaterialDatePicker": "./src/shims/RNCMaterialDatePicker",
+          
+          // Replace react-native-keyboard-controller with an empty module
+          "react-native-keyboard-controller": "./src/shims/EmptyKeyboardController"
         }
       }, "combined-module-resolver"]
     ]

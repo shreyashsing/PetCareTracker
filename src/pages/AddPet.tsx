@@ -65,11 +65,6 @@ interface FormState {
     phone: string;
     clinic: string;
   };
-  insuranceInfo: {
-    provider: string;
-    policyNumber: string;
-    expiryDate: Date | undefined;
-  };
   status: 'healthy' | 'recovering' | 'ill' | 'chronic' | 'unknown';
 }
 
@@ -112,11 +107,6 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
       name: '',
       phone: '',
       clinic: ''
-    },
-    insuranceInfo: {
-      provider: '',
-      policyNumber: '',
-      expiryDate: undefined
     },
     status: 'healthy'
   });
@@ -312,7 +302,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         breed: formState.breed,
         birthDate: formState.birthDate || new Date(),
         gender: formState.gender,
-        weight: parseFloat(formState.weight), // Convert string to number
+        weight: parseFloat(formState.weight) || 0, // Use || 0 to ensure it's a number
         weightUnit: formState.weightUnit,
         microchipped: formState.microchipped,
         microchipId: formState.microchipId,
@@ -327,11 +317,6 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
           phone: formState.veterinarian.phone,
           clinic: formState.veterinarian.clinic
         },
-        insuranceInfo: formState.insuranceInfo.provider ? {
-          provider: formState.insuranceInfo.provider,
-          policyNumber: formState.insuranceInfo.policyNumber,
-          expiryDate: formState.insuranceInfo.expiryDate || new Date()
-        } : undefined,
         status: 'healthy'
       };
       
@@ -346,6 +331,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
         setActivePetId(petId);
         
+        // Navigate back to the main screen and show success message
         Alert.alert(
           'Success',
           'Pet added successfully! You can now start tracking your pet\'s care.',
@@ -361,24 +347,35 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
       } catch (dbError) {
         console.error('Error adding pet to database:', dbError);
         
-        // Still show success if the pet was added to local storage
-        // but failed to save to Supabase
-        Alert.alert(
-          'Partial Success',
-          'Your pet was saved locally, but there was an issue syncing with the cloud. Your data will sync when connection is restored.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                navigation.navigate('Main');
+        // Check if pet was saved to local storage at least
+        const savedPets = await databaseManager.pets.getAll();
+        const petWasSaved = savedPets.some(p => p.id === petId);
+        
+        if (petWasSaved) {
+          // Pet was saved locally but not to Supabase
+          await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
+          setActivePetId(petId);
+          
+          Alert.alert(
+            'Partial Success',
+            'Your pet was saved locally, but there was an issue syncing with the cloud. Your data will sync when connection is restored.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  navigation.navigate('Main');
+                }
               }
-            }
-          ]
-        );
+            ]
+          );
+        } else {
+          // Pet wasn't saved at all
+          throw new Error('Failed to save pet locally');
+        }
       }
     } catch (error) {
       console.error('Error adding pet:', error);
-      Alert.alert('Error', 'There was an error adding your pet. Please try again.');
+      Alert.alert('Error', 'There was a problem adding your pet. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -637,40 +634,6 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               touched={touched['veterinarian.phone']}
               keyboardType="phone-pad"
               containerStyle={styles.inputContainer}
-            />
-          </View>
-          
-          <View style={[styles.formSection, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Insurance Information</Text>
-            
-            <Input
-              label="Insurance Provider"
-              placeholder="Enter insurance provider"
-              value={formState.insuranceInfo.provider}
-              onChangeText={(value) => handleChange('insuranceInfo', {...formState.insuranceInfo, provider: value})}
-              error={errors['insuranceInfo.provider']}
-              touched={touched['insuranceInfo.provider']}
-              containerStyle={styles.inputContainer}
-            />
-            
-            <Input
-              label="Policy Number"
-              placeholder="Enter policy number"
-              value={formState.insuranceInfo.policyNumber}
-              onChangeText={(value) => handleChange('insuranceInfo', {...formState.insuranceInfo, policyNumber: value})}
-              error={errors['insuranceInfo.policyNumber']}
-              touched={touched['insuranceInfo.policyNumber']}
-              containerStyle={styles.inputContainer}
-            />
-            
-            <DatePicker
-              label="Policy Expiry Date"
-              value={formState.insuranceInfo.expiryDate || new Date()}
-              onChange={(date) => handleChange('insuranceInfo', {...formState.insuranceInfo, expiryDate: date})}
-              mode="date"
-              error={errors['insuranceInfo.expiryDate']}
-              containerStyle={styles.inputContainer}
-              allowMonthYearSelection={true}
             />
           </View>
           

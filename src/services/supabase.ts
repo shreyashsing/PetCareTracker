@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 
 // Use the imported environment variables
 const supabaseUrl = SUPABASE_URL;
@@ -17,42 +18,138 @@ if (!supabaseUrl || !supabaseAnonKey) {
   Alert.alert('Configuration Error', 'Missing Supabase credentials. Please check your .env file.');
 }
 
-// Create a custom storage implementation using AsyncStorage
+// Create a custom storage implementation using AsyncStorage with enhanced error handling
 const AsyncStorageWrapper = {
   getItem: async (key: string) => {
     try {
-      return await AsyncStorage.getItem(key);
+      const value = await AsyncStorage.getItem(key);
+      console.log(`Supabase Storage: Retrieved key ${key.substring(0, 15)}...`);
+      return value;
     } catch (error) {
-      console.error('Error getting item from AsyncStorage:', error);
+      console.error('Supabase Storage: Error getting item from AsyncStorage:', error);
       return null;
     }
   },
   setItem: async (key: string, value: string) => {
     try {
       await AsyncStorage.setItem(key, value);
+      console.log(`Supabase Storage: Stored key ${key.substring(0, 15)}...`);
     } catch (error) {
-      console.error('Error setting item in AsyncStorage:', error);
+      console.error('Supabase Storage: Error setting item in AsyncStorage:', error);
     }
   },
   removeItem: async (key: string) => {
     try {
       await AsyncStorage.removeItem(key);
+      console.log(`Supabase Storage: Removed key ${key.substring(0, 15)}...`);
     } catch (error) {
-      console.error('Error removing item from AsyncStorage:', error);
+      console.error('Supabase Storage: Error removing item from AsyncStorage:', error);
     }
   },
 };
 
-// Initialize the Supabase client with debug mode
+// Initialize the Supabase client with enhanced configuration
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     storage: AsyncStorageWrapper,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+    flowType: 'pkce',
     debug: __DEV__, // Enable debug mode in development
   },
+  global: {
+    headers: {
+      'X-Client-Info': `pet-care-tracker-mobile/${Platform.OS}`,
+    },
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
 });
+
+// Enhanced session checking utility
+export const checkSession = async (): Promise<boolean> => {
+  try {
+    console.log('Supabase: Checking session status...');
+    
+    // Check network connectivity first
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      console.warn('Supabase: Network appears to be offline, session check may fail');
+    }
+    
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error) {
+      console.error('Supabase: Session check error:', error);
+      return false;
+    }
+    
+    if (!session) {
+      console.warn('Supabase: No active session found');
+      return false;
+    }
+    
+    // Verify token has not expired
+    const tokenExpiry = session.expires_at ? new Date(session.expires_at * 1000) : null;
+    const now = new Date();
+    
+    if (tokenExpiry && tokenExpiry < now) {
+      console.warn('Supabase: Session has expired, needs refresh');
+      
+      // Try to refresh
+      const { data: refresh, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError || !refresh.session) {
+        console.error('Supabase: Failed to refresh expired session:', refreshError);
+        return false;
+      }
+      
+      console.log('Supabase: Successfully refreshed expired session');
+      return true;
+    }
+    
+    console.log('Supabase: Valid session confirmed');
+    return true;
+  } catch (error) {
+    console.error('Supabase: Unexpected error checking session:', error);
+    return false;
+  }
+};
+
+// Function to ensure queries have authentication
+export const ensureAuthQuery = async <T>(
+  queryFn: () => Promise<{ data: T | null; error: any }>
+): Promise<{ data: T | null; error: any }> => {
+  try {
+    // First check if we have a valid session
+    const isSessionValid = await checkSession();
+    
+    if (!isSessionValid) {
+      console.warn('Supabase: No valid session before query, attempting refresh');
+      const { data } = await supabase.auth.refreshSession();
+      
+      if (!data.session) {
+        return { 
+          data: null, 
+          error: new Error('Authentication required. Please log in again.') 
+        };
+      }
+    }
+    
+    // Execute the query with the refreshed session
+    return await queryFn();
+  } catch (error) {
+    console.error('Supabase: Error in ensureAuthQuery:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error : new Error('Unknown error in auth query') 
+    };
+  }
+};
 
 // Define type safe database interfaces based on your structure
 export type Tables = {

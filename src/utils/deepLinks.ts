@@ -1,6 +1,6 @@
 import * as Linking from 'expo-linking';
-import { authService } from '../services/auth/authService';
 import { Alert } from 'react-native';
+import { supabase } from '../services/supabase';
 
 /**
  * Initialize deep link handling for the app
@@ -53,7 +53,16 @@ const handleDeepLink = (url: string, navigation: any) => {
  */
 export const handlePasswordReset = async (token: string, newPassword: string): Promise<boolean> => {
   try {
-    return await authService.resetPassword(token, newPassword);
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+    
+    if (error) {
+      console.error('Error updating password:', error);
+      return false;
+    }
+    
+    return true;
   } catch (error) {
     console.error('Error handling password reset:', error);
     return false;

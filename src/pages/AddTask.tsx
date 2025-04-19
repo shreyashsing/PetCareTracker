@@ -63,6 +63,17 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
     reminderEnabled: true,
   });
 
+  // Check if navigated from Exercise screen
+  useEffect(() => {
+    // If navigated from the Exercise screen, pre-select 'exercise' category
+    if (navigation.getState().routes.find(r => r.name === 'Exercise')) {
+      setFormState(prev => ({
+        ...prev,
+        category: 'exercise'
+      }));
+    }
+  }, [navigation]);
+
   // Load task data if editing an existing task
   useEffect(() => {
     const loadTaskData = async () => {

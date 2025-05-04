@@ -398,10 +398,10 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       } else {
         // Verify that the active pet belongs to the current user
         const activePet = await databaseManager.pets.getById(petToLoadId);
-        if (activePet && activePet.userId !== user.id) {
-          // Active pet belongs to a different user, use the first pet of this user
+        if (!activePet || activePet.userId !== user.id) {
+          // Active pet belongs to a different user or doesn't exist, use the first pet of this user
           petToLoadId = pets[0].id;
-          console.log(`Active pet belongs to another user, setting first pet as active: ${petToLoadId}`);
+          console.log(`Active pet belongs to another user or doesn't exist, setting first pet as active: ${petToLoadId}`);
           await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
           setActivePetId(petToLoadId);
         }
@@ -433,8 +433,25 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
           setActivities(formattedActivities);
         } else {
           console.log(`Pet with ID ${petToLoadId} not found`);
-          setHasPets(false);
+          
+          // If the active pet can't be found but we know pets exist,
+          // try to use the first pet in the list as a fallback
+          if (pets.length > 0) {
+            console.log(`Falling back to first pet: ${pets[0].name} (${pets[0].id})`);
+            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, pets[0].id);
+            setActivePetId(pets[0].id);
+            setActivePet(pets[0]);
+            setHealthStatus(pets[0].status);
+            
+            // Force a re-render to show the pet data
+            setTimeout(() => loadData(), 100);
+          } else {
+            setHasPets(false);
+          }
         }
+      } else {
+        console.log("No pet ID to load after all checks");
+        setHasPets(false);
       }
     } catch (error) {
       console.error('Error loading home data:', error);
@@ -577,19 +594,49 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 const activeId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
                 console.log(`Debug: Active pet ID: ${activeId}`);
                 
-                // Force reload data
-                toast({ 
-                  title: `${userPets.length} pets found for this user`, 
-                  description: userPets.length > 0 ? 'Reloading data...' : 'No pets for this user',
-                  variant: 'default'
-                });
+                // Check if there's a mismatch between hasPets and actual pets
+                if (userPets.length > 0 && !hasPets) {
+                  console.log("Debug: Data inconsistency - pets exist but hasPets is false");
+                  
+                  // Fix: Reset active pet ID and force reload
+                  if (userPets.length > 0) {
+                    await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, userPets[0].id);
+                    console.log(`Debug: Reset active pet ID to first pet: ${userPets[0].id}`);
+                    
+                    toast({ 
+                      title: "Fixed pet data inconsistency", 
+                      description: `Set active pet to: ${userPets[0].name}`,
+                      variant: 'default'
+                    });
+                  }
+                } else if (userPets.length === 0 && hasPets) {
+                  console.log("Debug: Data inconsistency - hasPets is true but no pets exist");
+                  setHasPets(false);
+                  toast({ 
+                    title: "Fixed state inconsistency", 
+                    description: "Updated UI to show no pets",
+                    variant: 'default'
+                  });
+                  return;
+                } else {
+                  toast({ 
+                    title: `${userPets.length} pets found for this user`, 
+                    description: userPets.length > 0 ? 'Reloading data...' : 'No pets for this user',
+                    variant: 'default'
+                  });
+                }
                 
-                // If pets exist but we're showing the empty state, force reload
+                // Force reload data
                 if (userPets.length > 0) {
                   loadData();
                 }
-              } catch (error) {
+              } catch (error: any) {
                 console.error('Debug error:', error);
+                toast({ 
+                  title: "Debug error", 
+                  description: error.message || "Unknown error",
+                  variant: 'destructive'
+                });
               }
             }}
           >
@@ -1232,4 +1279,3 @@ const styles = StyleSheet.create({
 });
 
 // Export with React.memo for better performance
-export default React.memo(Home); 

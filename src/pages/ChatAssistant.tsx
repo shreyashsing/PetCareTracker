@@ -28,7 +28,6 @@ import { petAssistantService } from '../services/petAssistant';
 import { ChatMessage as GeminiChatMessage } from '../services/petAssistant/geminiService';
 import { supabase } from '../services/supabase';
 import { MainStackParamList } from '../types/navigation';
-import { useAuth } from '../providers/AuthProvider';
 import { runFixedSqlScript } from '../utils/runSqlFix';
 import { getChatTablesSQLFix, diagnoseChatTables, fixTitleColumnIssue } from '../utils/chatDiagnostics';
 import { debugAuth, refreshAuth } from '../utils/authDebug';
@@ -37,7 +36,6 @@ import { useAppStore } from '../store/AppStore';
 import { usePetStore } from '../store/PetStore';
 import { useErrorReporting } from '../utils/error-reporting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { GEMINI_API_KEY } from '@env';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
@@ -456,42 +454,27 @@ const ChatAssistant = () => {
   };
   
   // API key handling
-  const checkApiKey = useCallback(async () => {
+  const checkApiKey = async () => {
     try {
-      // First try the env variable
-      if (GEMINI_API_KEY) {
-        console.log('ChatAssistant: Using API key from environment');
-        await petAssistantService.setApiKey(GEMINI_API_KEY);
+      // Check if the backend API is available
+      const hasApiKey = await petAssistantService.hasApiKey();
+      
+      if (hasApiKey) {
+        setApiKey('server-managed');
         setApiKeySet(true);
         return true;
+      } else {
+        setApiKeySet(false);
+        setApiKeyError('The chat assistant is not available. Please contact support.');
+        return false;
       }
-      
-      // Then try to get from storage
-      const storedKey = await AsyncStorage.getItem('gemini_api_key');
-      if (storedKey) {
-        console.log('ChatAssistant: Using API key from storage');
-        await petAssistantService.setApiKey(storedKey);
-        setApiKeySet(true);
-        return true;
-      }
-      
-      // No API key found, prompt user to enter one
-      console.log('ChatAssistant: No API key found, showing prompt');
-      setShowApiKeyInput(true);
-      setApiKeySet(false);
-      setError('API key required. Please configure it in settings or enter below.');
-      return false;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error checking API key:', error);
-      if (reportError) {
-        reportError(error, 'ChatAssistant.checkApiKey');
-      }
-      setError(`Error with API key: ${error.message || 'Unknown error'}`);
-      setShowApiKeyInput(true);
       setApiKeySet(false);
+      setApiKeyError('Unable to connect to the chat assistant. Please try again later.');
       return false;
     }
-  }, [reportError]);
+  };
   
   // Initialize chat with proper dependencies and better error handling
   const initializeChat = useCallback(async () => {
@@ -547,7 +530,7 @@ const ChatAssistant = () => {
       setSessionId(session.id);
       
       // Load messages for this session
-      let chatMessages = [];
+      let chatMessages: GeminiChatMessage[] = [];
       try {
         console.log('ChatAssistant: Loading messages for session...');
         chatMessages = await petAssistantService.getChatMessages(session.id);
@@ -672,7 +655,7 @@ const ChatAssistant = () => {
       processSendMessage({
         role: 'user',
         content: messageText.trim()
-      });
+      } as GeminiChatMessage);
     } catch (error: any) {
       if (reportError) reportError(error);
       console.error('Error in handleSendMessage:', error);
@@ -748,77 +731,80 @@ const ChatAssistant = () => {
     setIsLoading(true);
     
     try {
-      // Use a simple try/catch to prevent navigation from authentication errors
-      try {
-        console.log('ChatAssistant: Sending message with user ID:', user.id);
-        
-        // If no session exists, create one first
-        if (!sessionId) {
-          console.log('No session ID, creating one first');
+      console.log('ChatAssistant: Sending message with user ID:', user.id);
+      
+      // If no session exists, create one first
+      if (!sessionId) {
+        console.log('No session ID, creating one first');
+        try {
           const newSession = await petAssistantService.startNewSession(user.id, petId);
           
           if (newSession) {
             console.log('Created new session:', newSession);
             setSessionId(newSession);
           } else {
-            throw new Error('Failed to create chat session');
+            console.warn('Failed to create chat session, continuing with temporary session');
+            // We'll proceed anyway without a sessionId
           }
+        } catch (sessionError) {
+          console.warn('Error creating session, continuing with temporary session:', sessionError);
+          // We'll proceed anyway without a sessionId
         }
-        
-        // Now send the actual message
-        const response = await petAssistantService.sendMessage(user.id, userMessage.content);
-        
-        // Check if response is an error message or valid response
-        if (response) {
-          // Add AI response to the chat
-          const assistantMessage: ChatMessage = {
-            _id: new Date().getTime().toString(),
-            text: response,
-            createdAt: new Date(),
-            user: {
-              _id: 'assistant',
-              name: 'Pet Assistant'
-            }
-          };
-          
-          // Update messages in state to show the response
-          setMessages(previousMessages => ChatUtils.append(previousMessages, [assistantMessage]));
-        } else {
-          // Handle case where no response was returned
-          const errorMsg: ChatMessage = {
-            _id: new Date().getTime().toString(),
-            text: 'Sorry, I encountered an error processing your message. Please try again.',
-            createdAt: new Date(),
-            user: {
-              _id: 'assistant',
-              name: 'Pet Assistant'
-            }
-          };
-          setMessages(previousMessages => ChatUtils.append(previousMessages, [errorMsg]));
-        }
-      } catch (messageError: any) {
-        console.error('Error in message processing:', messageError);
-        
-        // Add error message to chat
-        const errorMsg: ChatMessage = {
-          _id: new Date().getTime().toString(),
-          text: `Error: ${messageError?.message || 'Unknown error occurred'}. Please try again.`,
-          createdAt: new Date(),
-          user: {
-            _id: 'assistant',
-            name: 'Pet Assistant'
-          }
-        };
-        
-        setMessages(previousMessages => ChatUtils.append(previousMessages, [errorMsg]));
       }
+      
+      // Send the message with a timeout to ensure we don't wait too long
+      let response: string | null = null;
+      
+      try {
+        // Create a promise with timeout
+        const timeoutPromise = new Promise<string>((_, reject) => {
+          setTimeout(() => reject(new Error('Request timed out')), 10000); // 10 second timeout
+        });
+        
+        // Race between the actual message sending and the timeout
+        response = await Promise.race([
+          petAssistantService.sendMessage(user.id, userMessage.content),
+          timeoutPromise
+        ]);
+      } catch (messageSendError) {
+        console.warn('Error or timeout sending message to backend, using fallback:', messageSendError);
+        
+        // If we're offline or the server is unreachable, set the online status to false
+        setIsOnline(false);
+        
+        // Use the fallback response mechanism directly
+        try {
+          // Access the internal geminiService directly to use its fallback mechanism
+          const [fallbackResponse] = await (petAssistantService as any).geminiService?.generateFallbackResponse?.(userMessage.content) 
+            || [null, null];
+            
+          response = fallbackResponse || "I'm currently offline and can only provide limited assistance. Please check your internet connection and try again later.";
+        } catch (fallbackError) {
+          console.error('Error generating fallback response:', fallbackError);
+          response = "I'm currently offline and can only provide limited assistance. Please check your internet connection and try again later.";
+        }
+      }
+        
+      // Add AI response to the chat
+      const assistantMessage: ChatMessage = {
+        _id: new Date().getTime().toString(),
+        text: response || "Sorry, I couldn't generate a response at the moment. Please try again later.",
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: isOnline ? 'Pet Assistant' : 'Pet Assistant (Offline)'
+        }
+      };
+      
+      // Update messages in state to show the response
+      setMessages(previousMessages => ChatUtils.append(previousMessages, [assistantMessage]));
     } catch (error: any) {
-      console.error('ChatAssistant: Error sending message:', error);
+      console.error('ChatAssistant: Error in message processing:', error);
       
       // Add error message to chat
       const errorMsg: ChatMessage = {
         _id: new Date().getTime().toString(),
-        text: `Error: ${error?.message || 'Unknown error occurred'}. Please try again.`,
+        text: `I'm having trouble connecting to my knowledge database. I'll provide limited assistance until the connection is restored.`,
         createdAt: new Date(),
         user: {
           _id: 'assistant',
@@ -847,7 +833,36 @@ const ChatAssistant = () => {
     sendButton: isDark ? '#2e7d32' : '#4caf50',
     error: isDark ? '#ff6b6b' : '#ff6b6b',
     primary: isDark ? '#2e7d32' : '#4caf50',
+    warning: isDark ? '#f39c12' : '#f39c12',
+    offline: isDark ? '#777777' : '#888888',
   };
+  
+  // State to track online/offline status
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  
+  // Check network status periodically
+  useEffect(() => {
+    // Function to check if the API is available
+    const checkNetworkStatus = async () => {
+      try {
+        // Try to reach the Netlify API
+        const isAvailable = await petAssistantService.hasApiKey();
+        setIsOnline(isAvailable);
+      } catch (error) {
+        console.error('Error checking network status:', error);
+        setIsOnline(false);
+      }
+    };
+    
+    // Check on component mount
+    checkNetworkStatus();
+    
+    // Set up polling (every 30 seconds)
+    const intervalId = setInterval(checkNetworkStatus, 30000);
+    
+    // Clean up on unmount
+    return () => clearInterval(intervalId);
+  }, []);
   
   // Add function to configure API key from settings (for use in error state)
   const configureApiKey = () => {
@@ -871,35 +886,22 @@ const ChatAssistant = () => {
     );
   };
   
-  // Add saveApiKey function
+  // This function is no longer needed as API keys are managed server-side
   const saveApiKey = async () => {
-    if (!apiKey || apiKey.trim().length < 10) {
-      setApiKeyError('Please enter a valid API key');
-      return;
-    }
-    
-    setApiKeySaving(true);
-    setApiKeyError('');
-    
-    try {
-      // Save to storage
-      await AsyncStorage.setItem('gemini_api_key', apiKey);
-      
-      // Set in service
-      await petAssistantService.setApiKey(apiKey);
-      
-      // Update state
-      setApiKeySet(true);
-      setShowApiKeyInput(false);
-      
-      // Reinitialize chat
-      initializeChat();
-    } catch (error) {
-      console.error('Error saving API key:', error);
-      setApiKeyError('Failed to save API key. Please try again.');
-    } finally {
-      setApiKeySaving(false);
-    }
+    Alert.alert(
+      "Server-Side Configuration",
+      "API keys are now managed securely on the server. If you're experiencing issues with the chat assistant, please contact support.",
+      [
+        {
+          text: "Go to Settings",
+          onPress: () => navigation.navigate('Settings')
+        },
+        {
+          text: "OK",
+          style: "cancel"
+        }
+      ]
+    );
   };
   
   // Fix the startNewSession function to properly convert GeminiChatMessage to IMessage
@@ -1203,6 +1205,26 @@ const ChatAssistant = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
       >
+        {/* Offline mode indicator */}
+        {!isOnline && (
+          <View 
+            style={{ 
+              backgroundColor: uiColors.warning + '30', 
+              padding: 8, 
+              flexDirection: 'row',
+              alignItems: 'center', 
+              justifyContent: 'center',
+              borderBottomWidth: 1,
+              borderBottomColor: uiColors.warning + '50'
+            }}
+          >
+            <Ionicons name="cloud-offline-outline" size={16} color={uiColors.warning} style={{ marginRight: 6 }} />
+            <Text style={{ color: uiColors.warning, fontWeight: '500', fontSize: 13 }}>
+              Offline Mode - Limited Responses Available
+            </Text>
+          </View>
+        )}
+        
         <SimpleChatUI
           messages={displayMessages}
           onSend={handleSendMessage}

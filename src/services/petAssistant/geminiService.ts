@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
-import { securityService, DataSensitivity } from '../security';
 import { handleAPIError, tryCatchRequest } from '../../utils/apiErrorHandler';
-import { GEMINI_API_KEY } from '@env';
+import { supabase } from '../supabase';
+import apiClient from '../api';
 
 // Define APIError interface to include status property
 interface APIError {
@@ -10,13 +10,6 @@ interface APIError {
   status?: number;
   [key: string]: any;
 }
-
-// API key handling
-const GEMINI_API_KEY_STORAGE = 'gemini_api_key';
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const MAX_RETRIES = 3;
-const MAX_TOKEN_LIMIT = 8192; // Gemini 1.5 Pro supports 8k tokens per request
-const SANITIZED_PHRASES = ['hack', 'exploit', 'harmful', 'illegal', 'dangerous'];
 
 // Enhanced pet-specific prompt for more specialized knowledge
 const PET_CARE_SYSTEM_PROMPT = `You are a specialized pet care assistant with deep knowledge in veterinary medicine, animal nutrition, training, and behavior. 
@@ -54,71 +47,39 @@ interface GeminiResponse {
   }[];
 }
 
+// Define a proper interface for the proxy response
+interface ProxyResponse {
+  response: GeminiResponse;
+}
+
+// Define a proper interface for the health check response
+interface HealthCheckResponse {
+  success: boolean;
+  message: string;
+  apiConfigured: boolean;
+}
+
 export class GeminiService {
-  private apiKey: string | null = GEMINI_API_KEY || null;
-  
   constructor() {
-    // No need to load from storage if we're using env variable
-    if (!this.apiKey) {
-      this.loadApiKey();
-    }
+    // No need to load API keys anymore, they're stored on the server
   }
 
-  private async loadApiKey(): Promise<void> {
-    try {
-      console.log('GeminiService: Loading API key from secure storage...');
-      // Only load from storage if not already set from env
-      if (!this.apiKey) {
-        this.apiKey = await securityService.getItem(GEMINI_API_KEY_STORAGE, DataSensitivity.HIGH);
-        console.log('GeminiService: API key from storage:', this.apiKey ? 'Found' : 'Not found');
-      } else {
-        console.log('GeminiService: Using API key from environment variables');
-      }
-    } catch (error) {
-      console.error('GeminiService: Failed to load Gemini API key:', error);
-    }
-  }
-
-  public async setApiKey(key: string): Promise<void> {
-    try {
-      console.log('GeminiService: Saving API key to secure storage...');
-      await securityService.setItem(GEMINI_API_KEY_STORAGE, key, DataSensitivity.HIGH);
-      this.apiKey = key;
-      console.log('GeminiService: API key saved successfully');
-    } catch (error) {
-      console.error('GeminiService: Failed to save Gemini API key:', error);
-      throw new Error('Failed to save API key securely');
-    }
-  }
-
+  // API key handling methods are no longer needed as keys are stored server-side
   public async hasApiKey(): Promise<boolean> {
-    console.log('GeminiService: Checking for API key...');
-    // Check if we have the API key from env or storage
-    if (this.apiKey) {
-      console.log('GeminiService: API key already loaded in memory');
-      return true;
-    }
-    
-    try {
-      console.log('GeminiService: Trying to load API key from secure storage...');
-      const key = await securityService.getItem(GEMINI_API_KEY_STORAGE, DataSensitivity.HIGH);
-      const hasKey = !!key;
-      console.log('GeminiService: API key in storage:', hasKey ? 'Found' : 'Not found');
-      
-      if (hasKey) {
-        // If found in storage, keep it in memory for next time
-        this.apiKey = key;
-      }
-      
-      return hasKey;
-    } catch (error) {
-      console.error('GeminiService: Error checking for API key:', error);
-      return false;
-    }
+    // Check if the API is available and configured
+    return this.checkApiAvailability();
+  }
+
+  // For backward compatibility, maintain setApiKey method that does nothing
+  public async setApiKey(key: string): Promise<void> {
+    console.log('GeminiService: API keys are now stored securely on the server');
+    // No need to store API keys client-side anymore
+    return;
   }
 
   // Sanitizes user input to prevent inappropriate content
   private sanitizeInput(text: string): string {
+    const SANITIZED_PHRASES = ['hack', 'exploit', 'harmful', 'illegal', 'dangerous'];
     let sanitized = text;
     SANITIZED_PHRASES.forEach(phrase => {
       const regex = new RegExp(phrase, 'gi');
@@ -127,34 +88,22 @@ export class GeminiService {
     return sanitized;
   }
 
-  // Checks if the input might contain inappropriate content
-  private isInappropriate(text: string): boolean {
-    return SANITIZED_PHRASES.some(phrase => 
-      text.toLowerCase().includes(phrase.toLowerCase())
-    );
-  }
-
   // Manage context length to fit within token limits
   private manageContext(messages: ChatMessage[]): ChatMessage[] {
-    // Rough estimate: 1 token ≈ 4 characters
     const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+    const MAX_TOKEN_LIMIT = 8192; // Gemini 1.5 Pro supports 8k tokens per request
     
-    // Extract system messages and user/assistant messages
     const systemMessages = messages.filter(msg => msg.role === 'system');
     const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
     
-    // Create or use existing system prompt
     let systemPrompt: ChatMessage;
     if (systemMessages.length === 0) {
-      // No system message, use our default
       systemPrompt = {
         role: 'system',
         content: PET_CARE_SYSTEM_PROMPT
       };
     } else {
-      // Combine existing system messages
       const combinedContent = systemMessages.map(msg => msg.content).join('\n\n');
-      // Append our default prompt if it's not already included
       const fullContent = combinedContent.includes(PET_CARE_SYSTEM_PROMPT) 
         ? combinedContent 
         : `${PET_CARE_SYSTEM_PROMPT}\n\n${combinedContent}`;
@@ -165,29 +114,24 @@ export class GeminiService {
       };
     }
     
-    // Calculate tokens for system prompt
     let totalTokens = estimateTokens(systemPrompt.content);
     
-    // Always keep the latest user message
     const latestUserMessage = nonSystemMessages.length > 0 
       ? nonSystemMessages[nonSystemMessages.length - 1] 
       : null;
     
-    // Add tokens for the latest message if it exists
     if (latestUserMessage) {
       totalTokens += estimateTokens(latestUserMessage.content);
     }
     
-    // Start with the system prompt
     const filteredMessages = [systemPrompt];
     
-    // Work backwards from second-to-last non-system message to preserve conversation flow
     if (nonSystemMessages.length > 1) {
       for (let i = nonSystemMessages.length - 2; i >= 0; i--) {
         const msg = nonSystemMessages[i];
         const msgTokens = estimateTokens(msg.content);
         
-        if (totalTokens + msgTokens <= MAX_TOKEN_LIMIT - 500) { // Leave buffer for response
+        if (totalTokens + msgTokens <= MAX_TOKEN_LIMIT - 500) {
           filteredMessages.push(msg);
           totalTokens += msgTokens;
         } else {
@@ -196,7 +140,6 @@ export class GeminiService {
       }
     }
     
-    // Add the latest user message at the end if it exists
     if (latestUserMessage) {
       filteredMessages.push(latestUserMessage);
     }
@@ -206,36 +149,28 @@ export class GeminiService {
 
   // Format messages for Gemini API
   private formatMessagesForGemini(messages: ChatMessage[]): any {
-    // Extract system messages
     const systemMessages = messages.filter(msg => msg.role === 'system');
     const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
     
-    // Combine all system messages into one if there are multiple
     let combinedSystemContent = '';
     if (systemMessages.length > 0) {
       combinedSystemContent = systemMessages.map(msg => msg.content).join('\n\n');
     }
     
-    // Format the contents array for the API request
     const contents = [];
     
-    // Add the combined system message as a user message if it exists
-    // (Gemini doesn't support system role, so we'll use user role instead)
     if (combinedSystemContent) {
-      // Prepend [SYSTEM INSTRUCTIONS]: to clearly mark this as system content
       contents.push({
         role: 'user',
         parts: [{ text: `[SYSTEM INSTRUCTIONS]:\n${combinedSystemContent}` }]
       });
       
-      // Add a dummy model response to maintain the conversation flow
       contents.push({
         role: 'model',
         parts: [{ text: "I'll follow these instructions for our conversation." }]
       });
     }
     
-    // Add the rest of the messages
     nonSystemMessages.forEach(msg => {
       contents.push({
         role: msg.role === 'assistant' ? 'model' : 'user',
@@ -246,175 +181,116 @@ export class GeminiService {
     return { contents };
   }
 
-  // Post chat completion request with retry logic
+  // Post chat completion request through the secure backend proxy
   public async generateChatResponse(
-    messages: ChatMessage[], 
+    messages: ChatMessage[],
     petInfo?: string
   ): Promise<[string | null, APIError | null]> {
-    console.log('GeminiService: generateChatResponse called with', messages.length, 'messages');
-    
-    if (!this.apiKey) {
-      console.log('GeminiService: No API key in memory, attempting to load...');
-      await this.loadApiKey();
-      if (!this.apiKey) {
-        console.error('GeminiService: API key not configured');
-        return [null, { message: 'API key not configured', status: 401 }];
+    try {
+      // Add pet info to the context if provided
+      if (petInfo) {
+        messages.push({
+          role: 'system',
+          content: `Information about the pet: ${petInfo}`
+        });
       }
-    }
-    
-    // Sanitize the user's input
-    const lastMessageIndex = messages.length - 1;
-    const lastMessage = messages[lastMessageIndex];
-    
-    if (lastMessage.role === 'user') {
-      console.log('GeminiService: Sanitizing user input...');
-      // Check for inappropriate content
-      if (this.isInappropriate(lastMessage.content)) {
-        console.warn('GeminiService: Inappropriate content detected in user message');
+      
+      // Sanitize user inputs (last user message)
+      const lastUserMessage = messages.findLast(m => m.role === 'user');
+      if (lastUserMessage) {
+        lastUserMessage.content = this.sanitizeInput(lastUserMessage.content);
+      }
+      
+      // Verify session and authentication
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        return [null, { message: 'User not authenticated', status: 401 }];
+      }
+      
+      // Manage context to avoid token limit issues
+      const contextMessages = this.manageContext(messages);
+      
+      // Format messages for the API
+      const formattedData = this.formatMessagesForGemini(contextMessages);
+      
+      // Prepare safety settings and generation config
+      const requestData = {
+        ...formattedData,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 8192,
+          topP: 0.95,
+        },
+        safetySettings: [
+          {
+            category: "HARM_CATEGORY_HARASSMENT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_HATE_SPEECH",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          }
+        ]
+      };
+      
+      // Use our secure backend proxy instead of directly calling Gemini API
+      const response = await apiClient.request<ProxyResponse>('chat/proxy-gemini', {
+        body: requestData
+      });
+      
+      if (!response.success || !response.data) {
         return [null, { 
-          message: 'Your message contains inappropriate content that cannot be processed', 
-          status: 400 
+          message: response.error || 'Failed to get response from server', 
+          status: 500 
         }];
       }
       
-      // Sanitize input
-      messages[lastMessageIndex] = {
-        ...lastMessage,
-        content: this.sanitizeInput(lastMessage.content)
-      };
-    }
-    
-    // Create a copy of messages array to avoid modifying the original
-    let processedMessages = [...messages];
-    
-    // Handle pet info by enhancing the system prompt rather than adding a new system message
-    if (petInfo) {
-      console.log('GeminiService: Adding pet context to system message');
+      // Extract the response text
+      const geminiResponse = response.data.response;
+      const responseText = geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text;
       
-      // Find system message or create one
-      const systemIndex = processedMessages.findIndex(msg => msg.role === 'system');
-      const petContext = `Current pet information: ${petInfo}`;
-      
-      if (systemIndex >= 0) {
-        // Append to existing system message
-        processedMessages[systemIndex] = {
-          ...processedMessages[systemIndex],
-          content: `${processedMessages[systemIndex].content}\n\n${petContext}`
-        };
-      } else {
-        // Create new system message with default prompt and pet info
-        processedMessages.unshift({
-          role: 'system',
-          content: `${PET_CARE_SYSTEM_PROMPT}\n\n${petContext}`
-        });
-      }
-    }
-    
-    // Manage context to fit token limits
-    console.log('GeminiService: Managing context to fit token limits...');
-    const managedMessages = this.manageContext(processedMessages);
-    console.log('GeminiService: Formatted messages for API call, count:', managedMessages.length);
-    const formattedMessages = this.formatMessagesForGemini(managedMessages);
-    
-    // Configure API call with model parameters
-    const modelConfig = {
-      model: 'models/gemini-1.5-pro',
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.9,
-        topK: 40,
-        maxOutputTokens: 2048,
-      },
-      safetySettings: [
-        {
-          category: 'HARM_CATEGORY_HARASSMENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-        },
-        {
-          category: 'HARM_CATEGORY_HATE_SPEECH',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-        },
-        {
-          category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-        },
-        {
-          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE'
-        }
-      ]
-    };
-    
-    return tryCatchRequest<string>(async () => {
-      let lastError = null;
-      
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          console.log(`GeminiService: Attempt ${attempt + 1}/${MAX_RETRIES} to call Gemini API`);
-          const url = `${GEMINI_BASE_URL}/models/gemini-1.5-pro:generateContent?key=${this.apiKey}`;
-          console.log('GeminiService: Sending request to Gemini API...');
-          const response = await axios.post<GeminiResponse>(
-            url,
-            {
-              ...modelConfig,
-              ...formattedMessages
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': this.apiKey,
-                'User-Agent': `PetCareTracker/${Platform.OS}`
-              },
-              timeout: 30000, // 30 seconds timeout
-            }
-          );
-          
-          console.log('GeminiService: Response received from Gemini API');
-          
-          if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-            const responseText = response.data.candidates[0].content.parts[0].text;
-            console.log('GeminiService: Successfully extracted response text, length:', responseText.length);
-            return responseText;
-          } else {
-            console.error('GeminiService: Invalid response format from API');
-            throw new Error('Invalid response format from Gemini API');
-          }
-        } catch (error: any) {
-          lastError = error;
-          console.error(`GeminiService: API call error on attempt ${attempt + 1}:`, error.message);
-          
-          // Log more details about the error
-          if (error.response) {
-            console.error('GeminiService: Error status:', error.response.status);
-            console.error('GeminiService: Error data:', JSON.stringify(error.response.data));
-          }
-          
-          // Check if the error is retriable
-          const status = error.response?.status;
-          const isRateLimitError = status === 429;
-          const isServerError = status >= 500;
-          const isNetworkError = !status && error.code === 'ECONNABORTED';
-          
-          if (isRateLimitError || isServerError || isNetworkError) {
-            // Exponential backoff for retries
-            const delay = Math.pow(2, attempt) * 1000;
-            console.log(`GeminiService: Retrying after ${delay}ms delay...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          
-          // Non-retriable error, break out of retry loop
-          console.error('GeminiService: Non-retriable error, giving up');
-          break;
-        }
+      if (!responseText) {
+        return [null, { 
+          message: 'No valid response from API', 
+          status: 500 
+        }];
       }
       
-      // If we get here, all retries failed
-      console.error('GeminiService: All retry attempts failed');
-      throw lastError || new Error('Failed to generate response after multiple attempts');
-    });
+      return [responseText, null];
+    } catch (error) {
+      console.error('Error generating chat response:', error);
+      return [null, { 
+        message: error instanceof Error ? error.message : 'Unknown error',
+        status: 500
+      }];
+    }
   }
-}
 
-// Export singleton instance
-export const geminiService = new GeminiService(); 
+  // Add a method to check if the API is available using the public health check
+  public async checkApiAvailability(): Promise<boolean> {
+    try {
+      // Get the API base URL from the apiClient
+      const API_BASE_URL = (apiClient as any).getApiBaseUrl?.() || 
+        (__DEV__ 
+          ? 'http://localhost:8888/.netlify/functions'
+          : 'https://pet-care-tracker.netlify.app/.netlify/functions');
+        
+      // Call the public health check endpoint directly (no auth required)
+      const response = await axios.get<HealthCheckResponse>(`${API_BASE_URL}/health`);
+      
+      // Return true if the API is available and configured
+      return response.data.success && response.data.apiConfigured;
+    } catch (error) {
+      console.error('Error checking API availability:', error);
+      return false;
+    }
+  }
+} 

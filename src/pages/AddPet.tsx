@@ -331,7 +331,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petId);
         setActivePetId(petId);
         
-        // Navigate back to the main screen and show success message
+        // Navigate back to the home screen and show success message
         Alert.alert(
           'Success',
           'Pet added successfully! You can now start tracking your pet\'s care.',
@@ -339,7 +339,14 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             {
               text: 'OK',
               onPress: () => {
-                navigation.navigate('Main');
+                // Delay navigation slightly to ensure async storage is updated
+                setTimeout(() => {
+                  // Reset navigation to home screen to avoid stacking
+                  navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Main' }]
+                  });
+                }, 100);
               }
             }
           ]
@@ -363,7 +370,13 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               {
                 text: 'OK',
                 onPress: () => {
-                  navigation.navigate('Main');
+                  // Reset navigation stack to ensure we go back to home
+                  setTimeout(() => {
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Main' }]
+                    });
+                  }, 100);
                 }
               }
             ]
@@ -823,5 +836,3 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 });
-
-export default AddPet; 

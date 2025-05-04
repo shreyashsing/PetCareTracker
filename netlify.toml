@@ -1,0 +1,25 @@
+[build]
+  # Directory with the serverless functions
+  functions = "functions"
+  # Directory to publish if you have a build step for your app
+  publish = "build"
+
+[dev]
+  # Port for the local dev server
+  port = 8888
+  # Port for the functions
+  functionsPort = 9001
+  # Explicitly tell Netlify Dev to only run functions - not attempt to start a framework
+  framework = "#static"
+  # Turn off autoLaunch to prevent opening browser
+  autoLaunch = false
+  # Set to true to explicitly tell Netlify Dev to start the functions server
+  functions = "functions"
+  # Disable attempts to detect a framework
+  detectedFramework = false
+  
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200 
+ 

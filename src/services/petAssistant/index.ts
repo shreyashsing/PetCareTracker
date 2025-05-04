@@ -1,9 +1,26 @@
-import { geminiService, ChatMessage as GeminiChatMessage } from './geminiService';
+import { GeminiService, ChatMessage as GeminiChatMessage } from './geminiService';
 import { chatRepository } from './chatRepository';
 import { securityService } from '../security';
 import { supabase } from '../supabase';
-import { GEMINI_API_KEY } from '@env';
 import { createChatTables } from '../db';
+import NetInfo from '@react-native-community/netinfo';
+
+// Create a singleton instance of the GeminiService
+const geminiService = new GeminiService();
+
+// Track if we're in offline mode
+let isOfflineMode = false;
+
+// Function to check network connectivity
+async function checkNetworkConnectivity(): Promise<boolean> {
+  try {
+    const netInfo = await NetInfo.fetch();
+    return netInfo.isConnected === true && netInfo.isInternetReachable === true;
+  } catch (error) {
+    console.warn('Error checking network connectivity:', error);
+    return false;
+  }
+}
 
 export interface PetInfo {
   id: string;
@@ -31,47 +48,98 @@ class PetAssistantService {
   constructor() {}
   
   /**
-   * Initialize the chat service and ensure API key is set
+   * Initialize the chat service and ensure the backend API is available
    */
   async initialize(userId?: string): Promise<boolean> {
     try {
+      // First check network connectivity
+      const isConnected = await checkNetworkConnectivity();
+      
+      if (!isConnected) {
+        console.log('PetAssistantService: Device is offline, setting offline mode');
+        isOfflineMode = true;
+        return true; // Return true to allow app to function in offline mode
+      }
+      
       // First, try to ensure the chat tables exist
       const tablesCreated = await createChatTables();
       if (!tablesCreated) {
-        console.error('Failed to create chat tables. The Pet Assistant cannot work without them.');
+        console.warn('Failed to create chat tables. The Pet Assistant will work in limited mode.');
+        isOfflineMode = true;
+        return true; // Still return true to allow offline functionality
+      }
+      
+      // Check if our secure backend API is available
+      console.log('PetAssistantService: Checking if backend API is available...');
+      const apiAvailable = await geminiService.checkApiAvailability();
+      
+      if (!apiAvailable) {
+        console.warn('PetAssistantService: Backend API is not available, enabling offline mode');
+        isOfflineMode = true;
+        return true; // Still return true to allow offline functionality
+      }
+      
+      console.log('PetAssistantService: Backend API is available');
+      isOfflineMode = false;
+      return true;
+    } catch (error) {
+      console.error('Error initializing Pet Assistant:', error);
+      isOfflineMode = true;
+      return true; // Still return true to allow offline functionality
+    }
+  }
+  
+  /**
+   * This method is kept for backward compatibility, but API keys are now stored on the server
+   * It no longer does anything with the key locally
+   */
+  async setApiKey(key: string): Promise<void> {
+    console.log('PetAssistantService: API keys are now stored on the server');
+    // Simply check if API is available
+    await geminiService.checkApiAvailability();
+  }
+  
+  /**
+   * Check if the backend API is available and configured with a valid key
+   */
+  async hasApiKey(): Promise<boolean> {
+    try {
+      // First check network connectivity
+      const isConnected = await checkNetworkConnectivity();
+      
+      if (!isConnected) {
+        isOfflineMode = true;
         return false;
       }
       
-      // If we have the API key in env, set it automatically
-      if (GEMINI_API_KEY) {
-        try {
-          await this.setApiKey(GEMINI_API_KEY);
-          return true;
-        } catch (error) {
-          console.error('Error setting API key from environment:', error);
-        }
-      }
+      // Added timeout to avoid long waits when server is unreachable
+      const timeoutPromise = new Promise<boolean>((resolve) => {
+        setTimeout(() => {
+          isOfflineMode = true;
+          resolve(false);
+        }, 5000);
+      });
       
-      // Otherwise fall back to checking if it's already stored
-      return geminiService.hasApiKey();
+      // Race between the actual check and the timeout
+      const result = await Promise.race([
+        geminiService.checkApiAvailability(),
+        timeoutPromise
+      ]);
+      
+      isOfflineMode = !result;
+      return result;
     } catch (error) {
-      console.error('Error initializing Pet Assistant:', error);
+      console.error('Error checking API availability:', error);
+      isOfflineMode = true;
       return false;
     }
   }
   
   /**
-   * Set the Gemini API key
+   * Returns true if the app is currently in offline mode
    */
-  async setApiKey(key: string): Promise<void> {
-    await geminiService.setApiKey(key);
-  }
-  
-  /**
-   * Check if an API key is set and valid
-   */
-  async hasApiKey(): Promise<boolean> {
-    return geminiService.hasApiKey();
+  isOffline(): boolean {
+    return isOfflineMode;
   }
   
   /**
@@ -402,21 +470,32 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
         return 'Error: User ID is required to send messages';
       }
       
+      // Try to create or use a session
       if (!this.currentSession) {
-        console.log('PetAssistantService: No current session, creating a new one...');
-        // Start a new session if none exists
-        const sessionId = await this.startNewSession(userId);
-        if (!sessionId) {
-          console.error('PetAssistantService: Failed to create new session');
-          return 'Error: Failed to create a new chat session. Please try again.';
+        try {
+          console.log('PetAssistantService: No current session, creating a new one...');
+          // Start a new session if none exists
+          const sessionId = await this.startNewSession(userId);
+          if (!sessionId) {
+            console.warn('PetAssistantService: Failed to create new session, will continue with temporary session');
+          } else {
+            console.log('PetAssistantService: New session created with ID:', sessionId);
+          }
+        } catch (sessionError) {
+          console.warn('PetAssistantService: Error creating session, using temporary session:', sessionError);
         }
-        console.log('PetAssistantService: New session created with ID:', sessionId);
       }
       
-      // Ensure we have a valid session at this point
+      // Create a temporary session if we still don't have one
       if (!this.currentSession) {
-        console.error('PetAssistantService: Still no current session after attempt to create one');
-        return 'Error: Failed to initialize chat session. Please try again.';
+        console.log('PetAssistantService: Using temporary session');
+        this.currentSession = {
+          id: 'temp-' + Date.now(),
+          messages: [{
+            role: 'system',
+            content: 'You are a helpful pet care assistant.'
+          }]
+        };
       }
       
       console.log('PetAssistantService: Using session ID:', this.currentSession.id);
@@ -429,9 +508,9 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
       // Add user message to current session
       this.currentSession.messages.push(userMessage);
       
-      // Save user message to database
-      console.log('PetAssistantService: Saving user message to database...');
+      // Try to save message, but don't block if it fails
       try {
+        console.log('PetAssistantService: Saving user message to database...');
         await chatRepository.addMessage(
           this.currentSession.id,
           userMessage.content,
@@ -439,8 +518,8 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
         );
         console.log('PetAssistantService: User message saved successfully');
       } catch (dbError) {
-        console.error('PetAssistantService: Error saving user message:', dbError);
-        // Don't throw here - we'll still try to get an AI response
+        console.warn('PetAssistantService: Error saving user message:', dbError);
+        // Continue without saving
       }
       
       // Get pet info for context if available
@@ -450,28 +529,58 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
         petInfoContext = this.formatPetContext(this.currentSession.petInfo);
       }
       
-      // Check for API key before proceeding
-      const hasApiKey = await geminiService.hasApiKey();
-      console.log('PetAssistantService: API key available:', hasApiKey);
-      
-      if (!hasApiKey) {
-        console.error('PetAssistantService: Cannot generate response - no API key available');
-        return 'I cannot provide assistance at this time. Please configure a Gemini API key in Settings.';
+      // Check API availability with timeout
+      let apiAvailable = false;
+      try {
+        const timeoutPromise = new Promise<boolean>((resolve) => {
+          setTimeout(() => resolve(false), 3000); // 3 second timeout
+        });
+        
+        apiAvailable = await Promise.race([
+          geminiService.hasApiKey(),
+          timeoutPromise
+        ]);
+      } catch (apiError) {
+        console.warn('PetAssistantService: Error checking API availability:', apiError);
+        apiAvailable = false;
       }
       
-      // Get response from Gemini
-      console.log('PetAssistantService: Generating response from Gemini...');
-      const [response, error] = await geminiService.generateChatResponse(
-        this.currentSession.messages,
-        petInfoContext
-      );
+      console.log('PetAssistantService: API available:', apiAvailable);
       
-      if (error || !response) {
-        console.error('PetAssistantService: Error getting AI response:', error);
-        return 'Sorry, I was unable to generate a response. Please try again.';
+      let response: string | null = null;
+      
+      if (!apiAvailable) {
+        // Use fallback if API is not available
+        console.log('PetAssistantService: Using fallback response generator');
+        response = geminiService.getFallbackResponse(message);
+      } else {
+        // Get response from Gemini with error handling
+        console.log('PetAssistantService: Generating response from Gemini...');
+        
+        try {
+          const [geminiResponse, error] = await geminiService.generateChatResponse(
+            this.currentSession.messages,
+            petInfoContext
+          );
+          
+          if (error || !geminiResponse) {
+            console.warn('PetAssistantService: Error getting AI response:', error);
+            // Fall back to offline mode if the API request fails
+            response = geminiService.getFallbackResponse(message);
+          } else {
+            response = geminiResponse;
+          }
+        } catch (responseError) {
+          console.warn('PetAssistantService: Error generating response:', responseError);
+          response = geminiService.getFallbackResponse(message);
+        }
       }
       
-      console.log('PetAssistantService: Response received from Gemini');
+      console.log('PetAssistantService: Final response generated');
+      
+      if (!response) {
+        response = "I'm sorry, I couldn't generate a response at this time. Please try again later.";
+      }
       
       // Add assistant response to messages
       const assistantMessage: GeminiChatMessage = {
@@ -481,9 +590,9 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
       
       this.currentSession.messages.push(assistantMessage);
       
-      // Save assistant message to database
-      console.log('PetAssistantService: Saving assistant response to database');
+      // Try to save the assistant message, but don't block if it fails
       try {
+        console.log('PetAssistantService: Saving assistant response to database');
         await chatRepository.addMessage(
           this.currentSession.id,
           assistantMessage.content,
@@ -491,16 +600,21 @@ kindly redirect the conversation to pet-related subjects. Be concise and direct 
         );
         console.log('PetAssistantService: Assistant message saved successfully');
       } catch (dbError) {
-        console.error('PetAssistantService: Error saving assistant message:', dbError);
-        // Still return the response even if we fail to save it
+        console.warn('PetAssistantService: Error saving assistant message:', dbError);
+        // Continue without saving
       }
       
       // Return the response text so the UI can update accordingly
       return response;
     } catch (error) {
       console.error('PetAssistantService: Error in sendMessage:', error);
-      // Instead of re-throwing, return an error message that can be displayed
-      return `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}. Please try again.`;
+      
+      // When all else fails, provide a simple fallback response
+      try {
+        return geminiService.getFallbackResponse(message);
+      } catch (fallbackError) {
+        return "I'm currently experiencing technical difficulties. Please try again later.";
+      }
     }
   }
   

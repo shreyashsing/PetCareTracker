@@ -3,12 +3,10 @@ import { supabase } from '../supabase';
 import { ChatMessage } from '../petAssistant/chatRepository';
 import NetInfo from '@react-native-community/netinfo';
 import { v4 as uuidv4 } from 'uuid';
+import { API_URL } from '../../config/network';
 
-// Define API URL based on development mode
-// Use localhost for development, and the real URL for production
-const API_URL = __DEV__ 
-  ? 'http://localhost:8888/.netlify/functions' 
-  : 'https://your-netlify-site.netlify.app/.netlify/functions';
+// Define the production URL as a fallback
+const PRODUCTION_URL = 'https://darling-empanada-164b33.netlify.app/.netlify/functions';
 
 // Flag to track if we've already shown the offline warning
 let offlineWarningShown = false;
@@ -43,11 +41,40 @@ export async function checkServerlessFunctionsAvailability(): Promise<boolean> {
     const connected = await isConnected();
     if (!connected) return false;
     
-    // Try to call the health-check endpoint
-    const response = await axios.get(`${API_URL}/health-check`, { timeout: 3000 });
-    return response.status === 200;
+    // Skip health check if we've already determined serverless is unavailable
+    if (useFallbackToDirectSupabase) {
+      return false;
+    }
+    
+    console.log(`ChatApi: Checking serverless functions at ${API_URL}/health-check`);
+    
+    // Try to call the health-check endpoint with the configured API URL
+    try {
+      const response = await axios.get(`${API_URL}/health-check`, { timeout: 5000 });
+      if (response.status === 200) {
+        console.log('ChatApi: Serverless functions available at configured URL');
+        return true;
+      }
+    } catch (apiError) {
+      console.log('ChatApi: Failed to reach serverless functions at configured URL, trying production URL');
+      
+      // If the configured URL fails, try the production URL directly
+      try {
+        const response = await axios.get(`${PRODUCTION_URL}/health-check`, { timeout: 5000 });
+        if (response.status === 200) {
+          console.log('ChatApi: Serverless functions available at production URL');
+          return true;
+        }
+      } catch (prodError) {
+        console.warn('ChatApi: Failed to reach serverless functions at production URL:', prodError);
+      }
+    }
+    
+    console.warn('ChatApi: Serverless functions unavailable, will use direct Supabase connection');
+    useFallbackToDirectSupabase = true;
+    return false;
   } catch (error) {
-    console.warn('Serverless functions unavailable, will use direct Supabase connection:', error);
+    console.warn('ChatApi: Error checking serverless functions availability:', error);
     useFallbackToDirectSupabase = true;
     return false;
   }
@@ -88,34 +115,84 @@ async function makeAuthenticatedRequest<T>(
 
     // Add a timeout to prevent hanging requests
     const timeoutPromise = new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error('API request timeout')), 10000)
+      setTimeout(() => reject(new Error('API request timeout')), 20000)
     );
 
-    const requestPromise = axios({
-      method,
-      url: `${API_URL}/${endpoint}`,
-      data: method !== 'GET' ? data : undefined,
-      params: method === 'GET' ? params : undefined,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sessionData.session.access_token}`
-      },
-      // Additional timeout at axios level
-      timeout: 8000
-    });
+    // First try with the configured API URL
+    try {
+      console.log(`ChatApi: Making ${method} request to ${API_URL}/${endpoint}`);
+      
+      // Log request data for debugging
+      if (data) {
+        console.log(`ChatApi: Request payload for ${endpoint}:`, JSON.stringify(data, null, 2));
+      }
+      if (params) {
+        console.log(`ChatApi: Request params for ${endpoint}:`, JSON.stringify(params, null, 2));
+      }
+      
+      const requestPromise = axios({
+        method,
+        url: `${API_URL}/${endpoint}`,
+        data: method !== 'GET' ? data : undefined,
+        params: method === 'GET' ? params : undefined,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`
+        },
+        // Additional timeout at axios level
+        timeout: 15000
+      });
 
-    // Race the request against the timeout
-    const response = await Promise.race([requestPromise, timeoutPromise]);
+      // Race the request against the timeout
+      const response = await Promise.race([requestPromise, timeoutPromise]);
+      
+      // Log response for debugging
+      console.log(`ChatApi: Response status for ${endpoint}:`, response.status);
+      console.log(`ChatApi: Response success:`, response.data.success);
 
-    if (!response.data.success) {
-      throw new Error(response.data.error || 'Unknown API error');
+      if (!response.data.success) {
+        throw new Error(response.data.error || 'Unknown API error');
+      }
+
+      // Reset warning flag on successful request
+      offlineWarningShown = false;
+      
+      return response.data.data;
+    } catch (apiError) {
+      // If the regular API URL fails, try the production URL directly
+      console.log(`ChatApi: First attempt failed, trying production URL directly`);
+      
+      console.log(`ChatApi: Making ${method} request to ${PRODUCTION_URL}/${endpoint}`);
+      
+      const requestPromise = axios({
+        method,
+        url: `${PRODUCTION_URL}/${endpoint}`,
+        data: method !== 'GET' ? data : undefined,
+        params: method === 'GET' ? params : undefined,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`
+        },
+        timeout: 15000
+      });
+
+      // Race the request against the timeout
+      const response = await Promise.race([requestPromise, timeoutPromise]);
+      
+      // Log response for debugging
+      console.log(`ChatApi: Production response status for ${endpoint}:`, response.status);
+      console.log(`ChatApi: Production response success:`, response.data.success);
+
+      if (!response.data.success) {
+        throw new Error(response.data.error || 'Unknown API error');
+      }
+
+      // Reset warning flag on successful request
+      offlineWarningShown = false;
+      
+      return response.data.data;
     }
-
-    // Reset warning flag on successful request
-    offlineWarningShown = false;
-    
-    return response.data.data;
-  } catch (error: any) {
+  } catch (error) {
     console.error(`API error for ${endpoint}:`, error);
     
     // Check if this is a connection error
@@ -155,18 +232,27 @@ export const chatApi = {
   /**
    * Create a new chat session
    */
-  async createSession(petId?: string, title?: string): Promise<string> {
+  async createSession(petId?: string, title?: string, retryCount: number = 0): Promise<string> {
     try {
-      // First try the serverless function
-      if (!useFallbackToDirectSupabase) {
+      console.log('ChatApi: createSession called', { petId, title, retryCount });
+      
+      // Limit retry attempts to prevent infinite loops
+      if (retryCount > 1 || useFallbackToDirectSupabase) {
+        // Skip serverless attempt if we've already tried twice or fallback is set
+        console.log('ChatApi: Skipping serverless function, using direct Supabase connection');
+      } else {
+        // First try the serverless function
         try {
+          console.log('ChatApi: Attempting to create session via serverless function');
           const response = await makeAuthenticatedRequest<{ sessionId: string }>(
             'POST',
             'api/chat/create-session',
             { petId, title }
           );
+          console.log('ChatApi: Successfully created session via serverless function:', response.sessionId);
           return response.sessionId;
         } catch (error: any) {
+          console.error('ChatApi: Error using serverless function:', error.message || error);
           if (error.message !== 'NETWORK_ERROR' && error.message !== 'OFFLINE') {
             throw error;
           }
@@ -175,11 +261,18 @@ export const chatApi = {
       }
 
       // Fallback to direct Supabase
-      console.log('Using direct Supabase connection to create session');
-      const { data: authData } = await supabase.auth.getUser();
+      console.log('ChatApi: Using direct Supabase connection to create session');
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      
+      if (authError) {
+        console.error('ChatApi: Auth error when creating session:', authError);
+        throw new Error('Authentication error: ' + authError.message);
+      }
+      
       const userId = authData.user?.id;
       
       if (!userId) {
+        console.error('ChatApi: No user ID found in auth data');
         throw new Error('User not authenticated');
       }
       
@@ -195,8 +288,10 @@ export const chatApi = {
       }
       
       if (title) {
-        sessionData.title = title;
+        sessionData.title = title || 'New Chat Session';
       }
+      
+      console.log('ChatApi: Inserting session into Supabase:', sessionData);
       
       // Insert the session
       const { data, error } = await supabase
@@ -206,15 +301,27 @@ export const chatApi = {
         .single();
       
       if (error) {
-        console.error('Error creating chat session directly in Supabase:', error);
-        return `local-${Date.now()}`;
+        console.error('ChatApi: Error creating chat session directly in Supabase:', error);
+        
+        // Check if this is a foreign key constraint error
+        if (error.message && error.message.includes('foreign key constraint')) {
+          console.error('ChatApi: Foreign key constraint violation - check if tables exist');
+        }
+        
+        // Generate a temporary local ID
+        const tempId = `local-${Date.now()}`;
+        console.log('ChatApi: Using temporary session ID:', tempId);
+        return tempId;
       }
       
+      console.log('ChatApi: Successfully created session directly in Supabase:', data.id);
       return data.id;
     } catch (error: any) {
-      console.error('Error in createSession:', error);
+      console.error('ChatApi: Unexpected error in createSession:', error);
       // Generate a temporary local ID as a last resort
-      return `local-${Date.now()}`;
+      const tempId = `local-${Date.now()}`;
+      console.log('ChatApi: Using temporary session ID due to error:', tempId);
+      return tempId;
     }
   },
 

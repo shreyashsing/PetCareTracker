@@ -13,7 +13,7 @@ import { RootStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { TopNavBar } from '../components';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { formatDate, calculateAge } from '../utils/helpers';
 import { Pet } from '../types/components';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -30,7 +30,7 @@ const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
     const loadPetData = async () => {
       try {
         setLoading(true);
-        const petData = await databaseManager.pets.getById(petId);
+        const petData = await unifiedDatabaseManager.pets.getById(petId);
         if (petData) {
           setPet(petData);
         }

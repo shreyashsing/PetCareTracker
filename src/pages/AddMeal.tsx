@@ -13,7 +13,7 @@ import {
   Switch
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 import { useToast } from '../hooks/use-toast';
@@ -63,7 +63,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
         setIsLoading(true);
         
         try {
-          const meal = await databaseManager.meals.getById(mealId);
+          const meal = await unifiedDatabaseManager.meals.getById(mealId);
           if (meal) {
             // Convert the meal data to our form format
             setFormState({
@@ -191,10 +191,10 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
         await notificationService.cancelMealNotifications(mealId as string);
         
         // Update the meal
-        await databaseManager.meals.update(mealId as string, mealData);
+        await unifiedDatabaseManager.meals.update(mealId as string, mealData);
       } else {
         // Create a new meal
-        await databaseManager.meals.create(mealData);
+        await unifiedDatabaseManager.meals.create(mealData);
       }
       
       // Schedule notifications for the meal if it's not already completed
@@ -268,7 +268,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
               await notificationService.cancelMealNotifications(mealId);
               
               // Delete from database
-              await databaseManager.meals.delete(mealId);
+              await unifiedDatabaseManager.meals.delete(mealId);
               
               toast({
                 title: 'Meal deleted',

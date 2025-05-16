@@ -18,6 +18,79 @@ if (!supabaseUrl || !supabaseAnonKey) {
   Alert.alert('Configuration Error', 'Missing Supabase credentials. Please check your .env file.');
 }
 
+// Session lock mechanism to prevent concurrent operations
+let sessionLock = false;
+let sessionLockPromise: Promise<void> | null = null;
+let sessionLockResolve: (() => void) | null = null;
+let sessionLockTimer: NodeJS.Timeout | null = null;
+const SESSION_LOCK_TIMEOUT = 5000; // 5 seconds max lock time
+
+/**
+ * Acquire a lock for session operations
+ * @returns A promise that resolves when the lock is acquired
+ */
+const acquireSessionLock = async (): Promise<void> => {
+  if (!sessionLock) {
+    sessionLock = true;
+    console.log('Supabase: Session lock acquired');
+    
+    // Set a safety timeout to release the lock if it's held too long
+    sessionLockTimer = setTimeout(() => {
+      console.warn('Supabase: Session lock held too long, forcing release');
+      releaseSessionLock();
+    }, SESSION_LOCK_TIMEOUT);
+    
+    return Promise.resolve();
+  }
+  
+  console.log('Supabase: Waiting for session lock');
+  
+  if (!sessionLockPromise) {
+    sessionLockPromise = new Promise<void>((resolve) => {
+      sessionLockResolve = resolve;
+    });
+  }
+  
+  // Set a timeout for waiting for the lock
+  const timeoutPromise = new Promise<void>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error('Timed out waiting for session lock'));
+    }, 3000); // 3 second timeout for waiting
+  });
+  
+  try {
+    // Race between getting the lock and timing out
+    await Promise.race([sessionLockPromise, timeoutPromise]);
+    console.log('Supabase: Session lock acquired after waiting');
+    return;
+  } catch (error) {
+    console.warn('Supabase: Failed to acquire session lock, proceeding anyway');
+    // Force release the lock to prevent deadlock
+    releaseSessionLock();
+    return Promise.resolve();
+  }
+};
+
+/**
+ * Release the session lock
+ */
+const releaseSessionLock = (): void => {
+  // Clear the safety timeout
+  if (sessionLockTimer) {
+    clearTimeout(sessionLockTimer);
+    sessionLockTimer = null;
+  }
+  
+  if (sessionLockResolve) {
+    sessionLockResolve();
+    sessionLockPromise = null;
+    sessionLockResolve = null;
+  }
+  
+  sessionLock = false;
+  console.log('Supabase: Session lock released');
+};
+
 // Create a custom storage implementation using AsyncStorage with enhanced error handling
 const AsyncStorageWrapper = {
   getItem: async (key: string) => {
@@ -70,84 +143,268 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
-// Enhanced session checking utility
+// Enhanced session checking utility with lock mechanism
 export const checkSession = async (): Promise<boolean> => {
   try {
     console.log('Supabase: Checking session status...');
     
-    // Check network connectivity first
-    const netInfo = await NetInfo.fetch();
-    if (!netInfo.isConnected) {
-      console.warn('Supabase: Network appears to be offline, session check may fail');
-    }
+    // Acquire lock before accessing the session
+    await acquireSessionLock();
     
-    const { data: { session }, error } = await supabase.auth.getSession();
-    
-    if (error) {
-      console.error('Supabase: Session check error:', error);
-      return false;
-    }
-    
-    if (!session) {
-      console.warn('Supabase: No active session found');
-      return false;
-    }
-    
-    // Verify token has not expired
-    const tokenExpiry = session.expires_at ? new Date(session.expires_at * 1000) : null;
-    const now = new Date();
-    
-    if (tokenExpiry && tokenExpiry < now) {
-      console.warn('Supabase: Session has expired, needs refresh');
+    try {
+      // Check network connectivity first
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected) {
+        console.warn('Supabase: Network appears to be offline, session check may fail');
+      }
       
-      // Try to refresh
-      const { data: refresh, error: refreshError } = await supabase.auth.refreshSession();
+      // Set a timeout for the session check
+      const sessionCheckPromise = supabase.auth.getSession();
+      const timeoutPromise = new Promise<{data: {session: null}, error: Error}>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Session check timed out'));
+        }, 3000); // 3 second timeout
+      });
       
-      if (refreshError || !refresh.session) {
-        console.error('Supabase: Failed to refresh expired session:', refreshError);
+      const { data: { session }, error } = await Promise.race([
+        sessionCheckPromise,
+        timeoutPromise
+      ]).catch(error => {
+        console.warn('Supabase: Session check timed out:', error.message);
+        return { data: { session: null }, error: null };
+      });
+      
+      if (error) {
+        console.error('Supabase: Session check error:', error);
         return false;
       }
       
-      console.log('Supabase: Successfully refreshed expired session');
+      if (!session) {
+        console.warn('Supabase: No active session found');
+        return false;
+      }
+      
+      // Verify token has not expired
+      const tokenExpiry = session.expires_at ? new Date(session.expires_at * 1000) : null;
+      const now = new Date();
+      
+      if (tokenExpiry && tokenExpiry < now) {
+        console.warn('Supabase: Session has expired, needs refresh');
+        
+        // Try to refresh with timeout
+        const refreshPromise = supabase.auth.refreshSession();
+        const refreshTimeoutPromise = new Promise<{data: {session: null}, error: Error}>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('Session refresh timed out'));
+          }, 3000); // 3 second timeout
+        });
+        
+        const { data: refresh, error: refreshError } = await Promise.race([
+          refreshPromise,
+          refreshTimeoutPromise
+        ]).catch(error => {
+          console.warn('Supabase: Session refresh timed out:', error.message);
+          return { data: { session: null }, error: null };
+        });
+        
+        if (refreshError || !refresh.session) {
+          console.error('Supabase: Failed to refresh expired session:', refreshError);
+          return false;
+        }
+        
+        console.log('Supabase: Successfully refreshed expired session');
+        return true;
+      }
+      
+      console.log('Supabase: Valid session confirmed');
       return true;
+    } finally {
+      // Always release the lock when done
+      releaseSessionLock();
     }
-    
-    console.log('Supabase: Valid session confirmed');
-    return true;
   } catch (error) {
     console.error('Supabase: Unexpected error checking session:', error);
+    // Make sure to release the lock even if there's an error
+    releaseSessionLock();
     return false;
   }
 };
 
-// Function to ensure queries have authentication
+// Enhanced function to ensure queries have authentication
 export const ensureAuthQuery = async <T>(
   queryFn: () => Promise<{ data: T | null; error: any }>
 ): Promise<{ data: T | null; error: any }> => {
   try {
-    // First check if we have a valid session
-    const isSessionValid = await checkSession();
+    // Acquire lock before accessing the session
+    await acquireSessionLock();
     
-    if (!isSessionValid) {
-      console.warn('Supabase: No valid session before query, attempting refresh');
-      const { data } = await supabase.auth.refreshSession();
+    try {
+      // First check if we have a valid session with timeout
+      const sessionPromise = supabase.auth.getSession();
+      const timeoutPromise = new Promise<{data: {session: null}, error: Error}>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Get session timed out'));
+        }, 3000); // 3 second timeout
+      });
       
-      if (!data.session) {
-        return { 
-          data: null, 
-          error: new Error('Authentication required. Please log in again.') 
-        };
+      const sessionResult = await Promise.race([
+        sessionPromise,
+        timeoutPromise
+      ]).catch(error => {
+        console.warn('Supabase: Get session timed out:', error.message);
+        return { data: { session: null }, error: null };
+      });
+      
+      // Type assertion for sessionResult to include error property
+      const typedSessionResult = sessionResult as { 
+        data: { session: any | null }, 
+        error?: { message: string } | null 
+      };
+      
+      // Handle auth session missing errors gracefully
+      if (typedSessionResult.error && typedSessionResult.error.message === 'Auth session missing!') {
+        console.log('Supabase: Auth session missing in ensureAuthQuery, continuing with query');
+        // Continue with the query even without a session
+        return await queryFn();
       }
-    }
     
-    // Execute the query with the refreshed session
-    return await queryFn();
+      const { data: { session } } = typedSessionResult;
+    
+      if (!session) {
+        console.warn('Supabase: No valid session before query, attempting refresh');
+        
+        // Try to refresh with timeout
+        const refreshPromise = supabase.auth.refreshSession();
+        const refreshTimeoutPromise = new Promise<{data: {session: null}, error: Error}>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('Session refresh timed out'));
+          }, 3000); // 3 second timeout
+        });
+        
+        const refreshResult = await Promise.race([
+          refreshPromise,
+          refreshTimeoutPromise
+        ]).catch(error => {
+          console.warn('Supabase: Session refresh timed out:', error.message);
+          return { data: { session: null }, error: null };
+        });
+        
+        // Type assertion for refreshResult to include error property
+        const typedRefreshResult = refreshResult as { 
+          data: { session: any | null }, 
+          error?: { message: string } | null 
+        };
+        
+        // Handle auth session missing errors gracefully during refresh
+        if (typedRefreshResult.error && typedRefreshResult.error.message === 'Auth session missing!') {
+          console.log('Supabase: Auth session missing during refresh in ensureAuthQuery');
+          // Continue with the query even without a session
+          return await queryFn();
+        }
+      
+        const { data } = typedRefreshResult;
+      
+        if (!data.session) {
+          return { 
+            data: null, 
+            error: new Error('Authentication required. Please log in again.') 
+          };
+        }
+      }
+    
+      // Execute the query with the refreshed session
+      return await queryFn();
+    } finally {
+      // Always release the lock when done
+      releaseSessionLock();
+    }
   } catch (error) {
     console.error('Supabase: Error in ensureAuthQuery:', error);
+    // Make sure to release the lock even if there's an error
+    releaseSessionLock();
     return { 
       data: null, 
       error: error instanceof Error ? error : new Error('Unknown error in auth query') 
     };
+  }
+};
+
+// Function to safely get the current user with lock mechanism
+export const getCurrentUser = async () => {
+  try {
+    await acquireSessionLock();
+    
+    try {
+      // Set a timeout for getting the current user
+      const userPromise = supabase.auth.getUser();
+      const timeoutPromise = new Promise<{data: {user: null}, error: Error}>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Get user timed out'));
+        }, 3000); // 3 second timeout
+      });
+      
+      const result = await Promise.race([
+        userPromise,
+        timeoutPromise
+      ]).catch(error => {
+        console.warn('Supabase: Get user timed out:', error.message);
+        return { data: { user: null }, error: null };
+      });
+      
+      // If we got an AuthSessionMissingError, try to recover by checking local storage
+      if (result.error && result.error.message === 'Auth session missing!') {
+        console.log('Supabase: Auth session missing, trying to recover from local storage');
+        // Return empty user without throwing error to allow app to continue
+        return { data: { user: null }, error: null };
+      }
+      
+      return result;
+    } finally {
+      releaseSessionLock();
+    }
+  } catch (error) {
+    releaseSessionLock();
+    console.error('Error getting current user:', error);
+    return { data: { user: null }, error };
+  }
+};
+
+// Function to safely refresh the session with lock mechanism
+export const refreshSessionSafe = async () => {
+  try {
+    await acquireSessionLock();
+    
+    try {
+      // Set a timeout for refreshing the session
+      const refreshPromise = supabase.auth.refreshSession();
+      const timeoutPromise = new Promise<{data: {session: null, user: null}, error: Error}>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Session refresh timed out'));
+        }, 3000); // 3 second timeout
+      });
+      
+      const result = await Promise.race([
+        refreshPromise,
+        timeoutPromise
+      ]).catch(error => {
+        console.warn('Supabase: Session refresh timed out:', error.message);
+        return { data: { session: null, user: null }, error: null };
+      });
+      
+      // If we got an AuthSessionMissingError, handle it gracefully
+      if (result.error && result.error.message === 'Auth session missing!') {
+        console.log('Supabase: Auth session missing during refresh, returning empty session');
+        return { data: { session: null, user: null }, error: null };
+      }
+      
+      return result;
+    } finally {
+      releaseSessionLock();
+    }
+  } catch (error) {
+    releaseSessionLock();
+    console.error('Error refreshing session:', error);
+    return { data: { session: null, user: null }, error };
   }
 };
 

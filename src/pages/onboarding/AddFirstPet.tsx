@@ -8,7 +8,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useActivePet } from '../../hooks/useActivePet';
 import { useToast } from '../../hooks/use-toast';
 import * as ImagePicker from 'expo-image-picker';
-import { databaseManager, STORAGE_KEYS } from '../../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../../services/db";
 import { AsyncStorageService } from '../../services/db/asyncStorage';
 import { Pet } from '../../types/components';
 import { generateUUID } from '../../utils/helpers';
@@ -120,7 +120,7 @@ export const AddFirstPet: React.FC = () => {
       try {
         // Save the pet to the database using the same database service
         console.log(`Saving pet ${newPet.name} to database`);
-        await databaseManager.pets.create(newPet);
+        await unifiedDatabaseManager.pets.create(newPet);
         
         // Set this pet as the active pet
         console.log(`Setting pet ${petId} as active`);

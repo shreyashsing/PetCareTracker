@@ -4,9 +4,10 @@ import { BaseRepository } from './repository';
 import { supabase, camelToSnake, snakeToCamel } from '../../services/supabase';
 import { generateUUID } from '../../utils/helpers';
 import { formatDateForSupabase } from '../../utils/dateUtils';
-import { createPetForSupabase } from '../../utils/petSync';
+import { createPetForSupabase, PetData } from '../../utils/petSync';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.pets instead. This repository is being phased out.
  * Repository for managing Pet entities
  */
 export class PetRepository extends BaseRepository<Pet> {
@@ -33,8 +34,41 @@ export class PetRepository extends BaseRepository<Pet> {
       
       // Then try to save to Supabase using the correct schema structure
       try {
-        // Use the same function that works during sync to ensure schema compatibility
-        const petData = createPetForSupabase(pet);
+        // Convert Pet to PetData for Supabase compatibility
+        const petForSupabase: PetData = {
+          id: pet.id,
+          name: pet.name,
+          type: pet.type,
+          breed: pet.breed,
+          birthDate: pet.birthDate instanceof Date ? pet.birthDate.toISOString() : pet.birthDate,
+          weight: pet.weight,
+          gender: pet.gender,
+          color: pet.color,
+          microchipped: pet.microchipped,
+          microchipId: pet.microchipId,
+          image: pet.image,
+          userId: pet.userId
+        };
+        
+        // Use the utility function to create Supabase-compatible pet data
+        const petData = createPetForSupabase(petForSupabase);
+        
+        // Ensure user_id is set correctly
+        if (!petData.user_id && pet.userId) {
+          petData.user_id = pet.userId;
+        }
+        
+        // If still no user_id, try to get from current auth
+        if (!petData.user_id) {
+          const { data } = await supabase.auth.getUser();
+          if (data && data.user) {
+            petData.user_id = data.user.id;
+            
+            // Also update the pet object for local storage
+            pet.userId = data.user.id;
+            await super.update(pet.id, pet);
+          }
+        }
         
         console.log('Attempting to save pet to Supabase:', JSON.stringify({
           id: petData.id,
@@ -49,37 +83,162 @@ export class PetRepository extends BaseRepository<Pet> {
           .single();
         
         if (error) {
-          console.error('Error creating pet in Supabase:', error);
-          console.error('Error details:', JSON.stringify(error));
+          console.error('Error saving pet to Supabase:', error);
+          // Still return the pet since it was saved locally
+          return pet;
+        }
+        
+        console.log('Pet saved to Supabase successfully:', data);
+        
+        // Update local pet with any server-generated fields
+        const updatedPet = snakeToCamel<Pet>(data);
+        
+        // Handle user_id to userId conversion
+        if (data.user_id && !updatedPet.userId) {
+          updatedPet.userId = data.user_id;
+        }
+        
+        // Update local storage with the complete data
+        await super.update(pet.id, { ...pet, ...updatedPet });
+        
+        // Return the updated pet
+        return { ...pet, ...updatedPet };
+      } catch (supabaseError) {
+        console.error('Exception saving pet to Supabase:', supabaseError);
+        // Still return the pet since it was saved locally
+        return pet;
+      }
+    } catch (error) {
+      console.error('Error in PetRepository.create:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Override update method to save to both AsyncStorage and Supabase
+   * @param id Pet ID
+   * @param pet Pet data to update
+   * @returns Updated pet
+   */
+  async update(id: string, pet: Pet): Promise<Pet> {
+    console.log('PetRepository.update called for pet:', id);
+    
+    try {
+      // First update in AsyncStorage
+      await super.update(id, pet);
+      console.log('Pet updated in AsyncStorage successfully');
+      
+      // Then try to update in Supabase
+      try {
+        // Convert Pet to PetData for Supabase compatibility
+        const petForSupabase: PetData = {
+          id: pet.id,
+          name: pet.name,
+          type: pet.type,
+          breed: pet.breed,
+          birthDate: pet.birthDate instanceof Date ? pet.birthDate.toISOString() : pet.birthDate,
+          weight: pet.weight,
+          gender: pet.gender,
+          color: pet.color,
+          microchipped: pet.microchipped,
+          microchipId: pet.microchipId,
+          image: pet.image,
+          userId: pet.userId
+        };
+        
+        // Use the utility function to create Supabase-compatible pet data
+        const petData = createPetForSupabase(petForSupabase);
+        
+        // Ensure user_id is set correctly
+        if (!petData.user_id && pet.userId) {
+          petData.user_id = pet.userId;
+        }
+        
+        // If still no user_id, try to get from current auth
+        if (!petData.user_id) {
+          const { data } = await supabase.auth.getUser();
+          if (data && data.user) {
+            petData.user_id = data.user.id;
+            
+            // Also update the pet object for local storage
+            pet.userId = data.user.id;
+            await super.update(id, pet);
+          }
+        }
+        
+        console.log('Attempting to update pet in Supabase:', JSON.stringify({
+          id: petData.id,
+          name: petData.name,
+          user_id: petData.user_id
+        }));
+        
+        const { data, error } = await supabase
+          .from('pets')
+          .update(petData)
+          .eq('id', id)
+          .select()
+          .single();
+        
+        if (error) {
+          console.error('Error updating pet in Supabase:', error);
           
-          // Additional diagnostics for specific error types
-          if (error.code === '42P01') {
-            console.error('The pets table does not exist in Supabase');
-          } else if (error.code === '42703') {
-            console.error('Column error - schema mismatch between app and Supabase');
-            console.error('Error message:', error.message);
-            // Log the full petData object to see what fields might be causing issues
-            console.error('Pet data structure:', Object.keys(petData).join(', '));
-          } else if (error.code === '23505') {
-            console.error('Unique constraint violation - pet ID already exists');
-          } else if (error.code === '23503') {
-            console.error('Foreign key constraint violation - user_id may not exist');
+          // Check if the error is because the pet doesn't exist in Supabase
+          if (error.code === 'PGRST116') {
+            console.log('Pet not found in Supabase, attempting to insert instead');
+            
+            // Try to insert the pet instead
+            const { data: insertData, error: insertError } = await supabase
+              .from('pets')
+              .insert([petData])
+              .select()
+              .single();
+            
+            if (insertError) {
+              console.error('Error inserting pet in Supabase:', insertError);
+              return pet;
+            }
+            
+            console.log('Pet inserted in Supabase successfully:', insertData);
+            
+            // Update local pet with any server-generated fields
+            const updatedPet = snakeToCamel<Pet>(insertData);
+            
+            // Handle user_id to userId conversion
+            if (insertData.user_id && !updatedPet.userId) {
+              updatedPet.userId = insertData.user_id;
+            }
+            
+            // Update local storage with the complete data
+            await super.update(id, { ...pet, ...updatedPet });
+            
+            return { ...pet, ...updatedPet };
           }
           
-          console.log('Pet was saved to local storage only. Will sync later when Supabase is available.');
-        } else {
-          console.log('Pet saved to Supabase successfully:', data);
-          return snakeToCamel<Pet>(data);
+          // For other errors, just return the local pet
+          return pet;
         }
+        
+        console.log('Pet updated in Supabase successfully:', data);
+        
+        // Update local pet with any server-generated fields
+        const updatedPet = snakeToCamel<Pet>(data);
+        
+        // Handle user_id to userId conversion
+        if (data.user_id && !updatedPet.userId) {
+          updatedPet.userId = data.user_id;
+        }
+        
+        // Update local storage with the complete data
+        await super.update(id, { ...pet, ...updatedPet });
+        
+        return { ...pet, ...updatedPet };
       } catch (supabaseError) {
-        console.error('Exception saving to Supabase:', supabaseError);
-        console.log('Pet was saved to local storage only. Will sync later when Supabase is available.');
+        console.error('Exception updating pet in Supabase:', supabaseError);
+        // Still return the pet since it was updated locally
+        return pet;
       }
-      
-      // Return the pet regardless of whether Supabase save succeeded
-      return pet;
     } catch (error) {
-      console.error('Exception creating pet in repository:', error);
+      console.error('Error in PetRepository.update:', error);
       throw error;
     }
   }

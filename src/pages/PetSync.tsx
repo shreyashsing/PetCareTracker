@@ -10,7 +10,7 @@ import {
   RefreshControl
 } from 'react-native';
 import { useAppColors } from '../hooks/useAppColors';
-import { forceSyncPetsToSupabase, loadLocalPets, loadRemotePets, checkPetsTableExists } from '../utils/petSync';
+import { forceSyncPetsToSupabase, loadLocalPets, loadRemotePets, checkPetsTableExists, PetData } from '../utils/petSync';
 import { Pet } from '../types/pet';
 import { getLastSyncTime } from '../utils/syncStorage';
 import { formatDateForDisplay } from '../utils/dateUtils';
@@ -23,8 +23,8 @@ const PetSync: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   
-  const [localPets, setLocalPets] = useState<Pet[]>([]);
-  const [remotePets, setRemotePets] = useState<Pet[]>([]);
+  const [localPets, setLocalPets] = useState<PetData[]>([]);
+  const [remotePets, setRemotePets] = useState<PetData[]>([]);
   const [tableStatus, setTableStatus] = useState<{exists: boolean; error?: string}>({exists: false});
 
   // Helper function to add logs
@@ -108,7 +108,7 @@ const PetSync: React.FC = () => {
   };
 
   // Helper to determine if a pet exists in remote
-  const isPetSynced = (pet: Pet): boolean => {
+  const isPetSynced = (pet: PetData): boolean => {
     return remotePets.some(remotePet => remotePet.id === pet.id);
   };
 

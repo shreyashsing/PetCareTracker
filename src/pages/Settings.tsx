@@ -22,7 +22,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { AppUser } from '../contexts/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
 import Footer from '../components/layout/Footer';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
@@ -103,8 +103,9 @@ const Settings = () => {
         return;
       }
       
-      // Only get pets that belong to the current user
-      const userPets = await databaseManager.pets.findByUserId(user.id);
+      // Get all pets and filter by current user's ID
+      const allPets = await unifiedDatabaseManager.pets.getAll();
+      const userPets = allPets.filter(pet => pet.userId === user.id);
       setPets(userPets);
     } catch (error) {
       console.error('Error loading pets:', error);
@@ -176,7 +177,7 @@ const Settings = () => {
         };
         
         // We only update the preferences part to avoid type issues with other User fields
-        await databaseManager.users.update(user.id, {
+        await unifiedDatabaseManager.users.update(user.id, {
           preferences: updatedPrefs
         });
       }
@@ -346,7 +347,7 @@ const Settings = () => {
           onPress: async () => {
             try {
               // Delete pet from database
-              await databaseManager.pets.delete(pet.id);
+              await unifiedDatabaseManager.pets.delete(pet.id);
               
               // If this was the active pet, clear the active pet
               if (activePetId === pet.id) {

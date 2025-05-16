@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList, AppNavigationProp } from '../types/navigation';
+import { RootStackParamList } from '../types/navigation';
 import { 
   Form, 
   Input, 
@@ -27,10 +27,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
 import { Pet } from '../types/components';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../providers/AuthProvider';
 
 const { width } = Dimensions.get('window');
 
@@ -148,7 +148,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       try {
         if (route.params?.petId) {
           setPetId(route.params.petId);
-          const pet = await databaseManager.pets.getById(route.params.petId);
+          const pet = await unifiedDatabaseManager.pets.getById(route.params.petId);
           
           if (pet) {
             // Convert pet data to form state
@@ -346,7 +346,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       }
       
       // Get the current pet to ensure we don't overwrite fields we don't change
-      const currentPet = await databaseManager.pets.getById(petId);
+      const currentPet = await unifiedDatabaseManager.pets.getById(petId);
       
       if (!currentPet) {
         throw new Error("Pet not found");
@@ -381,7 +381,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       console.log('Updating pet with data:', JSON.stringify(updatedPet));
       
       // Update the pet in the database
-      await databaseManager.pets.update(petId, updatedPet);
+      await unifiedDatabaseManager.pets.update(petId, updatedPet);
       console.log(`Pet ${updatedPet.name} updated successfully`);
       
       // Navigate back and show success message

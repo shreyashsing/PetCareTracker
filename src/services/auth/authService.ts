@@ -1,6 +1,6 @@
 import { AsyncStorageService } from '../db/asyncStorage';
 import { STORAGE_KEYS } from '../db/constants';
-import { databaseManager } from '../db';
+import {unifiedDatabaseManager} from "../db";
 import { User } from '../../types/components';
 import { generateUUID } from '../../utils/helpers';
 import { securityService, DataSensitivity } from '../security';

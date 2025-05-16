@@ -5,8 +5,18 @@ import './src/App.init';
 import { setupErrorHandling, setupLogBoxIgnores } from './src/utils/errorHandler';
 setupErrorHandling();
 
-import React, { useEffect, useState } from 'react';
-import { LogBox, View, Text, ActivityIndicator, Alert, useColorScheme } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { 
+  LogBox, 
+  View, 
+  Text, 
+  ActivityIndicator, 
+  Alert, 
+  useColorScheme,
+  TouchableOpacity,
+  Button,
+  StyleSheet
+} from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
@@ -21,19 +31,42 @@ setupLogBoxIgnores(LogBox);
 
 // Import providers directly with correct exports
 import { ToastProvider } from './src/hooks/use-toast';
-import { AuthProvider } from './src/providers/AuthProvider';
+import { AuthProvider, useAuth } from './src/providers/AuthProvider';
 import { ActivePetProvider } from './src/hooks/useActivePet';
 import AppNavigator from './src/navigation/AppNavigator';
+
+// Import pet synchronization utility - ensure we're importing from the .ts file
+import { syncPetsWithSupabase, loadPetsForUser } from './src/utils/petSync';
 
 // Disable screens - prevents the "tried to register two views with the same name" error
 enableScreens(false);
 
 // Import database services 
 import { AsyncStorageService } from './src/services/db/asyncStorage';
-import { databaseManager, STORAGE_KEYS } from './src/services/db';
+import { STORAGE_KEYS, unifiedDatabaseManager } from './src/services/db';
 import { securityService, SecurityMode } from './src/services/security';
 import { runMigrationsToEnsureTablesExist } from './src/services/db/migrations';
-import { supabase, checkSession } from './src/services/supabase';
+import { supabase, getCurrentUser, refreshSessionSafe } from './src/services/supabase';
+
+// Import the migration utility
+import { MigrationUtility } from './src/utils/migrateToUnified';
+import { forceInitializationComplete } from './src/App.init';
+
+// Define types for auth responses
+interface AuthUserResponse {
+  data: { 
+    user: any | null;
+  };
+  error: any | null;
+}
+
+interface AuthSessionResponse {
+  data: { 
+    session: any | null;
+    user: any | null;
+  };
+  error: any | null;
+}
 
 // Create query client with defaultOptions to silence the 'no queryFn' warnings
 const queryClient = new QueryClient({
@@ -49,244 +82,403 @@ const queryClient = new QueryClient({
   },
 });
 
-// Create the App component
-export default function App() {
-  const colorScheme = useColorScheme();
+// Create a component to handle pet synchronization
+const PetSynchronizer: React.FC<{ userId: string }> = ({ userId }) => {
+  useEffect(() => {
+    const syncPetsData = async () => {
+      console.log('App: Synchronizing pets for user:', userId);
+      try {
+        // Use the unified database manager for synchronization
+        await unifiedDatabaseManager.loadAllData(userId);
+        console.log('App: Pet synchronization complete');
+      } catch (error) {
+        console.error('App: Error synchronizing pets:', error);
+        
+        // Try to provide more detailed error information
+        if (error instanceof Error) {
+          console.error(`App: Error details: ${error.message}`);
+          if (error.stack) {
+            console.error(`App: Stack trace: ${error.stack}`);
+          }
+        }
+      }
+    };
+    
+    syncPetsData();
+  }, [userId]);
+  
+  return null; // This component doesn't render anything
+};
+
+// Helper function to create a timeout promise
+const timeout = (ms: number) => new Promise((_, reject) => 
+  setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms)
+);
+
+// Loading screen component with skip button
+const LoadingScreen: React.FC<{ 
+  initializationStage: string, 
+  showSkipButton: boolean, 
+  onSkip: () => void 
+}> = ({ initializationStage, showSkipButton, onSkip }) => {
+  return (
+    <View style={styles.loadingContainer}>
+      <ActivityIndicator size="large" color="#4CAF50" />
+      <Text style={styles.loadingText}>{initializationStage}</Text>
+      
+      {showSkipButton && (
+        <TouchableOpacity
+          style={styles.skipButton}
+          onPress={onSkip}
+        >
+          <Text style={styles.skipButtonText}>Skip and Continue</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+// Main app content component
+const AppContent: React.FC = () => {
+  const { skipAuth } = useAuth();
   const [dbInitialized, setDbInitialized] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [securityInitialized, setSecurityInitialized] = useState<boolean>(false);
   const [notificationsInitialized, setNotificationsInitialized] = useState<boolean>(false);
   const [authChecked, setAuthChecked] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [showSkipButton, setShowSkipButton] = useState<boolean>(false);
+  const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [initializationStage, setInitializationStage] = useState<string>("Starting up...");
+
+  // Skip authentication and continue to the app
+  const skipAuthentication = useCallback(() => {
+    console.log('App: Skipping authentication and continuing to app');
+    setAuthChecked(true);
+    setDbInitialized(true);
+    setSecurityInitialized(true);
+    setNotificationsInitialized(true);
+    setIsLoading(false);
+    
+    // Also call the skipAuth function from AuthProvider
+    skipAuth();
+    
+    // Force initialization to complete
+    forceInitializationComplete();
+    
+    // Clear any pending timeouts
+    if (initTimeoutRef.current) {
+      clearTimeout(initTimeoutRef.current);
+    }
+  }, [skipAuth]);
+
+  // Force continue after a certain time regardless of initialization state
+  useEffect(() => {
+    // Show skip button after 5 seconds
+    const skipButtonTimer = setTimeout(() => {
+      if (isLoading) {
+        console.log('App: Initialization taking too long, showing skip button');
+        setShowSkipButton(true);
+      }
+    }, 5000); // Show skip button after 5 seconds
+    
+    // Force continue after 15 seconds total
+    initTimeoutRef.current = setTimeout(() => {
+      if (isLoading) {
+        console.log('App: Initialization taking too long, forcing continue');
+        skipAuthentication();
+      }
+    }, 15000); // Force continue after 15 seconds
+    
+    return () => {
+      clearTimeout(skipButtonTimer);
+      if (initTimeoutRef.current) {
+        clearTimeout(initTimeoutRef.current);
+      }
+    };
+  }, [isLoading, skipAuthentication]);
 
   // Initialize and check authentication
   useEffect(() => {
     const checkAuthentication = async () => {
       try {
+        setInitializationStage("Checking authentication...");
         console.log('App: Checking authentication on startup...');
-        // First check if we have a valid session, if not, attempt to refresh
-        const hasValidSession = await checkSession();
         
-        if (!hasValidSession) {
-          console.log('App: No valid session detected, attempting refresh...');
-          // Try to get the current session and refresh it
-          const { data } = await supabase.auth.refreshSession();
+        // Use our safe getCurrentUser function with timeout
+        try {
+          const userResult = await Promise.race([
+            getCurrentUser(),
+            timeout(3000) // 3 second timeout (reduced from 5)
+          ]).catch(error => {
+            console.warn('App: Authentication check timed out:', error.message);
+            return { data: { user: null }, error: null };
+          });
           
-          if (data.session) {
-            console.log('App: Session successfully refreshed on startup');
+          // Type assertion for userResult
+          const typedUserResult = userResult as { 
+            data: { user: any | null }, 
+            error: any | null 
+          };
+          
+          if (typedUserResult.error) {
+            console.error('App: Error getting current user:', typedUserResult.error);
+          } else if (typedUserResult.data?.user) {
+            console.log('App: User is authenticated');
+            setCurrentUser(typedUserResult.data.user);
           } else {
-            console.log('App: No session available, user needs to log in');
+            console.log('App: No authenticated user, attempting session refresh');
+            
+            // Try to refresh the session with timeout
+            try {
+              const refreshResult = await Promise.race([
+                refreshSessionSafe(),
+                timeout(3000) // 3 second timeout (reduced from 5)
+              ]).catch(error => {
+                console.warn('App: Session refresh timed out:', error.message);
+                return { data: { session: null, user: null }, error: null };
+              });
+              
+              // Type assertion for refreshResult
+              const typedRefreshResult = refreshResult as {
+                data: { session: any | null, user: any | null },
+                error: any | null
+              };
+              
+              if (typedRefreshResult.data?.session) {
+                console.log('App: Session refreshed successfully');
+                setCurrentUser(typedRefreshResult.data.user);
+              } else {
+                console.log('App: No session available, user needs to log in');
+              }
+            } catch (refreshError) {
+              console.error('App: Error refreshing session:', refreshError);
+            }
           }
-        } else {
-          console.log('App: Valid authentication session confirmed');
+        } catch (error) {
+          console.error('App: Error in authentication check:', error);
         }
-      } catch (error) {
-        console.error('App: Error checking authentication:', error);
       } finally {
+        // Always set authChecked to true to prevent getting stuck
         setAuthChecked(true);
       }
     };
     
-    checkAuthentication();
+    // Set a timeout for the entire authentication check
+    Promise.race([
+      checkAuthentication(),
+      timeout(8000) // 8 second timeout for the entire auth check (reduced from 15)
+    ]).catch(error => {
+      console.error('App: Authentication check timed out completely:', error);
+      setAuthChecked(true); // Ensure we don't get stuck
+    });
   }, []);
 
   // Initialize security service
   useEffect(() => {
     const initializeSecurity = async () => {
       try {
-        // Initialize the security service
-        const securityEnabled = await securityService.initialize();
-        setSecurityInitialized(true);
+        setInitializationStage("Initializing security...");
+        // Initialize the security service with timeout
+        await Promise.race([
+          securityService.initialize(),
+          timeout(3000) // 3 second timeout (reduced from 5)
+        ]).catch(error => {
+          console.warn('App: Security initialization timed out:', error.message);
+        });
         
         // Log security mode for debugging
         console.log('Security mode:', securityService.getSecurityMode());
-        
-        // If security is completely disabled, inform the user
-        if (securityService.getSecurityMode() === SecurityMode.DISABLED) {
-          Alert.alert(
-            "Security Warning",
-            "Your device does not support secure data storage. Sensitive information may not be fully protected.",
-            [{ text: "Continue Anyway" }]
-          );
-        }
       } catch (error) {
         console.error('Security initialization error:', error);
-        // Continue anyway but with a warning
+      } finally {
+        // Always set securityInitialized to true to prevent getting stuck
         setSecurityInitialized(true);
-        Alert.alert(
-          "Security Error",
-          "Failed to initialize security features. Your data may not be properly protected.",
-          [{ text: "Continue Anyway" }]
-        );
       }
     };
     
     initializeSecurity();
   }, []);
 
-  // Wait for all initialization steps to complete
-  const isInitialized = securityInitialized && dbInitialized && notificationsInitialized && authChecked;
-
+  // Initialize database
   useEffect(() => {
     const initializeDatabase = async () => {
       try {
-        // Wait for security check to complete
-        if (!securityInitialized) {
-          return;
-        }
+        setInitializationStage("Initializing database...");
+        // Initialize the unified database manager with timeout
+        await Promise.race([
+          unifiedDatabaseManager.initialize(),
+          timeout(5000) // 5 second timeout (reduced from 10)
+        ]).catch(error => {
+          console.warn('App: Database initialization timed out:', error.message);
+        });
         
-        // Check if the database is already initialized
-        const isInitialized = await AsyncStorageService.getItem<boolean>('dbInitialized');
-        
-        if (!isInitialized) {
-          console.log('First run, initializing database...');
-          await databaseManager.initialize();
-          
-          // Set the database as initialized
-          await AsyncStorageService.setItem('dbInitialized', true);
-          
-          // Import here to avoid circular imports
-          const { createDemoUserIfNeeded } = require('./src/utils/demoUsers');
-          await createDemoUserIfNeeded();
-        } else {
-          console.log('Database already initialized');
-          
-          // Debug: print out pets in the database
-          try {
-            const pets = await databaseManager.pets.getAll();
-            console.log('Pets in database:', pets.length);
-            if (pets.length > 0) {
-              pets.forEach(pet => console.log(`- Pet: ${pet.name} (${pet.id})`));
-            }
-            
-            // Check active pet
-            const activePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-            console.log('Active pet ID:', activePetId);
-            
-            // Debug Supabase connection and tables
-            try {
-              const { checkSupabaseTables } = require('./src/utils/debugUtils');
-              await checkSupabaseTables();
-              
-              // If user is authenticated, also check permissions
-              const { data: { user } } = await supabase.auth.getUser();
-              
-              if (user) {
-                const { checkPetsInsertPermission } = require('./src/utils/debugUtils');
-                await checkPetsInsertPermission(user.id);
-              }
-            } catch (debugError) {
-              console.error('Error running debug checks:', debugError);
-            }
-          } catch (e) {
-            console.error('Error checking pets:', e);
-          }
-        }
-        
-        // Run migrations to ensure all necessary Supabase tables exist
+        // Run migrations with timeout
         try {
-          await runMigrationsToEnsureTablesExist();
+          await Promise.race([
+            runMigrationsToEnsureTablesExist(),
+            timeout(3000) // 3 second timeout (reduced from 5)
+          ]).catch(error => {
+            console.warn('App: Migrations timed out:', error.message);
+          });
         } catch (migrationError) {
           console.error('Error running migrations:', migrationError);
-          // Non-critical, continue app startup
         }
-        
-        setDbInitialized(true);
-        setIsLoading(false);
       } catch (error) {
         console.error('Error initializing database:', error);
-        setError('Failed to initialize database');
-        setIsLoading(false);
+      } finally {
+        // Always set dbInitialized to true to prevent getting stuck
+        setDbInitialized(true);
       }
     };
     
     initializeDatabase();
-  }, [securityInitialized]);
+  }, []);
 
   // Initialize notifications
   useEffect(() => {
     const initializeNotifications = async () => {
       try {
-        // Initialize notification service
-        const initialized = await notificationService.initialize();
-        
-        if (initialized) {
-          // Reschedule all pending notifications
-          await notificationService.rescheduleAllNotifications();
-          
-          // The rescheduleAllNotifications method now includes meal and inventory alerts
-          console.log('Notifications rescheduled successfully');
-          
-          // Setup a periodic check for inventory alerts (every 24 hours)
-          const checkPeriod = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-          setInterval(async () => {
-            await notificationService.checkAndScheduleInventoryAlerts();
-          }, checkPeriod);
-        } else {
-          console.warn('Notification service initialization failed or permissions not granted');
-        }
-        
-        setNotificationsInitialized(true);
+        setInitializationStage("Setting up notifications...");
+        // Initialize notification service with timeout
+        await Promise.race([
+          notificationService.initialize(),
+          timeout(3000) // 3 second timeout (reduced from 5)
+        ]).catch(error => {
+          console.warn('App: Notifications initialization timed out:', error.message);
+        });
       } catch (error) {
         console.error('Error initializing notifications:', error);
-        setNotificationsInitialized(true); // Set to true anyway to let the app load
+      } finally {
+        // Always set notificationsInitialized to true to prevent getting stuck
+        setNotificationsInitialized(true);
       }
     };
     
     initializeNotifications();
   }, []);
 
-  // Show loading screen until everything is initialized
-  if (!dbInitialized || !securityInitialized || !notificationsInitialized) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={{ marginTop: 10 }}>Initializing app...</Text>
-      </View>
-    );
-  }
+  // Update loading state when all initialization is complete
+  useEffect(() => {
+    if (dbInitialized && securityInitialized && notificationsInitialized && authChecked) {
+      console.log('App: All initialization complete, setting loading to false');
+      setIsLoading(false);
+      
+      // Clear any pending timeouts
+      if (initTimeoutRef.current) {
+        clearTimeout(initTimeoutRef.current);
+      }
+    }
+  }, [dbInitialized, securityInitialized, notificationsInitialized, authChecked]);
 
-  // Handle loading state
-  if (isLoading) {
+  // Show loading screen with skip button if initialization is taking too long
+  if (!dbInitialized || !securityInitialized || !notificationsInitialized || !authChecked) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={{ marginTop: 10 }}>Loading...</Text>
-      </View>
+      <LoadingScreen 
+        initializationStage={initializationStage}
+        showSkipButton={showSkipButton}
+        onSkip={skipAuthentication}
+      />
     );
   }
 
   // Handle error state
   if (error) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: 'red' }}>{error}</Text>
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>
+          {error}
+        </Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => window.location.reload()}
+        >
+          <Text style={styles.buttonText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  // Handler for error boundary errors
-  const handleError = (error: Error, errorInfo: React.ErrorInfo): void => {
-    // Log to console for debugging
-    console.error('Error caught by root ErrorBoundary:', error, errorInfo);
-    
-    // In a production app, you would send this to a monitoring service like Sentry
-    // Example: Sentry.captureException(error);
-  };
-
+  // Return the app navigator with pet synchronizer if user is authenticated
   return (
-    <ErrorBoundary onError={handleError} resetOnPropsChange={false}>
-      <QueryClientProvider client={queryClient}>
-        <SafeAreaProvider>
+    <>
+      {currentUser && currentUser.id && <PetSynchronizer userId={currentUser.id} />}
+      <AppNavigator />
+    </>
+  );
+};
+
+// Create the App component
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <QueryClientProvider client={queryClient}>
           <ToastProvider>
             <AuthProvider>
               <ActivePetProvider>
-                <AppNavigator />
+                <AppContent />
               </ActivePetProvider>
             </AuthProvider>
           </ToastProvider>
-        </SafeAreaProvider>
-      </QueryClientProvider>
+        </QueryClientProvider>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
 }
+
+// Styles
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 10,
+    marginBottom: 20,
+    fontSize: 16,
+    color: '#333',
+  },
+  skipButton: {
+    backgroundColor: '#4CAF50',
+    padding: 15,
+    borderRadius: 5,
+    marginTop: 20,
+    width: 200,
+    alignItems: 'center',
+  },
+  skipButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  errorText: {
+    color: 'red',
+    marginBottom: 20,
+    textAlign: 'center',
+    fontSize: 16,
+  },
+  retryButton: {
+    backgroundColor: '#4CAF50',
+    padding: 15,
+    borderRadius: 5,
+    width: 150,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

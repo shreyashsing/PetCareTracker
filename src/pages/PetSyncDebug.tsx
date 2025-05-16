@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getSupabaseClient } from '../services/supabase';
-import { getPets } from '../repositories/petRepository';
-import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../services/supabase';
+import {unifiedDatabaseManager} from "../services/db";
+import { useAuth } from '../providers/AuthProvider';
 import { getLastSyncTime, saveLastSyncTime } from '../utils/syncStorage';
-import { Card } from '../components/Card';
-import Button from '../components/Button';
-import { supabaseUtil } from '../utils/supabaseUtil';
-import { formatDate } from '../utils/dateUtils';
+import { Button } from '../forms';
+import { formatDate } from '../utils/helpers';
+
+// Define types for pets
+interface Pet {
+  id: string;
+  name: string;
+  user_id?: string;
+  [key: string]: any;
+}
 
 const PetSyncDebug = () => {
   const [logs, setLogs] = useState<string[]>([]);
-  const [localPets, setLocalPets] = useState<any[]>([]);
-  const [remotePets, setRemotePets] = useState<any[]>([]);
+  const [localPets, setLocalPets] = useState<Pet[]>([]);
+  const [remotePets, setRemotePets] = useState<Pet[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const { user } = useAuth();
@@ -35,10 +41,10 @@ const PetSyncDebug = () => {
     setLogs([]);
   };
 
-  const loadLocalPets = async () => {
+  const loadLocalPets = async (): Promise<Pet[]> => {
     try {
       log('Loading pets from local storage...');
-      const pets = await getPets();
+      const pets = await unifiedDatabaseManager.pets.getAll();
       setLocalPets(pets);
       log(`Found ${pets.length} pets in local storage.`);
       return pets;
@@ -48,7 +54,7 @@ const PetSyncDebug = () => {
     }
   };
 
-  const loadRemotePets = async () => {
+  const loadRemotePets = async (): Promise<Pet[]> => {
     if (!user) {
       log('No user logged in. Cannot fetch remote pets.');
       return [];
@@ -56,7 +62,6 @@ const PetSyncDebug = () => {
 
     try {
       log('Loading pets from Supabase...');
-      const supabase = getSupabaseClient();
       
       const { data, error } = await supabase
         .from('pets')
@@ -79,7 +84,6 @@ const PetSyncDebug = () => {
   const checkTableStructure = async () => {
     try {
       log('Checking pets table structure in Supabase...');
-      const supabase = getSupabaseClient();
       
       // Get table information through Postgres introspection
       const { data, error } = await supabase
@@ -105,7 +109,6 @@ const PetSyncDebug = () => {
     try {
       // Check if Supabase is accessible
       log('Testing Supabase connection...');
-      const supabase = getSupabaseClient();
       const { data: healthData, error: healthError } = await supabase.from('pets').select('count(*)');
       
       if (healthError) {
@@ -124,8 +127,8 @@ const PetSyncDebug = () => {
         
         // Get pets in local but not in remote
         const localOnlyIds = local.filter(
-          lp => !remote.some(rp => rp.id === lp.id)
-        ).map(p => p.id);
+          (lp: Pet) => !remote.some((rp: Pet) => rp.id === lp.id)
+        ).map((p: Pet) => p.id);
         
         if (localOnlyIds.length > 0) {
           log(`Pets in local storage but not in Supabase: ${localOnlyIds.join(', ')}`);
@@ -135,8 +138,8 @@ const PetSyncDebug = () => {
         
         // Get pets in remote but not in local
         const remoteOnlyIds = remote.filter(
-          rp => !local.some(lp => lp.id === rp.id)
-        ).map(p => p.id);
+          (rp: Pet) => !local.some((lp: Pet) => lp.id === rp.id)
+        ).map((p: Pet) => p.id);
         
         if (remoteOnlyIds.length > 0) {
           log(`Pets in Supabase but not in local storage: ${remoteOnlyIds.join(', ')}`);
@@ -175,8 +178,6 @@ const PetSyncDebug = () => {
         return;
       }
       
-      const supabase = getSupabaseClient();
-      
       for (const pet of local) {
         log(`Syncing pet: ${pet.name} (${pet.id})`);
         
@@ -187,7 +188,7 @@ const PetSyncDebug = () => {
         };
         
         // Convert any dates to ISO strings
-        const preparedPet = supabaseUtil.prepareObjectForSupabase(petWithUserId);
+        const preparedPet = prepareObjectForSupabase(petWithUserId);
         
         const { data, error } = await supabase
           .from('pets')
@@ -201,81 +202,114 @@ const PetSyncDebug = () => {
         }
       }
       
-      // Update last sync time
+      // Reload remote pets to show changes
+      await loadRemotePets();
+      log('Sync completed.');
+      
+      // Save current time as last sync
       const now = new Date().toISOString();
       await saveLastSyncTime(now);
       setLastSyncTime(now);
       
-      // Reload remote pets to show updated state
-      await loadRemotePets();
-      
-      log('Sync completed');
     } catch (error) {
-      log(`Sync error: ${error instanceof Error ? error.message : String(error)}`);
+      log(`Force sync error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoading(false);
     }
   };
+  
+  // Helper function to prepare object for Supabase
+  const prepareObjectForSupabase = (obj: any): any => {
+    const prepared: any = { ...obj };
+    
+    // Convert dates to ISO strings
+    Object.keys(prepared).forEach(key => {
+      if (prepared[key] instanceof Date) {
+        prepared[key] = prepared[key].toISOString();
+      }
+    });
+    
+    return prepared;
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Pet Sync Debug</Text>
-        {lastSyncTime && (
-          <Text style={styles.subtitle}>
-            Last sync check: {formatDate(new Date(lastSyncTime))}
-          </Text>
-        )}
-      </View>
-      
-      <View style={styles.buttonContainer}>
-        <Button 
-          title="Run Diagnostics" 
-          onPress={runDiagnostics} 
-          loading={isLoading}
-          style={styles.button}
-        />
-        <Button 
-          title="Force Sync to Supabase" 
-          onPress={forceSync} 
-          loading={isLoading}
-          style={styles.button}
-        />
-        <Button 
-          title="Check Table Structure" 
-          onPress={checkTableStructure} 
-          loading={isLoading}
-          style={styles.button}
-        />
-      </View>
-      
-      <View style={styles.statsContainer}>
-        <Card style={styles.statsCard}>
-          <Text style={styles.cardTitle}>Local Storage</Text>
-          <Text>{localPets.length} pets</Text>
-        </Card>
-        <Card style={styles.statsCard}>
-          <Text style={styles.cardTitle}>Supabase</Text>
-          <Text>{remotePets.length} pets</Text>
-        </Card>
-      </View>
-      
-      <Card style={styles.logContainer}>
-        <View style={styles.logHeader}>
-          <Text style={styles.logTitle}>Logs</Text>
-          <TouchableOpacity onPress={clearLogs}>
-            <Text style={styles.clearButton}>Clear</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView style={styles.logScroll}>
-          {logs.map((log, index) => (
-            <Text key={index} style={styles.logEntry}>{log}</Text>
-          ))}
-          {logs.length === 0 && (
-            <Text style={styles.emptyLog}>No logs yet. Run diagnostics to see results.</Text>
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Pet Sync Diagnostics</Text>
+          {lastSyncTime && (
+            <Text style={styles.subtitle}>
+              Last synced: {formatDate(new Date(lastSyncTime))}
+            </Text>
           )}
-        </ScrollView>
-      </Card>
+        </View>
+        
+        <View style={styles.actionsContainer}>
+          <Button
+            title="Run Diagnostics"
+            onPress={runDiagnostics}
+            isLoading={isLoading}
+            style={{ marginRight: 8, marginBottom: 8 }}
+          />
+          
+          <Button
+            title="Force Sync to Supabase"
+            onPress={forceSync}
+            isLoading={isLoading}
+            style={{ marginRight: 8, marginBottom: 8 }}
+          />
+          
+          <Button
+            title="Check Table Structure"
+            onPress={checkTableStructure}
+            isLoading={isLoading}
+            style={{ marginRight: 8, marginBottom: 8 }}
+          />
+        </View>
+        
+        <View style={styles.petInfoContainer}>
+          <View style={styles.petCountContainer}>
+            <View style={styles.petCountCard}>
+              <Text style={styles.petCountLabel}>Local Pets</Text>
+              <Text style={styles.petCount}>{localPets.length}</Text>
+            </View>
+            
+            <View style={styles.petCountCard}>
+              <Text style={styles.petCountLabel}>Remote Pets</Text>
+              <Text style={styles.petCount}>{remotePets.length}</Text>
+            </View>
+          </View>
+          
+          <View style={styles.petsContainer}>
+            <Text style={styles.sectionTitle}>Local Pets</Text>
+            {localPets.map(pet => (
+              <View key={pet.id} style={styles.petCard}>
+                <Text style={styles.petName}>{pet.name}</Text>
+                <Text style={styles.petId}>ID: {pet.id}</Text>
+              </View>
+            ))}
+            
+            <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Remote Pets</Text>
+            {remotePets.map(pet => (
+              <View key={pet.id} style={styles.petCard}>
+                <Text style={styles.petName}>{pet.name}</Text>
+                <Text style={styles.petId}>ID: {pet.id}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+        
+        <View style={styles.logsContainer}>
+          <Text style={styles.sectionTitle}>Logs</Text>
+          <TouchableOpacity style={styles.clearButton} onPress={clearLogs}>
+            <Text style={styles.clearButtonText}>Clear Logs</Text>
+          </TouchableOpacity>
+          
+          {logs.map((log, index) => (
+            <Text key={index} style={styles.logItem}>{log}</Text>
+          ))}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -285,6 +319,9 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     backgroundColor: '#f5f5f5',
+  },
+  scrollView: {
+    flex: 1,
   },
   header: {
     marginBottom: 20,
@@ -298,58 +335,69 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-  buttonContainer: {
+  actionsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 16,
   },
-  button: {
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  statsContainer: {
-    flexDirection: 'row',
+  petInfoContainer: {
     marginBottom: 16,
   },
-  statsCard: {
+  petCountContainer: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  petCountCard: {
     flex: 1,
     padding: 16,
     marginRight: 8,
   },
-  cardTitle: {
+  petCountLabel: {
     fontWeight: 'bold',
     marginBottom: 8,
   },
-  logContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  logHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  logTitle: {
-    fontWeight: 'bold',
+  petCount: {
     fontSize: 16,
   },
-  clearButton: {
-    color: 'blue',
-  },
-  logScroll: {
+  petsContainer: {
     flex: 1,
   },
-  logEntry: {
+  sectionTitle: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  petCard: {
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  petName: {
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  petId: {
+    fontSize: 12,
+    color: '#666',
+  },
+  logsContainer: {
+    flex: 1,
+  },
+  clearButton: {
+    backgroundColor: '#f0f0f0',
+    padding: 5,
+    borderRadius: 4,
+  },
+  clearButtonText: {
+    color: 'blue',
+    fontSize: 12,
+  },
+  logItem: {
     fontSize: 12,
     marginBottom: 4,
     fontFamily: 'monospace',
-  },
-  emptyLog: {
-    fontStyle: 'italic',
-    color: '#999',
-    textAlign: 'center',
-    marginTop: 20,
   },
 });
 

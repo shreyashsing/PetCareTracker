@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { databaseManager } from '../../../src/services/db';
+import {unifiedDatabaseManager} from "../../../src/services/db";
 import { AsyncStorageService } from '../../../src/services/db/asyncStorage';
 
 // Mock the repository implementations
@@ -38,7 +38,7 @@ describe('DatabaseManager', () => {
 
   describe('pet repository operations', () => {
     it('should retrieve all pets', async () => {
-      const pets = await databaseManager.pets.getAll();
+      const pets = await unifiedDatabaseManager.pets.getAll();
       
       expect(pets).toHaveLength(2);
       expect(pets[0].name).toBe('Fluffy');
@@ -46,7 +46,7 @@ describe('DatabaseManager', () => {
     });
 
     it('should retrieve a pet by id', async () => {
-      const pet = await databaseManager.pets.getById('1');
+      const pet = await unifiedDatabaseManager.pets.getById('1');
       
       expect(pet).not.toBeNull();
       expect(pet.id).toBe('1');
@@ -60,7 +60,7 @@ describe('DatabaseManager', () => {
         breed: 'Siamese'
       };
       
-      const createdPet = await databaseManager.pets.create(newPet);
+      const createdPet = await unifiedDatabaseManager.pets.create(newPet);
       
       expect(createdPet).not.toBeNull();
       expect(createdPet.id).toBe('3');
@@ -68,13 +68,13 @@ describe('DatabaseManager', () => {
     });
 
     it('should update a pet', async () => {
-      const result = await databaseManager.pets.update('1', { name: 'Updated Fluffy' });
+      const result = await unifiedDatabaseManager.pets.update('1', { name: 'Updated Fluffy' });
       
       expect(result).toBe(true);
     });
 
     it('should delete a pet', async () => {
-      const result = await databaseManager.pets.delete('1');
+      const result = await unifiedDatabaseManager.pets.delete('1');
       
       expect(result).toBe(true);
     });

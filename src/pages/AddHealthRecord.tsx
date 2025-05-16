@@ -12,7 +12,7 @@ import {
   DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { HealthRecord } from '../types/components';
 import { generateUUID } from '../utils/helpers';
@@ -272,10 +272,10 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         
         if (isEditMode && recordId) {
           console.log('Updating vaccination record:', JSON.stringify(vaccinationRecord, null, 2));
-          await databaseManager.healthRecords.update(recordId, vaccinationRecord);
+          await unifiedDatabaseManager.healthRecords.update(recordId, vaccinationRecord);
         } else {
           console.log('Creating new vaccination record:', JSON.stringify(vaccinationRecord, null, 2));
-          await databaseManager.healthRecords.create(vaccinationRecord);
+          await unifiedDatabaseManager.healthRecords.create(vaccinationRecord);
         }
         
       } else {
@@ -317,10 +317,10 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
       
         if (isEditMode && recordId) {
           console.log('Updating non-vaccination record:', JSON.stringify(newRecord, null, 2));
-          await databaseManager.healthRecords.update(recordId, newRecord as HealthRecord);
+          await unifiedDatabaseManager.healthRecords.update(recordId, newRecord as HealthRecord);
         } else {
           console.log('Creating new non-vaccination record:', JSON.stringify(newRecord, null, 2));
-      await databaseManager.healthRecords.create(newRecord as HealthRecord);
+      await unifiedDatabaseManager.healthRecords.create(newRecord as HealthRecord);
         }
       }
       

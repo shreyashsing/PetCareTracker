@@ -3,6 +3,7 @@ import { RELATED_KEYS, STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.tasks instead. This repository is being phased out.
  * Repository for managing Task entities
  */
 export class TaskRepository extends BaseRepository<Task> {

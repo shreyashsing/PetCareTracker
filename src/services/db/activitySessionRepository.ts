@@ -5,7 +5,8 @@ import { generateUUID } from '../../utils/helpers';
 import { supabase } from '../supabase';
 
 /**
- * Repository for managing Activity Sessions
+ * @deprecated Use unifiedDatabaseManager.activitySessions instead. This repository is being phased out.
+ * Repository for managing ActivitySession entities
  */
 export class ActivitySessionRepository {
   /**

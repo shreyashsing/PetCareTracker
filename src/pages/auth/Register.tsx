@@ -85,7 +85,7 @@ const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) => {
         
         if (directResult.success) {
           // If direct registration worked, try normal registration
-          const success = await register(email, password, name);
+          const success = await register(email, password);
           if (!success) {
             Alert.alert(
               "Registration Complete", 

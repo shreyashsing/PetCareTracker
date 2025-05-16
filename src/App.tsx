@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme, View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { databaseManager } from './services/db';
+import {unifiedDatabaseManager} from "./services/db";
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 // Import App initialization
 import { appInitialized } from './App.init';
@@ -81,19 +81,8 @@ export default function App() {
   const colorScheme = useColorScheme();
 
   useEffect(() => {
-    const initializeDatabase = async () => {
-      try {
-        // Reset database to load the new comprehensive pet data
-        await databaseManager.resetDatabase();
-        console.log('Database initialized with comprehensive pet profile');
-      } catch (error) {
-        console.error('Error initializing database:', error);
-      }
-    };
-    
-    initializeDatabase();
-    
-    // Log initialization status
+    // Remove database reset that was causing flickering
+    // Only log initialization status
     console.log('App component mounted, app initialized:', appInitialized);
   }, []);
 

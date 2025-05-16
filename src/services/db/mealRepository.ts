@@ -3,6 +3,7 @@ import { RELATED_KEYS, STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.meals instead. This repository is being phased out.
  * Repository for managing Meal entities
  */
 export class MealRepository extends BaseRepository<Meal> {

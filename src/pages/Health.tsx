@@ -7,7 +7,8 @@ import {
   TouchableOpacity, 
   Image, 
   Dimensions,
-  Animated
+  Animated,
+  ActivityIndicator
 } from 'react-native';
 import { useActivePet } from '../hooks/useActivePet';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -18,7 +19,7 @@ import { Button } from '../forms';
 import { TopNavBar, HealthRecordDetails, MedicationDetails } from '../components';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
-import { STORAGE_KEYS, databaseManager } from '../services/db';
+import { STORAGE_KEYS,unifiedDatabaseManager} from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,6 +27,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
 // Import the MedicationReminders component
 import MedicationReminders from '../components/MedicationReminders';
+import { syncHealthRecordsForPet } from '../utils/healthRecordSync';
 
 const { width } = Dimensions.get('window');
 
@@ -85,6 +87,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const [healthAnalytics, setHealthAnalytics] = useState<HealthAnalytic[]>([]);
   const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncingRecords, setSyncingRecords] = useState(false);
   const [recordType, setRecordType] = useState<string>('All');
   const [healthSummary, setHealthSummary] = useState({
     status: 'Good',
@@ -283,18 +286,44 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     try {
       setLoading(true);
       
-      // Get active pet ID from AsyncStorage
-      const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-      console.log('Loading health data for pet ID:', storedActivePetId);
+      // Get active pet ID from context first, then AsyncStorage if needed
+      let currentPetId = activePetId;
       
-      if (storedActivePetId) {
+      // If no pet ID in context, try to get from AsyncStorage
+      if (!currentPetId) {
+        const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
+        console.log('Loading health data for pet ID from storage:', storedActivePetId);
+        currentPetId = storedActivePetId;
+      }
+      
+      console.log('Final pet ID to load health data for:', currentPetId);
+      
+      if (currentPetId) {
         // Get active pet info
-        const pet = await databaseManager.pets.getById(storedActivePetId);
+        const pet = await unifiedDatabaseManager.pets.getById(currentPetId);
         if (pet) {
+          console.log('Successfully loaded pet:', pet.name, pet.id);
           setActivePet(pet);
           
+          // Try to sync health records with Supabase
+          try {
+            setSyncingRecords(true);
+            console.log('Syncing health records with Supabase...');
+            const syncResult = await syncHealthRecordsForPet(currentPetId);
+            console.log('Health records sync result:', syncResult);
+            
+            if (syncResult.syncedRecords > 0) {
+              console.log(`Successfully synced ${syncResult.syncedRecords} health records`);
+            }
+          } catch (syncError) {
+            console.error('Error syncing health records:', syncError);
+          } finally {
+            setSyncingRecords(false);
+          }
+          
           // Load health records
-          const records = await databaseManager.healthRecords.getByPetId(storedActivePetId);
+          const allHealthRecords = await unifiedDatabaseManager.healthRecords.getAll();
+          const records = allHealthRecords.filter(record => record.petId === currentPetId);
           console.log('Health Records raw data:', JSON.stringify(records, null, 2));
           
           if (records && records.length > 0) {
@@ -362,7 +391,33 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           }
           
           // Load medications
-          const meds = await databaseManager.medications.getByPetId(storedActivePetId);
+          const allMedications = await unifiedDatabaseManager.medications.getAll();
+          const meds = allMedications.filter(med => med.petId === currentPetId);
+          
+          // Calculate health metrics and analytics based on real data
+          const healthStats = calculateHealthMetrics(pet, records, meds, weightRecords);
+          
+          // Update health metrics
+          const updatedHealthMetrics: HealthMetric[] = [
+            {
+              id: '1',
+              name: 'Weight',
+              value: pet.weight.toString(),
+              unit: pet.weightUnit,
+              trend: healthStats.weightTrend,
+              icon: 'scale-outline'
+            },
+            {
+              id: '2',
+              name: 'Vaccination Status',
+              value: healthStats.vaccinationStatus,
+              unit: '',
+              trend: healthStats.vaccinationTrend,
+              icon: 'shield-checkmark-outline'
+            }
+          ];
+          setHealthMetrics(updatedHealthMetrics);
+          
           if (meds.length > 0) {
             // Sort medications by next due date
             meds.sort((a, b) => {
@@ -492,30 +547,6 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
             setMedications([]);
           }
           
-          // Calculate health metrics and analytics based on real data
-          const metrics = calculateHealthMetrics(pet, records, meds, weightRecords);
-          
-          // Update health metrics
-          const updatedHealthMetrics: HealthMetric[] = [
-            {
-              id: '1',
-              name: 'Weight',
-              value: pet.weight.toString(),
-              unit: pet.weightUnit,
-              trend: metrics.weightTrend,
-              icon: 'scale-outline'
-            },
-            {
-              id: '2',
-              name: 'Vaccination Status',
-              value: metrics.vaccinationStatus,
-              unit: '',
-              trend: metrics.vaccinationTrend,
-              icon: 'shield-checkmark-outline'
-            }
-          ];
-          setHealthMetrics(updatedHealthMetrics);
-          
           // Generate weight trend data for analytics
           let weightData: number[] = [];
           let weightLabels: string[] = [];
@@ -535,8 +566,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           }
           
           // Format weight change for display
-          const weightChangeDisplay = metrics.weightChange !== 0 
-            ? `${metrics.weightChange > 0 ? '+' : ''}${metrics.weightChange.toFixed(1)} ${pet.weightUnit}`
+          const weightChangeDisplay = healthStats.weightChange !== 0 
+            ? `${healthStats.weightChange > 0 ? '+' : ''}${healthStats.weightChange.toFixed(1)} ${pet.weightUnit}`
             : 'Stable';
             
           // Update health analytics
@@ -546,7 +577,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               title: 'Weight Trend',
               value: `${pet.weight} ${pet.weightUnit}`,
               change: weightChangeDisplay,
-              trend: metrics.weightTrend,
+              trend: healthStats.weightTrend,
               data: weightData,
               color: '#4F46E5',
               labels: weightLabels
@@ -554,26 +585,26 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
             {
               id: '2',
               title: 'Medication Adherence',
-              value: `${metrics.medicationAdherence}%`,
-              change: metrics.medicationAdherence >= 90 ? 'Excellent' : 
-                     metrics.medicationAdherence >= 70 ? 'Good' : 'Needs improvement',
-              trend: metrics.medicationTrend,
+              value: `${healthStats.medicationAdherence}%`,
+              change: healthStats.medicationAdherence >= 90 ? 'Excellent' : 
+                     healthStats.medicationAdherence >= 70 ? 'Good' : 'Needs improvement',
+              trend: healthStats.medicationTrend,
               data: meds.length > 0 ? [
-                Math.max(60, metrics.medicationAdherence - 20),
-                Math.max(65, metrics.medicationAdherence - 15),
-                Math.max(70, metrics.medicationAdherence - 10),
-                Math.max(75, metrics.medicationAdherence - 5),
-                metrics.medicationAdherence
+                Math.max(60, healthStats.medicationAdherence - 20),
+                Math.max(65, healthStats.medicationAdherence - 15),
+                Math.max(70, healthStats.medicationAdherence - 10),
+                Math.max(75, healthStats.medicationAdherence - 5),
+                healthStats.medicationAdherence
               ] : [80, 85, 88, 90, 92],
               color: '#10B981'
             },
             {
               id: '3',
               title: 'Overall Health',
-              value: metrics.healthStatus,
+              value: healthStats.healthStatus,
               change: pet.status.charAt(0).toUpperCase() + pet.status.slice(1),
-              trend: metrics.healthStatus === 'Excellent' ? 'up' : 
-                    metrics.healthStatus === 'Needs attention' ? 'down' : 'stable',
+              trend: healthStats.healthStatus === 'Excellent' ? 'up' : 
+                    healthStats.healthStatus === 'Needs attention' ? 'down' : 'stable',
               data: [75, 80, 82, 78, 80], // Activity data is not yet tracked in our DB
               color: '#F59E0B'
             }
@@ -582,9 +613,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           
           // Update health summary
           const healthSummary = {
-            status: metrics.healthStatus,
-            lastCheckup: metrics.lastCheckup,
-            nextVaccination: metrics.nextVaccination
+            status: healthStats.healthStatus,
+            lastCheckup: healthStats.lastCheckup,
+            nextVaccination: healthStats.nextVaccination
           };
           setHealthSummary(healthSummary);
           
@@ -602,15 +633,17 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   useFocusEffect(
     useCallback(() => {
       console.log('→→→ Health screen focused - reloading data');
+      console.log('→→→ Current active pet ID from context:', activePetId);
       
       // Reload all health records to verify what's in the database
       async function verifyRecords() {
         try {
+          // Always check latest activePetId from AsyncStorage
           const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-          console.log('→→→ Currently active pet ID:', storedActivePetId);
+          console.log('→→→ Currently active pet ID from storage:', storedActivePetId);
           
           // Get ALL records from the database regardless of pet ID
-          const allRecords = await databaseManager.healthRecords.getAll();
+          const allRecords = await unifiedDatabaseManager.healthRecords.getAll();
           console.log('→→→ ALL health records in database:', allRecords.length);
           
           // Log ALL vaccination records in the database regardless of pet ID
@@ -629,9 +662,15 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
             })), null, 2));
           }
           
+          // If stored active pet ID is different from context, we should update
+          if (storedActivePetId && storedActivePetId !== activePetId) {
+            console.log('→→→ Active pet ID in storage differs from context - need to refresh');
+          }
+          
           if (storedActivePetId) {
             console.log('→→→ Getting records for active pet:', storedActivePetId);
-            const petRecords = await databaseManager.healthRecords.getByPetId(storedActivePetId);
+            const allRecords = await unifiedDatabaseManager.healthRecords.getAll();
+            const petRecords = allRecords.filter(record => record.petId === storedActivePetId);
             console.log('→→→ Filtered pet health records:', petRecords.length);
             
             // Log vaccination records specifically for this pet
@@ -792,7 +831,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const handleViewRecordDetails = async (recordId: string) => {
     try {
       // Get the full record from the database
-      const record = await databaseManager.healthRecords.getById(recordId);
+      const record = await unifiedDatabaseManager.healthRecords.getById(recordId);
       if (record) {
         console.log('Viewing record details:', record.id, record.type);
         setSelectedRecord(record);
@@ -826,7 +865,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const handleViewMedicationDetails = async (medicationId: string) => {
     try {
       // Get the full medication from the database
-      const medication = await databaseManager.medications.getById(medicationId);
+      const medication = await unifiedDatabaseManager.medications.getById(medicationId);
       if (medication) {
         console.log('Viewing medication details:', medication.id, medication.name);
         setSelectedMedication(medication);
@@ -1402,6 +1441,23 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     return tomorrow;
   }
 
+  // Show loading indicator while data is being fetched
+  if (loading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ color: colors.text, marginTop: 20, fontSize: 16 }}>
+          {syncingRecords ? 'Synchronizing health records...' : 'Loading pet health data...'}
+        </Text>
+        {syncingRecords && (
+          <Text style={{ color: colors.text + '80', marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }}>
+            This may take a moment if this pet was created on another device
+          </Text>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <TopNavBar title={`${pet.name}'s Health`} />
@@ -1419,7 +1475,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           <View style={styles.header}>
             <View style={styles.petInfoContainer}>
               <Image 
-                source={{ uri: typeof pet === 'object' && 'image' in pet && pet.image ? pet.image : 'https://via.placeholder.com/150' }} 
+                source={{ uri: activePet && activePet.image ? activePet.image : 'https://via.placeholder.com/150' }} 
                 style={styles.petImage} 
                 resizeMode="cover"
               />

@@ -3,6 +3,7 @@ import { RELATED_KEYS, STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.medications instead. This repository is being phased out.
  * Repository for managing Medication entities
  */
 export class MedicationRepository extends BaseRepository<Medication> {

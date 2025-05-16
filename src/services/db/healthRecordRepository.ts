@@ -1,8 +1,10 @@
 import { HealthRecord } from '../../types/components';
 import { RELATED_KEYS, STORAGE_KEYS } from './constants';
 import { BaseRepository } from './repository';
+import { AsyncStorageService } from './asyncStorage';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.healthRecords instead. This repository is being phased out.
  * Repository for managing HealthRecord entities
  */
 export class HealthRecordRepository extends BaseRepository<HealthRecord> {
@@ -15,12 +17,53 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
   }
 
   /**
+   * Save all health records to AsyncStorage
+   * @param records Array of health records to save
+   */
+  private async saveAll(records: HealthRecord[]): Promise<void> {
+    try {
+      await AsyncStorageService.setItem(STORAGE_KEYS.HEALTH_RECORDS, records);
+    } catch (error) {
+      console.error('[HealthRecordRepository] Error in saveAll:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get all health records for a specific pet
+   * Only fetches from AsyncStorage to avoid Supabase errors
    * @param petId Pet ID
    * @returns Array of health records for the pet
    */
   async getByPetId(petId: string): Promise<HealthRecord[]> {
-    return this.find(record => record.petId === petId);
+    try {
+      console.log(`[HealthRecordRepository] Getting health records for pet: ${petId}`);
+      
+      // Get records from AsyncStorage only
+      const localRecords = await this.find(record => record.petId === petId);
+      console.log(`[HealthRecordRepository] Found ${localRecords.length} local health records`);
+      
+      return localRecords;
+    } catch (error) {
+      console.error('[HealthRecordRepository] Error in getByPetId:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a health record - only save to local storage
+   * @override
+   */
+  async create(record: HealthRecord): Promise<HealthRecord> {
+    try {
+      // Save to local storage only
+      const createdRecord = await super.create(record);
+      console.log('[HealthRecordRepository] Record created locally');
+      return createdRecord;
+    } catch (error) {
+      console.error('[HealthRecordRepository] Error in create:', error);
+      throw error;
+    }
   }
 
   /**
@@ -30,7 +73,11 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
    * @returns Array of health records for the pet with the given type
    */
   async getByPetIdAndType(petId: string, type: HealthRecord['type']): Promise<HealthRecord[]> {
-    return this.find(record => record.petId === petId && record.type === type);
+    // Get all records for the pet
+    const records = await this.getByPetId(petId);
+    
+    // Filter by type
+    return records.filter(record => record.type === type);
   }
 
   /**
@@ -47,11 +94,11 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
     
-    return this.find(record => {
-      // Check if the record is for the specified pet
-      if (record.petId !== petId) return false;
-      
-      // Check if the record is within the date range
+    // Get all records for the pet
+    const records = await this.getByPetId(petId);
+    
+    // Filter by date range
+    return records.filter(record => {
       const recordDate = new Date(record.date);
       return recordDate >= start && recordDate <= end;
     });
@@ -63,8 +110,10 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
    * @returns Array of health records that need follow-up
    */
   async getFollowUpNeeded(petId: string): Promise<HealthRecord[]> {
-    return this.find(record => 
-      record.petId === petId && 
+    // Get all records for the pet
+    const records = await this.getByPetId(petId);
+    
+    return records.filter(record => 
       record.followUpNeeded === true && 
       record.status !== 'completed'
     );
@@ -81,10 +130,10 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
     const future = new Date();
     future.setDate(future.getDate() + days);
     
-    return this.find(record => {
-      // Check if the record is for the specified pet
-      if (record.petId !== petId) return false;
-      
+    // Get all records for the pet
+    const records = await this.getByPetId(petId);
+    
+    return records.filter(record => {
       // Check if follow-up is needed and not completed
       if (!record.followUpNeeded || record.status === 'completed') return false;
       
@@ -94,29 +143,6 @@ export class HealthRecordRepository extends BaseRepository<HealthRecord> {
       const followUpDate = new Date(record.followUpDate);
       return followUpDate >= now && followUpDate <= future;
     });
-  }
-
-  /**
-   * Mark a health record as completed
-   * @param id Health record ID
-   * @returns Updated health record if found, null otherwise
-   */
-  async markAsCompleted(id: string): Promise<HealthRecord | null> {
-    return this.update(id, {
-      status: 'completed'
-    });
-  }
-
-  /**
-   * Get total cost of health records for a date range
-   * @param petId Pet ID
-   * @param startDate Start date
-   * @param endDate End date
-   * @returns Total cost of health records
-   */
-  async getTotalCost(petId: string, startDate: Date, endDate: Date): Promise<number> {
-    const records = await this.getByDateRange(petId, startDate, endDate);
-    return records.reduce((total, record) => total + record.cost, 0);
   }
 
   /**

@@ -9,7 +9,7 @@ import { ThemedStatusBar } from './ThemedStatusBar';
 import AddFirstPetScreen from '../pages/AddFirstPet';
 import { initializeDeepLinks } from '../utils/deepLinks';
 import { supabase } from '../services/supabase';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import type { ComponentType } from 'react';
 
 // Create a type specifically for the App root navigator
@@ -38,10 +38,11 @@ const NavigationContent = () => {
     
     setCheckingPets(true);
     try {
-      // Check if user has any pets
-      const pets = await databaseManager.pets.findByUserId(user.id);
-      console.log(`[AppNavigator] Checking pets for user ${user.id}: Found ${pets.length} pets`);
-      setNeedsFirstPet(pets.length === 0);
+      // Get all pets and filter by current user's ID
+      const allPets = await unifiedDatabaseManager.pets.getAll();
+      const userPets = allPets.filter(pet => pet.userId === user.id);
+      console.log(`[AppNavigator] Checking pets for user ${user.id}: Found ${userPets.length} pets`);
+      setNeedsFirstPet(userPets.length === 0);
     } catch (error) {
       console.error('Error checking user pets:', error);
       setNeedsFirstPet(false);

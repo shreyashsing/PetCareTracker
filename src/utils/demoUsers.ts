@@ -1,7 +1,8 @@
 import { User } from '../types/components';
 import { hashPassword } from '../services/auth/passwordService';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { generateUUID } from './helpers';
+import { supabase } from '../services/supabase';
 
 /**
  * Create a demo user if none exist
@@ -9,7 +10,7 @@ import { generateUUID } from './helpers';
 export async function createDemoUserIfNeeded(): Promise<void> {
   try {
     // Check if any users exist
-    const existingUsers = await databaseManager.users.getAll();
+    const existingUsers = await unifiedDatabaseManager.users.getAll();
     
     if (existingUsers.length === 0) {
       console.log('No users found. Creating demo user...');
@@ -33,8 +34,31 @@ export async function createDemoUserIfNeeded(): Promise<void> {
         }
       };
       
-      // Save to database
-      await databaseManager.users.create(demoUser);
+      try {
+        // Try to save to Supabase directly first
+        const { error } = await supabase
+          .from('users')
+          .insert([{
+            id: demoUser.id,
+            email: demoUser.email,
+            name: demoUser.name,
+            display_name: demoUser.displayName,
+            "createdAt": demoUser.createdAt.toISOString(),
+            is_new_user: true,
+            pet_ids: []
+          }]);
+          
+        if (error) {
+          console.log('Failed to create demo user in Supabase:', error.message);
+          // Fall back to local storage only
+          await unifiedDatabaseManager.users.create(demoUser);
+        }
+      } catch (supabaseError) {
+        console.log('Error with Supabase, using local storage only:', supabaseError);
+        // Fall back to local storage only
+        await unifiedDatabaseManager.users.create(demoUser);
+      }
+      
       console.log('Demo user created successfully!');
     } else {
       console.log(`Found ${existingUsers.length} existing users, skipping demo user creation.`);

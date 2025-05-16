@@ -13,7 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 
 type ExerciseScreenProps = NativeStackScreenProps<RootStackParamList, 'Exercise'>;
 
@@ -33,7 +33,7 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
 
       try {
         // Load pet data
-        const petData = await databaseManager.pets.getById(activePetId);
+        const petData = await unifiedDatabaseManager.pets.getById(activePetId);
         setPet(petData);
 
         // Placeholder for activity data - this would be replaced with real data

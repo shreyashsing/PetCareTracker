@@ -13,7 +13,7 @@ import {
   DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 
@@ -84,7 +84,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         setIsLoading(true);
         
         try {
-          const task = await databaseManager.tasks.getById(taskId);
+          const task = await unifiedDatabaseManager.tasks.getById(taskId);
           if (task) {
             // Convert the task data to our form format
             setFormState({
@@ -250,7 +250,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
 
       if (isEditMode) {
         // Update existing task
-        await databaseManager.tasks.update(taskId as string, taskData);
+        await unifiedDatabaseManager.tasks.update(taskId as string, taskData);
         
         // Schedule notifications if reminders are enabled and task is not completed
         if (formState.reminderEnabled && !formState.isCompleted) {
@@ -263,7 +263,7 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         Alert.alert('Success', 'Task updated successfully!');
       } else {
         // Create new task
-        await databaseManager.tasks.create(taskData);
+        await unifiedDatabaseManager.tasks.create(taskData);
         
         // Schedule notifications if reminders are enabled and task is not completed
         if (formState.reminderEnabled && !formState.isCompleted) {

@@ -15,7 +15,7 @@ import { RootStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,8 +45,9 @@ const ManagePets: React.FC<ManagePetsScreenProps> = ({ navigation }) => {
         return;
       }
       
-      // Only get pets that belong to the current user
-      const userPets = await databaseManager.pets.findByUserId(user.id);
+      // Get all pets and filter by current user's ID
+      const allPets = await unifiedDatabaseManager.pets.getAll();
+      const userPets = allPets.filter(pet => pet.userId === user.id);
       setPets(userPets);
     } catch (error) {
       console.error('Error loading pets:', error);
@@ -75,7 +76,7 @@ const ManagePets: React.FC<ManagePetsScreenProps> = ({ navigation }) => {
           onPress: async () => {
             try {
               // Delete pet from local database
-              await databaseManager.pets.delete(pet.id);
+              await unifiedDatabaseManager.pets.delete(pet.id);
               
               // Also delete pet from Supabase
               const { error } = await supabase
@@ -113,9 +114,23 @@ const ManagePets: React.FC<ManagePetsScreenProps> = ({ navigation }) => {
 
   const handleSetActivePet = async (pet: Pet) => {
     try {
+      // First update in AsyncStorage
       await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, pet.id);
+      
+      // Then update in context
       setActivePetId(pet.id);
+      
+      // Show success message
       Alert.alert('Success', `${pet.name} is now your active pet.`);
+      
+      // Brief delay to ensure AsyncStorage update completes
+      setTimeout(() => {
+        // Navigate to the Home screen to see the updated pet
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Main' }],
+        });
+      }, 100);
     } catch (error) {
       console.error('Error setting active pet:', error);
       Alert.alert('Error', 'There was an error setting the active pet. Please try again.');

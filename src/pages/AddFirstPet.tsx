@@ -28,7 +28,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
 import { Pet } from '../types/components';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAuth } from '../providers/AuthProvider';
@@ -226,7 +226,7 @@ const AddFirstPet: React.FC<AddFirstPetScreenProps> = ({ navigation }) => {
       };
       
       // Save to database
-      await databaseManager.pets.create(newPet);
+      await unifiedDatabaseManager.pets.create(newPet);
       
       // Set as active pet
       await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, newPet.id);

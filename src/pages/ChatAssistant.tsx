@@ -1,7 +1,7 @@
 /// <reference types="../types/declarations.d.ts" />
 /// <reference types="../types/module-declarations.d.ts" />
 /// <reference types="../types/ambient.d.ts" />
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Pressable,
+  Button,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -31,6 +32,8 @@ import { MainStackParamList } from '../types/navigation';
 import { runFixedSqlScript } from '../utils/runSqlFix';
 import { getChatTablesSQLFix, diagnoseChatTables, fixTitleColumnIssue } from '../utils/chatDiagnostics';
 import { debugAuth, refreshAuth } from '../utils/authDebug';
+import { createChatTables } from '../services/db';
+import { ensureChatTablesExist } from '../services/db/migrations';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAppStore } from '../store/AppStore';
 import { usePetStore } from '../store/PetStore';
@@ -38,6 +41,7 @@ import { useErrorReporting } from '../utils/error-reporting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import { NetworkUtils } from '../config/network';
 
 // Define our simple ChatMessage interface
 interface ChatMessage {
@@ -56,15 +60,15 @@ interface ChatMessage {
 // ChatUtils helper functions
 const ChatUtils = {
   append: (currentMessages: ChatMessage[], newMessages: ChatMessage[]): ChatMessage[] => {
-    return [...newMessages, ...currentMessages];
+    return [...currentMessages, ...newMessages];
   },
   prepend: (currentMessages: ChatMessage[], newMessages: ChatMessage[]): ChatMessage[] => {
-    return [...currentMessages, ...newMessages];
+    return [...newMessages, ...currentMessages];
   },
 };
 
 // Simple chat implementation
-const SimpleChatUI = ({ 
+const SimpleChatUI = React.memo(({ 
   messages, 
   onSend, 
   colors, 
@@ -142,12 +146,39 @@ const SimpleChatUI = ({
     }
   });
   
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     if (text.trim() && !isLoading) {
       onSend(text);
       setText('');
     }
-  };
+  }, [text, isLoading, onSend]);
+
+  // Memoize the message rendering function to prevent unnecessary re-renders
+  const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
+    const isUser = item.user._id !== 'assistant';
+    return (
+      <View style={[
+        uiStyles.messageBubble,
+        isUser ? [uiStyles.userBubble, { backgroundColor: colors.primary }] : [uiStyles.assistantBubble, { backgroundColor: colors.card }]
+      ]}>
+        <Text style={[
+          uiStyles.messageText,
+          { color: isUser ? '#fff' : colors.text }
+        ]}>
+          {item.text}
+        </Text>
+      </View>
+    );
+  }, [colors, uiStyles]);
+  
+  // Memoize the empty component
+  const EmptyComponent = useCallback(() => (
+    <View style={uiStyles.emptyContainer}>
+      <Text style={[uiStyles.emptyText, { color: colors.text }]}>
+        No messages yet. Start a conversation with your Pet Assistant.
+      </Text>
+    </View>
+  ), [colors.text, uiStyles]);
   
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -155,31 +186,16 @@ const SimpleChatUI = ({
         <FlatList
           data={messages}
           keyExtractor={(item) => item._id.toString()}
-          renderItem={({ item }) => {
-            const isUser = item.user._id !== 'assistant';
-            return (
-              <View style={[
-                uiStyles.messageBubble,
-                isUser ? [uiStyles.userBubble, { backgroundColor: colors.primary }] : [uiStyles.assistantBubble, { backgroundColor: colors.card }]
-              ]}>
-                <Text style={[
-                  uiStyles.messageText,
-                  { color: isUser ? '#fff' : colors.text }
-                ]}>
-                  {item.text}
-                </Text>
-              </View>
-            );
-          }}
+          renderItem={renderItem}
           inverted={true}
           contentContainerStyle={{ padding: 10 }}
+          removeClippedSubviews={true}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={10}
         />
       ) : (
-        <View style={uiStyles.emptyContainer}>
-          <Text style={[uiStyles.emptyText, { color: colors.text }]}>
-            No messages yet. Start a conversation with your Pet Assistant.
-          </Text>
-        </View>
+        <EmptyComponent />
       )}
       
       <View style={[uiStyles.inputContainer, { 
@@ -221,7 +237,7 @@ const SimpleChatUI = ({
       </View>
     </View>
   );
-};
+});
 
 // Add a safer haptics implementation with no reliance on imported types
 const SafeHaptics = {
@@ -359,10 +375,204 @@ const ChatAssistant = () => {
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [inputVisible, setInputVisible] = useState(true);
   
-  const { colors: themeColors, isDark: themeIsDark } = useTheme();
+  // State to track online/offline status
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  
   const { reportError } = useErrorReporting();
   const insets = useSafeAreaInsets();
   const { activePet } = usePetStore();
+  
+  // State to track pet info
+  const [petInfo, setPetInfo] = useState<string | null>(null);
+  
+  // Create a proper theme colors object with systemMessage
+  const theme = useTheme();
+  const themeColors = useMemo(() => ({
+    ...theme.colors,
+    systemMessage: isDark ? '#555555' : '#e0e0e0',
+    inputBackground: theme.colors.card,
+    placeholderText: theme.colors.text + '80',
+  }), [theme.colors, isDark]);
+  
+  // Add function to check API health - moved to top
+  const checkApiHealth = useCallback(async () => {
+    try {
+      console.log('Checking API health...');
+      // Use a simple check instead of the robust connectivity check
+      const isApiHealthy = await NetworkUtils.isNetworkAvailable();
+      console.log('API health check result:', isApiHealthy);
+      
+      setIsOnline(isApiHealthy);
+      
+      if (!isApiHealthy) {
+        setIsOnline(false);
+        // Don't show toast to avoid interrupting the user
+      } else {
+        setIsOnline(true);
+      }
+      
+      return isApiHealthy;
+    } catch (error) {
+      console.error('Error checking API health:', error);
+      setIsOnline(false);
+      return false;
+    }
+  }, []);
+  
+  // Check network status on mount only, not periodically
+  useEffect(() => {
+    // Check on component mount
+    checkApiHealth();
+    
+    // No interval to avoid constant network requests
+    
+    // No cleanup needed
+  }, [checkApiHealth]);
+  
+  // Initialize chat only once when component mounts
+  useEffect(() => {
+    if (user && initializing) {
+      console.log('ChatAssistant: Starting single initialization process');
+      
+      // Set a single timeout for initialization to prevent rapid re-renders
+      const timer = setTimeout(async () => {
+        try {
+          // Directly set loading state to prevent flickering
+          setInitializing(true);
+          setError(null);
+          
+          // Check for API key
+          console.log('ChatAssistant: Checking API key...');
+          const apiKeyResult = await petAssistantService.hasApiKey();
+          setApiKeySet(apiKeyResult);
+          console.log('ChatAssistant: API key check result:', apiKeyResult);
+          
+          // Try to get or create a session
+          if (!sessionId) {
+            console.log('ChatAssistant: No session ID, getting or creating session');
+            try {
+              const session = await petAssistantService.getOrCreateSession(user.id, petId);
+              if (session && session.id) {
+                console.log('ChatAssistant: Session established:', session.id);
+                setSessionId(session.id);
+                
+                // Load messages if needed
+                const chatMessages = await petAssistantService.getChatMessages(session.id);
+                if (chatMessages && chatMessages.length > 0) {
+                  // Convert to our chat format
+                  const formattedMessages = chatMessages.map((msg, i) => ({
+                    _id: msg.id || i.toString(),
+                    text: msg.content,
+                    createdAt: new Date(msg.timestamp || Date.now()),
+                    user: {
+                      _id: msg.role === 'user' ? user.id : 'assistant',
+                      name: msg.role === 'user' ? 'You' : 'Assistant',
+                    },
+                  }));
+                  
+                  setMessages(formattedMessages);
+                } else {
+                  // Add a welcome message
+                  setMessages([{
+                    _id: 'welcome',
+                    text: 'Hello! I\'m your Pet Assistant. How can I help with your pet care questions today?',
+                    createdAt: new Date(),
+                    user: {
+                      _id: 'assistant',
+                      name: 'Assistant',
+                    },
+                  }]);
+                }
+              }
+            } catch (sessionError) {
+              console.error('ChatAssistant: Error establishing session:', sessionError);
+              // Show a simple welcome message rather than an error
+              setMessages([{
+                _id: 'welcome',
+                text: 'Hello! I\'m your Pet Assistant. How can I help with your pet care questions today?',
+                createdAt: new Date(),
+                user: {
+                  _id: 'assistant',
+                  name: 'Assistant',
+                },
+              }]);
+            }
+          }
+        } catch (error) {
+          console.error('ChatAssistant: Error during initialization:', error);
+          // Don't show error to user, just show welcome message
+          setMessages([{
+            _id: 'welcome',
+            text: 'Hello! I\'m your Pet Assistant. How can I help with your pet care questions today?',
+            createdAt: new Date(),
+            user: {
+              _id: 'assistant',
+              name: 'Assistant',
+            },
+          }]);
+        } finally {
+          // Always complete initialization
+          console.log('ChatAssistant: Initialization process complete');
+          setInitializing(false);
+        }
+      }, 100); // Shorter delay for faster UI appearance
+      
+      return () => clearTimeout(timer);
+    }
+  }, [user, sessionId, petId]); // Include sessionId and petId to handle changes
+  
+  // Replace the multiple welcome message useEffects with a single one
+  useEffect(() => {
+    // Only add welcome message when needed and not already present
+    if (!initializing && !isLoading && messages.length === 0 && !error) {
+      console.log('ChatAssistant: Adding welcome message');
+      
+      // Check if we already have a session with messages
+      if (sessionId) {
+        // Don't add a welcome message here - the service will handle it
+        console.log('ChatAssistant: Session exists, not adding welcome message from UI');
+        return;
+      }
+      
+      // Only add a welcome message if we don't have a session yet
+      setMessages([{
+        _id: 'welcome',
+        text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: 'Assistant',
+        },
+      }]);
+    }
+  }, [initializing, isLoading, messages.length, error, sessionId]);
+  
+  // Function to load pet info for display - optimize to prevent unnecessary re-renders
+  const loadPetInfo = useCallback(async () => {
+    if (petId && !petInfo) {
+      try {
+        const { data: pet, error } = await supabase
+          .from('pets')
+          .select('name, type, breed')
+          .eq('id', petId)
+          .single();
+          
+        if (pet && !error) {
+          setPetInfo(`${pet.name} (${pet.type}, ${pet.breed})`);
+        }
+      } catch (error) {
+        console.error('Error loading pet info:', error);
+      }
+    }
+  }, [petId, petInfo]);
+  
+  // Load pet info when petId changes - with debounce to prevent rapid state changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadPetInfo();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [petId, loadPetInfo]);
   
   // Define fixDatabaseIssues at the beginning to avoid circular reference
   const fixDatabaseIssues = async () => {
@@ -476,141 +686,53 @@ const ChatAssistant = () => {
     }
   };
   
-  // Initialize chat with proper dependencies and better error handling
-  const initializeChat = useCallback(async () => {
-    if (!user || initializing) return;
-    
-    setInitializing(true);
-    setError(null);
-    console.log('ChatAssistant: Initializing chat session...');
-    
+  // Function to initialize chat
+  const initializeChat = async () => {
     try {
-      // Verify we have a valid authenticated user
-      if (!user.id) {
-        console.error('ChatAssistant: User has no ID, cannot initialize chat');
-        setError('Authentication issue: No user ID available. Please try logging out and back in.');
-        setInitializing(false);
-        return;
-      }
-      
-      // Verify API key is set before proceeding
-      let hasApiKey = false;
-      try {
-        hasApiKey = await checkApiKey();
-      } catch (keyError) {
-        console.error('ChatAssistant: Error checking API key:', keyError);
-        setError(`API key check failed: ${keyError instanceof Error ? keyError.message : String(keyError)}`);
-        setInitializing(false);
-        return;
-      }
-      
-      if (!hasApiKey) {
-        console.error('ChatAssistant: API key not set');
-        setInitializing(false);
-        return; // checkApiKey handles setting the appropriate error
-      }
-      
-      // Log the user ID being used for initialization
-      console.log('ChatAssistant: Initializing with user ID:', user.id);
-      
-      // Try to load existing session or start a new one
-      let session;
-      try {
-        console.log('ChatAssistant: Getting or creating chat session...');
-        session = await petAssistantService.getOrCreateSession(user.id);
-        console.log('ChatAssistant: Session ID:', session.id);
-      } catch (sessionError) {
-        console.error('ChatAssistant: Error creating/getting session:', sessionError);
-        setError(`Session creation failed: ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`);
-        setInitializing(false);
-        return;
-      }
-      
-      // Explicitly set local sessionId
-      setSessionId(session.id);
-      
-      // Load messages for this session
-      let chatMessages: GeminiChatMessage[] = [];
-      try {
-        console.log('ChatAssistant: Loading messages for session...');
-        chatMessages = await petAssistantService.getChatMessages(session.id);
-        console.log('ChatAssistant: Loaded messages count:', chatMessages.length);
-      } catch (messagesError) {
-        console.error('ChatAssistant: Error loading messages:', messagesError);
-        setError(`Failed to load messages: ${messagesError instanceof Error ? messagesError.message : String(messagesError)}`);
-        // Continue with empty messages instead of failing
-        chatMessages = [];
-      }
-      
-      try {
-        // Convert from GeminiChatMessage to IMessage format for GiftedChat
-        const giftedChatMessages: ChatMessage[] = chatMessages.map((msg, i) => ({
-          _id: i.toString(),
-          text: msg.content,
-          createdAt: new Date(),
-          user: {
-            _id: msg.role === 'user' ? user.id : 'assistant',
-            name: msg.role === 'user' ? 'You' : 'Assistant',
-          },
-        }));
-        
-        // Update our local state
-        setMessages(giftedChatMessages);
-        
-        // Add welcome message if no messages exist
-        if (giftedChatMessages.length === 0) {
-          const welcomeMessage: ChatMessage = {
-            _id: 'welcome',
-            text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
-            createdAt: new Date(),
-            user: {
-              _id: 'assistant',
-              name: 'Assistant',
-            },
-          };
-          setMessages([welcomeMessage]);
-        }
-      } catch (mappingError) {
-        console.error('ChatAssistant: Error mapping messages:', mappingError);
-        // Show an error but continue with empty messages
-        setError(`Error preparing messages: ${mappingError instanceof Error ? mappingError.message : String(mappingError)}`);
-        setMessages([]);
-      }
-      
-      console.log('ChatAssistant: Chat initialized successfully');
+      console.log('ChatAssistant: Starting initialization process');
+      setInitializing(true);
       setError(null);
-    } catch (error: any) {
-      console.error('ChatAssistant: Error initializing chat:', error);
-      if (reportError) {
-        reportError(error, 'ChatAssistant.initializeChat');
-      }
       
-      // Handle known error types with friendly messages
-      if (error.message && error.message.includes('foreign key constraint')) {
-        setError('Database issue: There may be an issue with the chat tables. Please try repairing them using the diagnostic tools.');
-      } else if (error.message && error.message.includes('not found')) {
-        setError('Database issue: Some required tables may be missing. Please try repairing them using the diagnostic tools.');
-      } else {
-        setError(`Error initializing chat: ${error.message || 'Unknown error'}`);
-      }
+      // First check if API key is set up
+      console.log('ChatAssistant: Checking API key...');
+      const apiKeyResult = await checkApiKey();
+      console.log('ChatAssistant: API key check result:', apiKeyResult);
       
-      // Attempt to fix database issues if appropriate
-      if (error.message && (
-        error.message.includes('database') || 
-        error.message.includes('table') || 
-        error.message.includes('foreign key') || 
-        error.message.includes('constraint')
-      )) {
+      // Check if we should load messages or create a new session
+      if (sessionId) {
+        // If we have an existing session ID, try to load messages
+        console.log('ChatAssistant: Loading existing chat session', sessionId);
+        
         try {
-          await fixDatabaseIssues();
-        } catch (repairError) {
-          console.error('ChatAssistant: Error during database repair:', repairError);
+          await loadChatMessages(sessionId);
+          console.log('ChatAssistant: Successfully loaded messages for session', sessionId);
+        } catch (msgError) {
+          console.error('ChatAssistant: Error loading messages:', msgError);
+          // If we can't load messages, try creating a new session as fallback
+          console.log('ChatAssistant: Falling back to creating a new session');
+          await startNewSession();
+        }
+      } else {
+        // Otherwise create a new session
+        console.log('ChatAssistant: Creating new chat session');
+        try {
+          await startNewSession();
+          console.log('ChatAssistant: Successfully created new session');
+        } catch (sessionError) {
+          console.error('ChatAssistant: Failed to create new session:', sessionError);
+          // Show error to the user
+          setError('Could not start a new chat session. Please try again.');
         }
       }
+    } catch (error: any) {
+      console.error('Error initializing chat:', error);
+      reportError(error, 'Initialize chat failed');
+      setError(`Failed to initialize chat: ${error.message}`);
     } finally {
+      console.log('ChatAssistant: Initialization process complete');
       setInitializing(false);
     }
-  }, [user, initializing, checkApiKey, reportError, fixDatabaseIssues]);
+  };
   
   // Show error toast
   const showErrorToast = (message: string) => {
@@ -627,9 +749,133 @@ const ChatAssistant = () => {
     }
   };
   
+  // New function to send message to AI with useCallback
+  const sendMessageToAI = useCallback(async (message: string) => {
+    if (!user || !user.id) {
+      console.error('No valid user for sending message');
+      
+      // Add error message
+      const errorMsg: ChatMessage = {
+        _id: new Date().getTime().toString(),
+        text: 'You must be logged in to use the chat assistant.',
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: 'Pet Assistant'
+        }
+      };
+      
+      setMessages(previousMessages => 
+        ChatUtils.append(previousMessages, [errorMsg])
+      );
+      return;
+    }
+    
+    setIsLoading(true);
+    
+    try {
+      // If we're offline, use a fallback response
+      if (!isOnline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const offlineResponse: ChatMessage = {
+          _id: 'offline-' + Date.now(),
+          text: "I'm currently in offline mode due to network connectivity issues. I can only provide limited responses until the connection is restored.",
+          createdAt: new Date(),
+          user: {
+            _id: 'assistant',
+            name: 'Pet Assistant (Offline)'
+          }
+        };
+        
+        setMessages(prevMessages => ChatUtils.append(prevMessages, [offlineResponse]));
+        setIsLoading(false);
+        
+        // Check network again
+        checkApiHealth();
+        return;
+      }
+      
+      // Ensure we have a session
+      if (!sessionId) {
+        console.log('No session ID, creating new session...');
+        try {
+          const newSession = await petAssistantService.startNewSession(user.id, petId);
+          if (newSession) {
+            console.log('Created new session:', newSession);
+            setSessionId(newSession);
+          }
+        } catch (sessionError) {
+          console.warn('Error creating session:', sessionError);
+        }
+      } else {
+        // Make sure the session has pet context if petId is provided
+        console.log('Using existing session with ID:', sessionId);
+        if (petId) {
+          console.log('Ensuring pet context is loaded for pet ID:', petId);
+          try {
+            // This will ensure the pet context is loaded for the current session
+            await petAssistantService.getOrCreateSession(user.id, petId);
+          } catch (contextError) {
+            console.warn('Error ensuring pet context:', contextError);
+          }
+        }
+      }
+      
+      // Set a timeout to prevent hanging
+      const messagePromise = petAssistantService.sendMessage(user.id, message);
+      const timeoutPromise = new Promise<string>(resolve => {
+        setTimeout(() => {
+          console.log('Message request timed out');
+          resolve("I'm having trouble connecting to the server. Please try again later.");
+        }, 20000); // 20 second timeout
+      });
+      
+      // Race between the message and timeout
+      const response = await Promise.race([messagePromise, timeoutPromise]);
+      
+      // Add AI response to chat
+      const assistantMessage: ChatMessage = {
+        _id: Date.now().toString(),
+        text: response || "Sorry, I couldn't generate a response. Please try again.",
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: isOnline ? 'Pet Assistant' : 'Pet Assistant (Offline)'
+        }
+      };
+      
+      setMessages(previousMessages => 
+        ChatUtils.append(previousMessages, [assistantMessage])
+      );
+    } catch (error: any) {
+      console.error('Error sending message to AI:', error);
+      
+      // Add error message to chat
+      const errorMsg: ChatMessage = {
+        _id: Date.now().toString(),
+        text: "I'm having trouble connecting to my knowledge database. Please check your connection and try again.",
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: 'Pet Assistant'
+        }
+      };
+      
+      setMessages(previousMessages => 
+        ChatUtils.append(previousMessages, [errorMsg])
+      );
+      
+      // Check network status
+      checkApiHealth();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, isOnline, sessionId, petId, checkApiHealth]);
+  
   // Simplified handleSendMessage
-  const handleSendMessage = (messageText: string) => {
-    if (!messageText.trim()) return;
+  const handleSendMessage = useCallback((messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
     
     try {
       // Create a new message object
@@ -643,345 +889,59 @@ const ChatAssistant = () => {
         }
       };
       
-      // Add haptic feedback safely
-      SafeHaptics.impactAsync().catch(() => {});
-      
       // Add user message to the chat immediately
       setMessages(previousMessages => 
         ChatUtils.append(previousMessages, [newMessage])
       );
       
-      // Process message directly without checking session initially
-      processSendMessage({
-        role: 'user',
-        content: messageText.trim()
-      } as GeminiChatMessage);
+      // Send message to AI
+      sendMessageToAI(messageText.trim());
     } catch (error: any) {
-      if (reportError) reportError(error);
       console.error('Error in handleSendMessage:', error);
-      showErrorToast('Failed to send message');
+      if (reportError) reportError(error);
     }
-  };
+  }, [isLoading, user, sendMessageToAI, reportError]);
   
-  // Track when the screen gains focus to refresh data
-  useFocusEffect(
-    useCallback(() => {
-      console.log('ChatAssistant: Screen focused');
-      
-      // Create a state variable to track if this component is mounted
-      let isMounted = true;
-      
-      // We won't automatically reinitialize on focus, just make sure
-      // we have the latest data without causing redirects
-      const updateScreenState = async () => {
-        if (!isMounted) return;
-        
-        // If we already have a session, just make sure UI elements are visible
-        if (sessionId) {
-          setInputVisible(true);
-          console.log('ChatAssistant: Session already exists:', sessionId);
-          return;
-        }
-        
-        // If we have a user but no session, add a welcome message
-        // but don't automatically initialize which can cause navigation issues
-        if (user && !initializing && messages.length === 0) {
-          console.log('ChatAssistant: Adding welcome message');
-          const welcomeMessage: ChatMessage = {
-            _id: 'welcome',
-            text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
-            createdAt: new Date(),
-            user: {
-              _id: 'assistant',
-              name: 'Assistant',
-            },
-          };
-          setMessages([welcomeMessage]);
-        }
-      };
-      
-      updateScreenState();
-      
-      return () => {
-        console.log('ChatAssistant: Screen losing focus');
-        isMounted = false;
-      };
-    }, [user, sessionId, initializing, messages.length])
-  );
-  
-  // Create a separate function for the message sending process
-  const processSendMessage = async (userMessage: GeminiChatMessage) => {
-    if (!user || !user.id) {
-      console.error('ChatAssistant: No valid user in processSendMessage');
-      
-      // Add error message to chat instead of navigating away
-      const errorMsg: ChatMessage = {
-        _id: new Date().getTime().toString(),
-        text: 'You must be logged in to use the chat assistant.',
-        createdAt: new Date(),
-        user: {
-          _id: 'assistant',
-          name: 'Pet Assistant'
-        }
-      };
-      setMessages(previousMessages => ChatUtils.append(previousMessages, [errorMsg]));
-      return;
-    }
-    
-    setIsLoading(true);
-    
+  // Function to load messages for an existing session
+  const loadChatMessages = async (sessionId: string) => {
     try {
-      console.log('ChatAssistant: Sending message with user ID:', user.id);
+      console.log('Loading messages for session:', sessionId);
+      const chatMessages = await petAssistantService.getChatMessages(sessionId);
       
-      // If no session exists, create one first
-      if (!sessionId) {
-        console.log('No session ID, creating one first');
-        try {
-          const newSession = await petAssistantService.startNewSession(user.id, petId);
-          
-          if (newSession) {
-            console.log('Created new session:', newSession);
-            setSessionId(newSession);
-          } else {
-            console.warn('Failed to create chat session, continuing with temporary session');
-            // We'll proceed anyway without a sessionId
-          }
-        } catch (sessionError) {
-          console.warn('Error creating session, continuing with temporary session:', sessionError);
-          // We'll proceed anyway without a sessionId
-        }
-      }
-      
-      // Send the message with a timeout to ensure we don't wait too long
-      let response: string | null = null;
-      
-      try {
-        // Create a promise with timeout
-        const timeoutPromise = new Promise<string>((_, reject) => {
-          setTimeout(() => reject(new Error('Request timed out')), 10000); // 10 second timeout
-        });
-        
-        // Race between the actual message sending and the timeout
-        response = await Promise.race([
-          petAssistantService.sendMessage(user.id, userMessage.content),
-          timeoutPromise
-        ]);
-      } catch (messageSendError) {
-        console.warn('Error or timeout sending message to backend, using fallback:', messageSendError);
-        
-        // If we're offline or the server is unreachable, set the online status to false
-        setIsOnline(false);
-        
-        // Use the fallback response mechanism directly
-        try {
-          // Access the internal geminiService directly to use its fallback mechanism
-          const [fallbackResponse] = await (petAssistantService as any).geminiService?.generateFallbackResponse?.(userMessage.content) 
-            || [null, null];
-            
-          response = fallbackResponse || "I'm currently offline and can only provide limited assistance. Please check your internet connection and try again later.";
-        } catch (fallbackError) {
-          console.error('Error generating fallback response:', fallbackError);
-          response = "I'm currently offline and can only provide limited assistance. Please check your internet connection and try again later.";
-        }
-      }
-        
-      // Add AI response to the chat
-      const assistantMessage: ChatMessage = {
-        _id: new Date().getTime().toString(),
-        text: response || "Sorry, I couldn't generate a response at the moment. Please try again later.",
-        createdAt: new Date(),
-        user: {
-          _id: 'assistant',
-          name: isOnline ? 'Pet Assistant' : 'Pet Assistant (Offline)'
-        }
-      };
-      
-      // Update messages in state to show the response
-      setMessages(previousMessages => ChatUtils.append(previousMessages, [assistantMessage]));
-    } catch (error: any) {
-      console.error('ChatAssistant: Error in message processing:', error);
-      
-      // Add error message to chat
-      const errorMsg: ChatMessage = {
-        _id: new Date().getTime().toString(),
-        text: `I'm having trouble connecting to my knowledge database. I'll provide limited assistance until the connection is restored.`,
-        createdAt: new Date(),
-        user: {
-          _id: 'assistant',
-          name: 'Pet Assistant'
-        }
-      };
-      
-      setMessages(previousMessages => ChatUtils.append(previousMessages, [errorMsg]));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  // Replace with theme-based colors
-  const uiColors = {
-    background: isDark ? '#121212' : '#f5f5f5',
-    card: isDark ? '#1e1e1e' : '#ffffff',
-    userBubble: isDark ? '#2e7d32' : '#4caf50',
-    assistantBubble: isDark ? '#1e1e1e' : '#e0e0e0',
-    userText: '#ffffff',
-    assistantText: isDark ? '#e0e0e0' : '#000000',
-    inputBackground: isDark ? '#333333' : '#ffffff',
-    inputText: isDark ? '#ffffff' : '#000000',
-    border: isDark ? '#333333' : '#e0e0e0',
-    placeholderText: isDark ? '#aaaaaa' : '#888888',
-    sendButton: isDark ? '#2e7d32' : '#4caf50',
-    error: isDark ? '#ff6b6b' : '#ff6b6b',
-    primary: isDark ? '#2e7d32' : '#4caf50',
-    warning: isDark ? '#f39c12' : '#f39c12',
-    offline: isDark ? '#777777' : '#888888',
-  };
-  
-  // State to track online/offline status
-  const [isOnline, setIsOnline] = useState<boolean>(true);
-  
-  // Check network status periodically
-  useEffect(() => {
-    // Function to check if the API is available
-    const checkNetworkStatus = async () => {
-      try {
-        // Try to reach the Netlify API
-        const isAvailable = await petAssistantService.hasApiKey();
-        setIsOnline(isAvailable);
-      } catch (error) {
-        console.error('Error checking network status:', error);
-        setIsOnline(false);
-      }
-    };
-    
-    // Check on component mount
-    checkNetworkStatus();
-    
-    // Set up polling (every 30 seconds)
-    const intervalId = setInterval(checkNetworkStatus, 30000);
-    
-    // Clean up on unmount
-    return () => clearInterval(intervalId);
-  }, []);
-  
-  // Add function to configure API key from settings (for use in error state)
-  const configureApiKey = () => {
-    // React Native doesn't have Alert.prompt on Android, so we'll just navigate to settings
-    Alert.alert(
-      'API Key Required',
-      'You need to configure a Gemini API key to use the Pet Assistant. Would you like to set it now?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        },
-        {
-          text: 'Configure',
-          onPress: () => {
-            // Use any to bypass TypeScript navigation typing issues
-            (navigation as any).navigate('Settings');
-          }
-        }
-      ]
-    );
-  };
-  
-  // This function is no longer needed as API keys are managed server-side
-  const saveApiKey = async () => {
-    Alert.alert(
-      "Server-Side Configuration",
-      "API keys are now managed securely on the server. If you're experiencing issues with the chat assistant, please contact support.",
-      [
-        {
-          text: "Go to Settings",
-          onPress: () => navigation.navigate('Settings')
-        },
-        {
-          text: "OK",
-          style: "cancel"
-        }
-      ]
-    );
-  };
-  
-  // Fix the startNewSession function to properly convert GeminiChatMessage to IMessage
-  const startNewSession = async () => {
-    if (!user) {
-      // Don't use Alert here as it might interrupt the flow
-      console.error('ChatAssistant: Cannot start new session without user');
-      setError('You must be logged in to use the chat assistant.');
-      return;
-    }
-    
-    // Show we're working on it
-    setIsLoading(true);
-    
-    try {
-      console.log('ChatAssistant: Starting new session for user:', user.id);
-      const newSessionId = await petAssistantService.startNewSession(user.id, petId);
-      
-      if (newSessionId) {
-        console.log('ChatAssistant: New session created successfully:', newSessionId);
-        setSessionId(newSessionId);
-        
-        // Get the messages and convert them to IMessage format
-        const chatMessages = petAssistantService.getCurrentSessionMessages();
-        const giftedChatMessages: ChatMessage[] = chatMessages.map((msg, i) => ({
-          _id: i.toString(),
-          text: msg.content,
+      // Add welcome message if no messages exist
+      if (!chatMessages || chatMessages.length === 0) {
+        console.log('No messages found for session, adding welcome message');
+        const welcomeMessage = {
+          _id: 'welcome',
+          text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
           createdAt: new Date(),
           user: {
-            _id: msg.role === 'user' ? user.id : 'assistant',
-            name: msg.role === 'user' ? 'You' : 'Assistant',
+            _id: 'assistant',
+            name: 'Assistant',
           },
-        }));
-        
-        setMessages(giftedChatMessages);
-        
-        // Always ensure there's at least a welcome message
-        if (giftedChatMessages.length === 0) {
-          const welcomeMessage: ChatMessage = {
-            _id: 'welcome',
-            text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
-            createdAt: new Date(),
-            user: {
-              _id: 'assistant',
-              name: 'Assistant',
-            },
-          };
-          setMessages([welcomeMessage]);
-        }
-        
-        // Clear any previous errors
-        setError(null);
-      } else {
-        console.error('ChatAssistant: Failed to create new session');
-        // Use setError here instead of Alert to avoid navigation issues
-        setError('Failed to create a new chat session. Please try again.');
+        };
+        setMessages([welcomeMessage]);
+        return;
       }
-    } catch (error) {
-      console.error('ChatAssistant: Error starting new session:', error);
-      // Use setError here instead of Alert to avoid navigation issues
-      setError('Failed to start a new chat session. Please try again.');
       
-      // Try to recover by using initializeChat as a fallback
-      try {
-        console.log('ChatAssistant: Attempting to recover with initializeChat');
-        await initializeChat();
-      } catch (recoveryError) {
-        console.error('ChatAssistant: Recovery attempt failed:', recoveryError);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  // Fix to ensure welcome message is always shown if no messages
-  useEffect(() => {
-    if (!isLoading && !initializing && messages.length === 0 && !error) {
-      const welcomeMessage: ChatMessage = {
+      // Convert messages to the format expected by the UI
+      const formattedMessages = chatMessages.map((msg, index) => ({
+        _id: index.toString(),
+        text: msg.content,
+        createdAt: new Date(),
+        user: {
+          _id: msg.role === 'user' ? user?.id || '1' : 'assistant',
+          name: msg.role === 'user' ? 'You' : 'Assistant',
+        },
+      }));
+      
+      setMessages(formattedMessages);
+    } catch (error) {
+      console.error('Error loading chat messages:', error);
+      // Add welcome message as fallback instead of throwing error
+      const welcomeMessage = {
         _id: 'welcome',
-        text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
+        text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
         createdAt: new Date(),
         user: {
           _id: 'assistant',
@@ -990,7 +950,54 @@ const ChatAssistant = () => {
       };
       setMessages([welcomeMessage]);
     }
-  }, [isLoading, initializing, messages.length, error]);
+  };
+
+  // Function to start a new chat session
+  const startNewSession = async () => {
+    try {
+      console.log('ChatAssistant: Starting new chat session');
+      console.log('ChatAssistant: User ID:', user?.id);
+      console.log('ChatAssistant: Pet ID:', petId);
+      
+      if (!user?.id) {
+        console.error('ChatAssistant: Cannot start session - No user ID');
+        setError('You must be logged in to use the chat assistant');
+        return;
+      }
+      
+      // Add a safety timeout to prevent hanging
+      const timeoutPromise = new Promise<string>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Timeout: Failed to create session after 15 seconds'));
+        }, 15000);
+      });
+      
+      // Race between the actual request and the timeout
+      const newSessionId = await Promise.race([
+        petAssistantService.startNewSession(user.id, petId),
+        timeoutPromise
+      ]);
+      
+      console.log('ChatAssistant: New session created:', newSessionId);
+      setSessionId(newSessionId);
+      
+      // Set welcome message
+      const welcomeMessage = {
+        _id: 'welcome',
+        text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
+        createdAt: new Date(),
+        user: {
+          _id: 'assistant',
+          name: 'Assistant',
+        },
+      };
+      setMessages([welcomeMessage]);
+    } catch (error) {
+      console.error('Error starting new session:', error);
+      setError(`Failed to start chat: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  };
   
   // Show a hint about the refresh button when the component mounts
   useEffect(() => {
@@ -1006,14 +1013,14 @@ const ChatAssistant = () => {
   }, []);
   
   // Function to check and fix display issues
-  const checkInputDisplay = () => {
+  const checkInputDisplay = useCallback(() => {
     console.log('ChatAssistant: Checking input display and session state');
     
     // If we still have no messages, add a welcome message
     if (messages.length === 0) {
       const welcomeMessage: ChatMessage = {
         _id: 'welcome',
-        text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
+        text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
         createdAt: new Date(),
         user: {
           _id: 'assistant',
@@ -1028,219 +1035,85 @@ const ChatAssistant = () => {
       console.log('ChatAssistant: No session found, initializing');
       
       // Use the more robust startNewSession which has been fixed to prevent navigation
-      startNewSession();
+      startNewSession().catch(err => {
+        console.error('Failed to start new session:', err);
+        // Add error message if needed
+      });
     } else if (sessionId) {
       console.log('ChatAssistant: Session exists, refreshing UI only:', sessionId);
       
-      // Otherwise just refresh the UI without changing the session
-      setInputVisible(false);
-      setTimeout(() => setInputVisible(true), 100);
-      
-      // Also make sure any errors are cleared
+      // Refresh UI state
       setError(null);
-    }
-    
-    // Use a more controlled approach instead of Alert which can interrupt flow
-    const message = sessionId 
-      ? 'Chat refreshed. You can continue your conversation.'
-      : 'Creating a new chat session...';
+      setInitializing(false);
+      setIsLoading(false);
       
-    // Use a toast message or small UI indicator instead of Alert
-    console.log('ChatAssistant: ' + message);
-    
-    // Set a temporary status message instead of showing an Alert
-    const statusMessage: ChatMessage = {
-      _id: 'status-' + Date.now(),
-      text: message,
-      createdAt: new Date(),
-      system: true,
-      user: {
-        _id: 'system',
-        name: 'System',
-      },
-    };
-    
-    // Add status message that will disappear after a few seconds
-    setMessages(prev => ChatUtils.append(prev, [statusMessage]));
-    setTimeout(() => {
-      setMessages(prev => prev.filter(msg => msg._id !== statusMessage._id));
-    }, 3000);
-  };
+      // Show a temporary status message
+      const statusMessage: ChatMessage = {
+        _id: 'status-' + Date.now(),
+        text: 'Chat refreshed successfully. You can continue your conversation.',
+        createdAt: new Date(),
+        system: true,
+        user: {
+          _id: 'system',
+          name: 'System',
+        },
+      };
+      
+      // Add status message that will disappear after a few seconds
+      setMessages(prev => [...prev, statusMessage]);
+      setTimeout(() => {
+        setMessages(prev => prev.filter(msg => msg._id !== statusMessage._id));
+      }, 3000);
+    }
+  }, [messages.length, sessionId, user, startNewSession]);
   
-  // Add a safe effect to initialize the chat only once on mount
-  useEffect(() => {
-    // Only try to initialize once when the component is first mounted
-    if (user && !sessionId && !initializing) {
-      console.log('ChatAssistant: Component mounted, safely initializing session');
-      
-      // Use a timeout to ensure the component is fully mounted
-      const initTimer = setTimeout(() => {
-        // Instead of using initializeChat which can cause navigation,
-        // use a simpler approach to just get a session ID
-        if (user.id) {
-          petAssistantService.getOrCreateSession(user.id, petId)
-            .then(session => {
-              if (session && session.id) {
-                console.log('ChatAssistant: Got session ID on mount:', session.id);
-                setSessionId(session.id);
-                
-                // Only load messages if we don't already have them
-                if (messages.length === 0) {
-                  petAssistantService.getChatMessages(session.id)
-                    .then(chatMessages => {
-                      if (chatMessages && chatMessages.length > 0) {
-                        // Convert to our chat format
-                        const formattedMessages = chatMessages.map((msg, i) => ({
-                          _id: i.toString(),
-                          text: msg.content,
-                          createdAt: new Date(),
-                          user: {
-                            _id: msg.role === 'user' ? user.id : 'assistant',
-                            name: msg.role === 'user' ? 'You' : 'Assistant',
-                          },
-                        }));
-                        
-                        setMessages(formattedMessages);
-                      } else {
-                        // Add a welcome message if no messages
-                        const welcomeMessage = {
-                          _id: 'welcome',
-                          text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
-                          createdAt: new Date(),
-                          user: {
-                            _id: 'assistant',
-                            name: 'Assistant',
-                          },
-                        };
-                        setMessages([welcomeMessage]);
-                      }
-                    })
-                    .catch(err => {
-                      console.error('Error loading messages:', err);
-                      // Add a welcome message as fallback
-                      const welcomeMessage = {
-                        _id: 'welcome',
-                        text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
-                        createdAt: new Date(),
-                        user: {
-                          _id: 'assistant',
-                          name: 'Assistant',
-                        },
-                      };
-                      setMessages([welcomeMessage]);
-                    });
-                }
-              }
-            })
-            .catch(error => {
-              console.error('Error getting session on mount:', error);
-              // Don't show error to user, just log it
-            });
-        }
-      }, 500);
-      
-      return () => clearTimeout(initTimer);
-    }
-  }, [user, sessionId, initializing, petId, messages.length]);
-  
-  // Render content based on state
-  const renderContent = () => {
-    if (isLoading && !messages.length) {
-      return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={themeColors.primary} />
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      );
-    }
+  // Add a function to check if the tables exist
+  const diagnoseChatSchema = async () => {
+    setIsLoading(true);
+    setError('Checking database tables...');
     
-    if (error) {
-      return (
-        <View style={styles.centeredContainer}>
-          <View style={styles.errorBoxContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-            {error.includes('database') ? (
-              <TouchableOpacity
-                style={[styles.button, { backgroundColor: themeColors.primary }]}
-                onPress={diagnoseChatSchema}
-              >
-                <Text style={styles.buttonText}>Run Diagnostics</Text>
-              </TouchableOpacity>
-            ) : error.includes('API key') ? (
-              <TouchableOpacity
-                style={[styles.button, { backgroundColor: themeColors.primary, marginTop: 20 }]}
-                onPress={configureApiKey}
-              >
-                <Text style={styles.buttonText}>Configure API Key</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.button, { backgroundColor: themeColors.primary, marginTop: 20 }]}
-                onPress={() => initializeChat()}
-                disabled={isLoading}
-              >
-                <Text style={styles.buttonText}>{isLoading ? "Trying..." : "Try Again"}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      );
-    }
-
-    // Make sure we have at least a welcome message
-    const displayMessages = messages.length === 0 ? [{
-      _id: 'welcome',
-      text: 'Welcome to Pet Assistant! Ask me anything about pet care.',
-      createdAt: new Date(),
-      user: {
-        _id: 'assistant',
-        name: 'Assistant',
-      },
-    }] : messages;
-
-    // Use our simplified chat UI
-    return (
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
-      >
-        {/* Offline mode indicator */}
-        {!isOnline && (
-          <View 
-            style={{ 
-              backgroundColor: uiColors.warning + '30', 
-              padding: 8, 
-              flexDirection: 'row',
-              alignItems: 'center', 
-              justifyContent: 'center',
-              borderBottomWidth: 1,
-              borderBottomColor: uiColors.warning + '50'
-            }}
-          >
-            <Ionicons name="cloud-offline-outline" size={16} color={uiColors.warning} style={{ marginRight: 6 }} />
-            <Text style={{ color: uiColors.warning, fontWeight: '500', fontSize: 13 }}>
-              Offline Mode - Limited Responses Available
-            </Text>
-          </View>
-        )}
+    try {
+      // First check if tables exist using the utility directly
+      const tablesExist = await ensureChatTablesExist();
+      
+      if (!tablesExist) {
+        console.log('ChatAssistant: Tables do not exist, attempting to create them');
+        setError('Chat tables do not exist. Creating tables...');
         
-        <SimpleChatUI
-          messages={displayMessages}
-          onSend={handleSendMessage}
-          isLoading={isLoading}
-          colors={{
-            primary: themeColors.primary,
-            background: themeColors.background,
-            card: themeColors.card,
-            text: themeColors.text,
-            inputBackground: themeColors.inputBackground || uiColors.inputBackground,
-            placeholderText: themeColors.placeholderText || uiColors.placeholderText,
-          }}
-        />
-      </KeyboardAvoidingView>
-    );
+        // Try to create the tables using the utility directly
+        const success = await createChatTables();
+        
+        if (success) {
+          console.log('ChatAssistant: Tables created successfully');
+          setError('Tables created successfully. Initializing chat...');
+          setTimeout(() => {
+            setError(null);
+            initializeChat();
+          }, 1000);
+        } else {
+          console.error('ChatAssistant: Failed to create tables');
+          setError(`Failed to create chat tables. Please try again later.`);
+        }
+      } else {
+        console.log('ChatAssistant: Tables exist, continuing with initialization');
+        setError(null);
+        initializeChat();
+      }
+    } catch (error: any) {
+      console.error('ChatAssistant: Error diagnosing chat schema:', error);
+      setError(`Error checking database: ${error.message || String(error)}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  // Use the effect hook to diagnose chat tables on mount
+  useEffect(() => {
+    if (user && !sessionId && authVerified) {
+      console.log('ChatAssistant: User is authenticated, diagnosing chat schema');
+      diagnoseChatSchema();
+    }
+  }, [user, sessionId, authVerified]);
   
   // Define styles for the component using theme colors
   const styles = StyleSheet.create({
@@ -1302,15 +1175,16 @@ const ChatAssistant = () => {
     messagesContainer: {
       flexGrow: 1,
       padding: 10,
-      paddingBottom: 15,
+      paddingBottom: 80, // Add padding to prevent messages from being hidden behind input
     },
     inputContainer: {
       flexDirection: 'row',
       padding: 10,
       alignItems: 'center',
       borderTopWidth: 1,
-      borderTopColor: themeColors.border,
-      backgroundColor: themeColors.card,
+      borderTopColor: themeColors.border || '#e0e0e0',
+      backgroundColor: themeColors.card || '#ffffff',
+      width: '100%',
     },
     input: {
       flex: 1,
@@ -1319,8 +1193,9 @@ const ChatAssistant = () => {
       paddingHorizontal: 15,
       paddingVertical: 10,
       marginRight: 10,
-      color: themeColors.inputText || '#000',
+      color: themeColors.text || '#000000',
       maxHeight: 100,
+      minHeight: 40,
     },
     sendButton: {
       width: 44,
@@ -1333,8 +1208,10 @@ const ChatAssistant = () => {
     messageBubble: {
       padding: 12,
       borderRadius: 16,
-      marginVertical: 5,
+      marginVertical: 4,
       maxWidth: '80%',
+      alignSelf: 'flex-start',
+      marginHorizontal: 16,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.1,
@@ -1342,24 +1219,23 @@ const ChatAssistant = () => {
       elevation: 1,
     },
     userBubble: {
-      backgroundColor: themeColors.primary || '#4caf50',
       alignSelf: 'flex-end',
-      marginLeft: 50,
-      marginRight: 10,
       borderBottomRightRadius: 4,
     },
     assistantBubble: {
-      backgroundColor: themeColors.card || '#e0e0e0',
-      alignSelf: 'flex-start',
-      marginRight: 50,
-      marginLeft: 10,
       borderBottomLeftRadius: 4,
     },
-    userText: {
-      color: '#ffffff',
+    systemBubble: {
+      alignSelf: 'center',
+      borderRadius: 8,
+      padding: 8,
+      marginVertical: 8,
+      opacity: 0.8,
     },
-    assistantBubbleText: {
-      color: themeColors.text || '#000000',
+    systemText: {
+      fontSize: 14,
+      fontStyle: 'italic',
+      textAlign: 'center',
     },
     floatingButton: {
       position: 'absolute',
@@ -1400,184 +1276,227 @@ const ChatAssistant = () => {
       justifyContent: 'center',
     },
   });
-
-  // Fix for line 875 - Implement diagnoseChatSchema function
-  const diagnoseChatSchema = async () => {
-    setIsLoading(true);
-    setError('Running schema diagnostics...');
+  
+  // Update the renderMessage function to use a safe fallback for systemMessage
+  const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
+    const isUser = item.user._id !== 'assistant' && item.user._id !== 'system';
+    const isSystem = item.user._id === 'system' || item.system === true;
     
-    try {
-      // Check for chat_sessions table
-      const { data: sessions, error: sessionsError } = await supabase
-        .from('chat_sessions')
-        .select('id')
-        .limit(1);
-      
-      // Examine the columns in chat_sessions table
-      const { data: columns, error: columnsError } = await supabase.rpc('exec_sql', {
-        sql: `
-          SELECT column_name, data_type, is_nullable 
-          FROM information_schema.columns 
-          WHERE table_schema = 'public' 
-          AND table_name = 'chat_sessions'
-          ORDER BY ordinal_position;
-        `
-      });
-      
-      // Try to analyze tables to reset the schema cache
-      const { error: analyzeError } = await supabase.rpc('exec_sql', {
-        sql: `
-          ANALYZE chat_sessions;
-          ANALYZE chat_messages;
-        `
-      });
-      
-      // Show diagnostic results
-      let diagnosticResult = '';
-      
-      if (sessionsError) {
-        diagnosticResult += `Table error: ${sessionsError.message}\n\n`;
-      } else {
-        diagnosticResult += `chat_sessions table exists.\n`;
-      }
-      
-      if (columnsError) {
-        diagnosticResult += `Column error: ${columnsError.message}\n\n`;
-      } else if (columns) {
-        diagnosticResult += `chat_sessions columns:\n`;
-        columns.forEach((col: any) => {
-          diagnosticResult += `- ${col.column_name}: ${col.data_type} (${col.is_nullable === 'YES' ? 'nullable' : 'not nullable'})\n`;
-        });
-      }
-      
-      if (analyzeError) {
-        diagnosticResult += `\nAnalyze error: ${analyzeError.message}`;
-      } else {
-        diagnosticResult += `\nTable analysis complete.`;
-      }
-      
-      // Show the diagnostic results to the user
-      Alert.alert(
-        'Database Diagnosis Results',
-        diagnosticResult,
-        [
-          {
-            text: 'Run Repair',
-            onPress: fixDatabaseIssues
-          },
-          {
-            text: 'OK',
-            style: 'cancel'
-          }
-        ]
+    return (
+      <View style={[
+        styles.messageBubble,
+        isUser ? styles.userBubble : styles.assistantBubble,
+        isSystem ? styles.systemBubble : {},
+        { 
+          backgroundColor: isUser 
+            ? themeColors.primary 
+            : (isSystem ? themeColors.systemMessage : themeColors.card) 
+        }
+      ]}>
+        <Text style={[
+          styles.messageText,
+          { color: isUser ? '#ffffff' : themeColors.text },
+          isSystem ? styles.systemText : {}
+        ]}>
+          {item.text}
+        </Text>
+      </View>
+    );
+  }, [themeColors]);
+  
+  // Render content based on state - optimize with memoization
+  const renderContent = useCallback(() => {
+    // If we have messages, always show them regardless of other states
+    // This prevents the UI from flickering between different states
+    if (messages.length > 0) {
+      return (
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item) => item._id.toString()}
+          renderItem={renderMessage}
+          contentContainerStyle={styles.messagesContainer}
+          inverted={false}
+          onContentSizeChange={() => {
+            // Scroll to bottom when content changes
+            if (flatListRef.current && messages.length > 0) {
+              flatListRef.current.scrollToEnd({ animated: true });
+            }
+          }}
+        />
       );
-    } catch (error: any) {
-      console.error('Error during chat schema diagnosis:', error);
-      Alert.alert('Diagnosis Error', `Failed to diagnose database: ${error.message || 'Unknown error'}`);
-    } finally {
-      setIsLoading(false);
-      setError(null);
     }
-  };
+    
+    // Show loading state only when explicitly loading and no messages
+    if (isLoading && !messages.length) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={themeColors.primary} />
+          <Text style={styles.loadingText}>Loading...</Text>
+        </View>
+      );
+    }
+    
+    // Show error only when explicitly set and no messages
+    if (error && !messages.length) {
+      return (
+        <View style={styles.centeredContainer}>
+          <Text style={[styles.errorText, { color: themeColors.error }]}>
+            {error}
+          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 10 }}>
+            <Button 
+              title="Try Again" 
+              onPress={() => {
+                setError(null);
+                setInitializing(true);
+                setTimeout(() => {
+                  if (user) {
+                    petAssistantService.getOrCreateSession(user.id, petId)
+                      .then(session => {
+                        if (session && session.id) {
+                          setSessionId(session.id);
+                          setInitializing(false);
+                        }
+                      })
+                      .catch(() => setInitializing(false));
+                  } else {
+                    setInitializing(false);
+                  }
+                }, 500);
+              }} 
+              disabled={isLoading || initializing}
+            />
+            <Button 
+              title="Create Tables" 
+              onPress={diagnoseChatSchema}
+              disabled={isLoading || initializing}
+            />
+          </View>
+        </View>
+      );
+    }
+
+    // Show initializing state only when explicitly initializing and no messages
+    if (initializing && !messages.length) {
+      return (
+        <View style={styles.centeredContainer}>
+          <ActivityIndicator size="large" color={themeColors.primary} />
+          <Text style={[styles.loadingText, { color: themeColors.text }]}>
+            Initializing chat...
+          </Text>
+        </View>
+      );
+    }
+
+    // Default case - show welcome message
+    return (
+      <FlatList
+        ref={flatListRef}
+        data={[{
+          _id: 'welcome',
+          text: 'Hello! I\'m your Pet Care Assistant. How can I help with your pet care questions today?',
+          createdAt: new Date(),
+          user: {
+            _id: 'assistant',
+            name: 'Assistant',
+          },
+        }]}
+        keyExtractor={(item) => item._id.toString()}
+        renderItem={renderMessage}
+        contentContainerStyle={styles.messagesContainer}
+        inverted={false}
+      />
+    );
+  }, [messages, isLoading, error, initializing, themeColors, insets.bottom, user, petId, renderMessage]);
 
   return (
     <SafeAreaView style={[styles.container, { paddingBottom: insets.bottom }]}>
-      {renderContent()}
-      
-      {/* Floating action button for refreshing the chat UI */}
-      <TouchableOpacity
-        style={[
-          styles.floatingButton,
-          { backgroundColor: themeColors.primary || '#4caf50' }
-        ]}
-        onPress={() => {
-          // Simpler, safer refresh that won't cause navigation issues
-          console.log('ChatAssistant: Manual refresh requested');
-          
-          if (!user) {
-            // Show a message directly in the chat
-            const errorMsg = {
-              _id: 'error-' + Date.now(),
-              text: 'You need to be logged in to use the chat assistant.',
-              createdAt: new Date(),
-              user: {
-                _id: 'assistant',
-                name: 'System',
-              },
-            };
-            setMessages(prev => ChatUtils.append(prev, [errorMsg]));
-            return;
-          }
-          
-          // If we don't have a session, try to get one but don't reset UI
-          if (!sessionId && user.id) {
-            setIsLoading(true);
-            
-            petAssistantService.getOrCreateSession(user.id, petId)
-              .then(session => {
-                if (session && session.id) {
-                  console.log('ChatAssistant: Got new session ID on refresh:', session.id);
-                  setSessionId(session.id);
-                  
-                  // Status message
-                  const statusMsg = {
-                    _id: 'status-' + Date.now(),
-                    text: 'Chat session refreshed.',
-                    createdAt: new Date(),
-                    system: true,
-                    user: {
-                      _id: 'system',
-                      name: 'System',
-                    },
-                  };
-                  setMessages(prev => ChatUtils.append(prev, [statusMsg]));
-                  
-                  // Auto-remove status message after 3 seconds
-                  setTimeout(() => {
-                    setMessages(prev => prev.filter(m => m._id !== statusMsg._id));
-                  }, 3000);
+      <View style={{ flex: 1, backgroundColor: themeColors.background }}>
+        <View style={{ 
+          padding: 16, 
+          backgroundColor: themeColors.primary, 
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center' 
+        }}>
+          <Text style={{ 
+            fontSize: 18, 
+            fontWeight: 'bold', 
+            color: '#fff', 
+            textAlign: 'center' 
+          }}>
+            Pet Assistant
+          </Text>
+        </View>
+        
+        {/* Message content area */}
+        <View style={{ flex: 1 }}>
+          {renderContent()}
+        </View>
+        
+        {/* Fixed input area - always visible */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
+          <View style={[styles.inputContainer, { 
+            paddingBottom: Math.max(insets.bottom, 10),
+            borderTopWidth: 1,
+            borderTopColor: themeColors.border || '#e0e0e0'
+          }]}>
+            <TextInput
+              style={[styles.input, { 
+                backgroundColor: themeColors.inputBackground || '#f0f0f0',
+                color: themeColors.text
+              }]}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Type a message..."
+              placeholderTextColor={themeColors.placeholderText}
+              multiline
+              returnKeyType="send"
+              onSubmitEditing={() => {
+                if (inputText.trim() && !isLoading) {
+                  handleSendMessage(inputText);
+                  setInputText('');
                 }
-                setIsLoading(false);
-              })
-              .catch(error => {
-                console.error('Error getting session on refresh:', error);
-                setIsLoading(false);
-                
-                // Show error in chat
-                const errorMsg = {
-                  _id: 'error-' + Date.now(),
-                  text: 'Could not refresh the chat session. Please try again.',
-                  createdAt: new Date(),
-                  user: {
-                    _id: 'assistant',
-                    name: 'System',
-                  },
-                };
-                setMessages(prev => ChatUtils.append(prev, [errorMsg]));
-              });
-          } else {
-            // We have a session, just show a status message
-            const statusMsg = {
-              _id: 'status-' + Date.now(),
-              text: 'Chat ready.',
-              createdAt: new Date(),
-              system: true,
-              user: {
-                _id: 'system',
-                name: 'System',
-              },
-            };
-            setMessages(prev => ChatUtils.append(prev, [statusMsg]));
-            
-            // Auto-remove status message after 3 seconds
-            setTimeout(() => {
-              setMessages(prev => prev.filter(m => m._id !== statusMsg._id));
-            }, 3000);
-          }
-        }}
-      >
-        <Ionicons name="refresh" size={24} color="#fff" />
-      </TouchableOpacity>
+              }}
+              blurOnSubmit={false}
+            />
+            <TouchableOpacity
+              disabled={isLoading || !inputText.trim()}
+              style={[
+                styles.sendButton,
+                (!inputText.trim() || isLoading) && { opacity: 0.5 }
+              ]}
+              onPress={() => {
+                if (inputText.trim() && !isLoading) {
+                  handleSendMessage(inputText);
+                  setInputText('');
+                }
+              }}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Ionicons name="send" size={24} color="#fff" />
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+        
+        {/* Refresh button */}
+        <TouchableOpacity
+          style={[
+            styles.floatingButton,
+            { backgroundColor: themeColors.primary }
+          ]}
+          onPress={checkInputDisplay}
+        >
+          <Ionicons name="refresh" size={24} color="#fff" />
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 };

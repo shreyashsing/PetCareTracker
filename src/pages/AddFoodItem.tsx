@@ -16,7 +16,7 @@ import {
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FoodItem } from '../types/components';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { notificationService } from '../services/notifications';
 
 // Helper function to generate a UUID
@@ -98,7 +98,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         
         try {
           setIsLoading(true);
-          const item = await databaseManager.foodItems.getById(route.params.itemId);
+          const item = await unifiedDatabaseManager.foodItems.getById(route.params.itemId);
           
           if (item) {
             setFormState({
@@ -259,7 +259,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       
       if (isEditMode && itemId) {
         // Update existing food item
-        const updated = await databaseManager.foodItems.update(itemId, foodItemData);
+        const updated = await unifiedDatabaseManager.foodItems.update(itemId, foodItemData);
         if (!updated) {
           throw new Error('Failed to update food item');
         }
@@ -270,7 +270,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
           id: generateUUID(),
           ...foodItemData
         };
-        savedFoodItem = await databaseManager.foodItems.create(newFoodItem);
+        savedFoodItem = await unifiedDatabaseManager.foodItems.create(newFoodItem);
       }
       
       // Check if item needs a low stock alert
@@ -294,7 +294,7 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
     
     setIsLoading(true);
     try {
-      await databaseManager.foodItems.delete(itemId);
+      await unifiedDatabaseManager.foodItems.delete(itemId);
       navigation.goBack();
     } catch (error) {
       console.error('Error deleting food item:', error);

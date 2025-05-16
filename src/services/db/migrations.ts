@@ -1,5 +1,5 @@
 import { AsyncStorageService } from './asyncStorage';
-import { databaseManager } from '.';
+import {unifiedDatabaseManager} from ".";
 import { User } from '../../types/components';
 import { hashPassword } from '../auth/passwordService';
 import { supabase } from '../supabase';
@@ -39,7 +39,7 @@ const migrateToSecurePasswords: Migration = {
     console.log('Running migration: Secure passwords');
     try {
       // Get all users
-      const users = await databaseManager.users.getAll();
+      const users = await unifiedDatabaseManager.users.getAll();
       
       // Hash passwords for each user
       for (const user of users) {
@@ -60,7 +60,7 @@ const migrateToSecurePasswords: Migration = {
           
           // Update user with new hash
           user.passwordHash = newPasswordHash;
-          await databaseManager.users.update(user.id, user);
+          await unifiedDatabaseManager.users.update(user.id, user);
           
           console.log(`Upgraded password security for user: ${user.id}`);
         } catch (error) {
@@ -86,7 +86,7 @@ const addUserPreferences: Migration = {
     console.log('Running migration: Add user preferences');
     try {
       // Get all users
-      const users = await databaseManager.users.getAll();
+      const users = await unifiedDatabaseManager.users.getAll();
       
       // Add preferences to each user
       for (const user of users) {
@@ -96,7 +96,7 @@ const addUserPreferences: Migration = {
             pushNotifications: true,
             theme: 'system'
           };
-          await databaseManager.users.update(user.id, user);
+          await unifiedDatabaseManager.users.update(user.id, user);
           console.log(`Added preferences for user: ${user.id}`);
         }
       }
@@ -203,7 +203,7 @@ export const runMigrationsToEnsureTablesExist = async (): Promise<boolean> => {
         .select('email, display_name')
         .eq('id', userId)
         .single();
-        
+      
       if (!userError && userData) {
         userEmail = userData.email;
         userDisplayName = userData.display_name || '';
@@ -348,131 +348,215 @@ export const runMigrationsToEnsureTablesExist = async (): Promise<boolean> => {
   }
 };
 
-// Add the chat tables SQL
+/**
+ * SQL to create the chat tables in Supabase
+ */
 export const createChatTablesSQL = `
--- Enable UUID extension if not already enabled
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- Check if chat_sessions table exists and modify/create it
-DO $$
-BEGIN
-    -- Check if chat_sessions table exists
-    IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'chat_sessions') THEN
-        -- Table exists, try to modify the foreign key if it exists
-        BEGIN
-            -- Drop existing constraint if it exists (might fail if it doesn't exist)
-            ALTER TABLE chat_sessions DROP CONSTRAINT IF EXISTS chat_sessions_pet_id_fkey;
-            
-            -- Add a more flexible foreign key constraint
-            ALTER TABLE chat_sessions ADD CONSTRAINT chat_sessions_pet_id_fkey 
-            FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
-            
-            RAISE NOTICE 'Modified chat_sessions foreign key constraint';
-        EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'Error modifying foreign key constraint: %', SQLERRM;
-        END;
-    ELSE
-        -- Create chat_sessions table if it doesn't exist
-        CREATE TABLE chat_sessions (
+-- Create chat_sessions table
+CREATE TABLE IF NOT EXISTS public.chat_sessions (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            user_id UUID NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
             pet_id UUID,
             title TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            last_message TEXT,
-            last_message_at TIMESTAMPTZ,
-            CONSTRAINT chat_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
-            CONSTRAINT chat_sessions_pet_id_fkey FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
-        );
-        
-        -- Create indexes for chat_sessions
-        CREATE INDEX chat_sessions_user_id_idx ON chat_sessions(user_id);
-        CREATE INDEX chat_sessions_pet_id_idx ON chat_sessions(pet_id);
-        
-        RAISE NOTICE 'Created chat_sessions table';
-    END IF;
-    
-    -- Check if chat_messages table exists
-    IF NOT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'chat_messages') THEN
-        -- Create chat_messages table if it doesn't exist
-        CREATE TABLE chat_messages (
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Create chat_messages table
+CREATE TABLE IF NOT EXISTS public.chat_messages (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            session_id UUID NOT NULL,
-            user_id UUID NOT NULL,
+  session_id UUID REFERENCES public.chat_sessions(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
             content TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT chat_messages_session_id_fkey FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
-            CONSTRAINT chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
-        );
-        
-        -- Create indexes for chat_messages
-        CREATE INDEX chat_messages_session_id_idx ON chat_messages(session_id);
-        CREATE INDEX chat_messages_user_id_idx ON chat_messages(user_id);
-        
-        RAISE NOTICE 'Created chat_messages table';
-    END IF;
-    
-    -- Enable Row Level Security on chat_sessions
-    ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
-    
-    -- Drop existing policies if they exist
-    DROP POLICY IF EXISTS "Users can view their own chat sessions" ON chat_sessions;
-    DROP POLICY IF EXISTS "Users can insert their own chat sessions" ON chat_sessions;
-    DROP POLICY IF EXISTS "Users can update their own chat sessions" ON chat_sessions;
-    DROP POLICY IF EXISTS "Users can delete their own chat sessions" ON chat_sessions;
-    
-    -- Create policies for chat_sessions
-    CREATE POLICY "Users can view their own chat sessions" 
-        ON chat_sessions FOR SELECT 
-        USING (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can insert their own chat sessions" 
-        ON chat_sessions FOR INSERT 
-        WITH CHECK (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can update their own chat sessions" 
-        ON chat_sessions FOR UPDATE 
-        USING (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can delete their own chat sessions" 
-        ON chat_sessions FOR DELETE 
-        USING (auth.uid() = user_id);
-        
-    -- Enable Row Level Security on chat_messages
-    ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
-    
-    -- Drop existing policies if they exist
-    DROP POLICY IF EXISTS "Users can view their own chat messages" ON chat_messages;
-    DROP POLICY IF EXISTS "Users can insert their own chat messages" ON chat_messages;
-    DROP POLICY IF EXISTS "Users can update their own chat messages" ON chat_messages;
-    DROP POLICY IF EXISTS "Users can delete their own chat messages" ON chat_messages;
-    
-    -- Create policies for chat_messages
-    CREATE POLICY "Users can view their own chat messages" 
-        ON chat_messages FOR SELECT 
-        USING (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can insert their own chat messages" 
-        ON chat_messages FOR INSERT 
-        WITH CHECK (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can update their own chat messages" 
-        ON chat_messages FOR UPDATE 
-        USING (auth.uid() = user_id);
-    
-    CREATE POLICY "Users can delete their own chat messages" 
-        ON chat_messages FOR DELETE 
-        USING (auth.uid() = user_id);
-    
-    -- Grant permissions to authenticated users
-    GRANT ALL ON chat_sessions TO authenticated;
-    GRANT ALL ON chat_messages TO authenticated;
-    
-    RAISE NOTICE 'Set up RLS policies and permissions for chat tables';
-END $$;
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Add indexes
+CREATE INDEX IF NOT EXISTS chat_sessions_user_id_idx ON public.chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS chat_sessions_pet_id_idx ON public.chat_sessions(pet_id);
+CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON public.chat_messages(session_id);
 `;
+
+/**
+ * SQL to create the entity tables in Supabase
+ */
+export const createEntityTablesSQL = `
+-- Create food_items table
+CREATE TABLE IF NOT EXISTS public.food_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  brand TEXT,
+  type TEXT,
+  main_ingredient TEXT,
+  calories_per_serving NUMERIC,
+  serving_size JSONB,
+  nutritional_info JSONB,
+  notes TEXT,
+  purchase_info JSONB,
+  expiration_date TIMESTAMP WITH TIME ZONE,
+  opened_date TIMESTAMP WITH TIME ZONE,
+  inventory JSONB,
+  category TEXT,
+  pet_preference TEXT,
+  rating NUMERIC,
+  veterinarian_approved BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create meals table
+CREATE TABLE IF NOT EXISTS public.meals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  date TIMESTAMP WITH TIME ZONE NOT NULL,
+  time TIMESTAMP WITH TIME ZONE NOT NULL,
+  type TEXT,
+  foods JSONB DEFAULT '[]'::jsonb,
+  total_calories NUMERIC DEFAULT 0,
+  hydration JSONB,
+  completed BOOLEAN DEFAULT FALSE,
+  skipped BOOLEAN DEFAULT FALSE,
+  reaction TEXT,
+  fed_by TEXT,
+  reminder_settings JSONB,
+  recurring BOOLEAN DEFAULT FALSE,
+  recurrence_pattern TEXT,
+  special_instructions TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create tasks table
+CREATE TABLE IF NOT EXISTS public.tasks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  priority TEXT,
+  schedule_info JSONB NOT NULL,
+  location JSONB,
+  reminder_settings JSONB,
+  status TEXT DEFAULT 'pending',
+  completion_details JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create medications table
+CREATE TABLE IF NOT EXISTS public.medications (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT,
+  dosage JSONB,
+  frequency JSONB,
+  duration JSONB,
+  administration_method TEXT,
+  prescribed_by TEXT,
+  refills_remaining INTEGER,
+  refillable BOOLEAN DEFAULT FALSE,
+  purpose TEXT,
+  status TEXT DEFAULT 'active',
+  reminder_settings JSONB,
+  history JSONB DEFAULT '[]'::jsonb,
+  inventory JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create health_records table
+CREATE TABLE IF NOT EXISTS public.health_records (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  date TIMESTAMP WITH TIME ZONE NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  provider JSONB,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  cost NUMERIC,
+  insurance_covered BOOLEAN DEFAULT FALSE,
+  follow_up_needed BOOLEAN DEFAULT FALSE,
+  follow_up_date TIMESTAMP WITH TIME ZONE,
+  status TEXT DEFAULT 'completed',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create activity_sessions table
+CREATE TABLE IF NOT EXISTS public.activity_sessions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  pet_id UUID NOT NULL,
+  date TIMESTAMP WITH TIME ZONE NOT NULL,
+  start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+  end_time TIMESTAMP WITH TIME ZONE,
+  type TEXT NOT NULL,
+  duration INTEGER,
+  distance NUMERIC,
+  distance_unit TEXT,
+  intensity TEXT,
+  notes TEXT,
+  weather_conditions JSONB,
+  location JSONB,
+  mood TEXT,
+  companions JSONB,
+  images JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Add indexes
+CREATE INDEX IF NOT EXISTS food_items_pet_id_idx ON public.food_items(pet_id);
+CREATE INDEX IF NOT EXISTS food_items_user_id_idx ON public.food_items(user_id);
+CREATE INDEX IF NOT EXISTS meals_pet_id_idx ON public.meals(pet_id);
+CREATE INDEX IF NOT EXISTS meals_user_id_idx ON public.meals(user_id);
+CREATE INDEX IF NOT EXISTS tasks_pet_id_idx ON public.tasks(pet_id);
+CREATE INDEX IF NOT EXISTS tasks_user_id_idx ON public.tasks(user_id);
+CREATE INDEX IF NOT EXISTS medications_pet_id_idx ON public.medications(pet_id);
+CREATE INDEX IF NOT EXISTS medications_user_id_idx ON public.medications(user_id);
+CREATE INDEX IF NOT EXISTS health_records_pet_id_idx ON public.health_records(pet_id);
+CREATE INDEX IF NOT EXISTS health_records_user_id_idx ON public.health_records(user_id);
+CREATE INDEX IF NOT EXISTS activity_sessions_pet_id_idx ON public.activity_sessions(pet_id);
+CREATE INDEX IF NOT EXISTS activity_sessions_user_id_idx ON public.activity_sessions(user_id);
+`;
+
+/**
+ * Create the entity tables if they don't exist
+ */
+export async function createEntityTables(): Promise<boolean> {
+  try {
+    // Check if food_items table exists
+    const { error: foodItemsError } = await supabase.from('food_items').select('count').limit(1);
+    
+    if (foodItemsError && foodItemsError.code === '42P01') {
+      console.log('Entity tables not found. You need to create them in Supabase.');
+      console.log('Run the following SQL in the Supabase SQL Editor:');
+      console.log(createEntityTablesSQL);
+      
+      // Alert the user
+      alert(`The app requires database tables that don't exist yet. 
+      
+Please log into the Supabase dashboard and run the SQL shown in the console to create the required tables.`);
+      
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error checking for entity tables:', error);
+    return false;
+  }
+}
 
 const createPetsTableSQL = `
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

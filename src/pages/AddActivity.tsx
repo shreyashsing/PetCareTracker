@@ -78,7 +78,7 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
       console.log('New activity created:', newActivity);
       
       // Add to database logic would go here
-      // await databaseManager.activities.create(newActivity);
+      // await unifiedDatabaseManager.activities.create(newActivity);
       
       Alert.alert(
         'Success',

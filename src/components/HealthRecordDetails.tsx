@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } fr
 import { Ionicons } from '@expo/vector-icons';
 import { useAppColors } from '../hooks/useAppColors';
 import { HealthRecord } from '../types/components';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { formatDate } from '../utils/helpers';
 
 interface HealthRecordDetailsProps {
@@ -42,7 +42,7 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
           style: 'destructive',
           onPress: async () => {
             try {
-              await databaseManager.healthRecords.delete(record.id);
+              await unifiedDatabaseManager.healthRecords.delete(record.id);
               onRefresh();
               onClose();
               Alert.alert('Success', 'Health record deleted successfully');

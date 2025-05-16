@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { Medication } from '../types/components';
 import { useAppColors } from '../hooks/useAppColors';
 import { formatDistanceToNow, addHours, isSameDay } from 'date-fns';
@@ -36,10 +36,11 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
     try {
       setLoading(true);
       
-      // Get all active medications or filter by pet ID if provided
+      // Get all medications and filter by pet ID if provided
+      const allMedications = await unifiedDatabaseManager.medications.getAll();
       const medications = petId 
-        ? await databaseManager.medications.getByPetId(petId)
-        : await databaseManager.medications.getAll();
+        ? allMedications.filter(med => med.petId === petId)
+        : allMedications;
       
       // Filter to only active medications with reminders enabled
       const activeMedications = medications.filter(
@@ -49,7 +50,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
       // Get pet names for medications
       const petIds = new Set(activeMedications.map(med => med.petId));
       const pets = await Promise.all(
-        Array.from(petIds).map(id => databaseManager.pets.getById(id))
+        Array.from(petIds).map(id => unifiedDatabaseManager.pets.getById(id))
       );
       
       const petMap = new Map(
@@ -194,7 +195,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
   
   const handleRescheduleNotifications = async (medicationId: string) => {
     try {
-      const medication = await databaseManager.medications.getById(medicationId);
+      const medication = await unifiedDatabaseManager.medications.getById(medicationId);
       if (medication) {
         await notificationService.cancelMedicationNotifications(medicationId);
         await notificationService.scheduleMedicationNotifications(medication);

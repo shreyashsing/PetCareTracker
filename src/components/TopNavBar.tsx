@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -18,7 +18,7 @@ import { NavigationProps, MainStackParamList } from '../types/navigation';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppColors } from '../hooks/useAppColors';
 import { Pet } from '../types/components';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useToast } from '../hooks/use-toast';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -51,7 +51,7 @@ type TopNavBarProps = {
 
 type MainStackNavigationProp = NativeStackNavigationProp<MainStackParamList>;
 
-const TopNavBar: React.FC<TopNavBarProps> = ({
+const TopNavBar: React.FC<TopNavBarProps> = React.memo(({
   title = 'Pet Care',
   showBackButton = false,
   showSettingsButton = true,
@@ -74,74 +74,89 @@ const TopNavBar: React.FC<TopNavBarProps> = ({
   const [activePet, setActivePet] = useState<Pet | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Load pets from database
-  useEffect(() => {
-    const loadPets = async () => {
-      try {
-        setIsLoading(true);
-        
-        // Get the current user ID
-        const userId = user?.id;
-        
-        if (!userId) {
-          console.error('No user ID available');
-          setPets([]);
-          setActivePet(null);
-          return;
-        }
-        
-        // Fetch only pets belonging to the current user using the repository method
-        const userPets = await databaseManager.pets.findByUserId(userId);
-        console.log(`Found ${userPets.length} pets for user ${userId}`);
-        setPets(userPets);
-        
-        // Get active pet ID from context or storage
-        let currentActivePetId = activePetId;
-        
-        if (!currentActivePetId) {
-          // If no active pet in context, try to get from AsyncStorage
-          currentActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-          
-          // If we found an ID in storage and it's different from context, update context
-          if (currentActivePetId && currentActivePetId !== activePetId) {
-            setActivePetId(currentActivePetId);
-          }
-        }
-        
-        // If the active pet doesn't belong to the current user, reset it
-        const activePetBelongsToUser = userPets.some(p => p.id === currentActivePetId);
-        
-        // If there's an active pet ID but no pets exist with that ID (or it doesn't belong to user),
-        // or if there's no active pet ID but pets exist, set the first pet as active
-        if ((!activePetBelongsToUser) || 
-            (!currentActivePetId && userPets.length > 0)) {
-          if (userPets.length > 0) {
-            currentActivePetId = userPets[0].id;
-            setActivePetId(currentActivePetId);
-            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, currentActivePetId);
-          } else {
-            // If user has no pets, clear the active pet
-            setActivePetId('');
-            await AsyncStorageService.removeItem(STORAGE_KEYS.ACTIVE_PET_ID);
-          }
-        }
-        
-        // Find and set the active pet
-        if (currentActivePetId) {
-          const pet = userPets.find(p => p.id === currentActivePetId) || null;
-          setActivePet(pet);
-        } else {
-          setActivePet(null);
-        }
-      } catch (error) {
-        console.error('Error loading pets in TopNavBar:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Add loading ref to prevent multiple simultaneous loads
+  const loadingRef = useRef(false);
+  
+  // Load pets from database - convert to useCallback
+  const loadPets = useCallback(async () => {
+    // Skip if already loading
+    if (loadingRef.current) {
+      return;
+    }
     
+    try {
+      loadingRef.current = true;
+      setIsLoading(true);
+      
+      // Get the current user ID
+      const userId = user?.id;
+      
+      if (!userId) {
+        console.error('No user ID available');
+        setPets([]);
+        setActivePet(null);
+        return;
+      }
+      
+      // Fetch all pets and filter by user ID instead of using findByUserId
+      const allPets = await unifiedDatabaseManager.pets.getAll();
+      const userPets = allPets.filter(pet => pet.userId === userId);
+      console.log(`Found ${userPets.length} pets for user ${userId}`);
+      setPets(userPets);
+      
+      // Get active pet ID from context or storage
+      let currentActivePetId = activePetId;
+      
+      if (!currentActivePetId) {
+        // If no active pet in context, try to get from AsyncStorage
+        currentActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
+        
+        // If we found an ID in storage and it's different from context, update context
+        if (currentActivePetId && currentActivePetId !== activePetId) {
+          console.log('Updating active pet ID in context from storage:', currentActivePetId);
+          setActivePetId(currentActivePetId);
+        }
+      }
+      
+      // If we have an active pet ID, find the pet in our loaded pets
+      if (currentActivePetId) {
+        const pet = userPets.find(p => p.id === currentActivePetId);
+        if (pet) {
+          setActivePet(pet);
+          console.log('Setting active pet to:', pet.name, pet.id);
+        } else {
+          console.log('Active pet not found in user pets, resetting');
+          // Pet not found in user's pets, reset active pet
+          if (userPets.length > 0) {
+            setActivePet(userPets[0]);
+            currentActivePetId = userPets[0].id;
+            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, currentActivePetId);
+            setActivePetId(currentActivePetId);
+          } else {
+            setActivePet(null);
+            await AsyncStorageService.removeItem(STORAGE_KEYS.ACTIVE_PET_ID);
+            setActivePetId(null);
+          }
+        }
+      } else if (userPets.length > 0) {
+        // No active pet ID but pets exist, set first pet as active
+        setActivePet(userPets[0]);
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, userPets[0].id);
+        setActivePetId(userPets[0].id);
+        console.log('No active pet ID found, setting first pet as active:', userPets[0].name, userPets[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading pets:', error);
+    } finally {
+      setIsLoading(false);
+      loadingRef.current = false;
+    }
+  }, [activePetId, setActivePetId, user?.id]);
+  
+  // Use effect with optimized dependencies
+  useEffect(() => {
     loadPets();
-  }, [activePetId, setActivePetId, isFocused, user]);
+  }, [loadPets, user?.id]); // Only depend on user ID changes, not the entire user object
   
   // Animation for dropdown
   useEffect(() => {
@@ -180,49 +195,53 @@ const TopNavBar: React.FC<TopNavBarProps> = ({
   // In a real app, this would come from user data
   const userInitials = 'AB';
   
-  const handleBackPress = () => {
+  // Memoize handlers
+  const handleBackPress = useCallback(() => {
     if (onBackPress) {
       onBackPress();
     } else {
       navigation.goBack();
     }
-  };
+  }, [onBackPress, navigation]);
   
-  const handleSettingsPress = () => {
+  const handleSettingsPress = useCallback(() => {
     if (onSettingsPress) {
       onSettingsPress();
     } else {
       navigation.navigate('Settings');
     }
-  };
+  }, [onSettingsPress, navigation]);
   
-  const toggleDropdown = () => {
+  const toggleDropdown = useCallback(() => {
     setDropdownVisible(!dropdownVisible);
-  };
+  }, [dropdownVisible]);
   
   // Force refresh the current screen to update with new pet data
   const refreshCurrentScreen = () => {
-    // Reset to Main screen or refresh current screen
-    navigation.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'Main' }],
-      })
-    );
+    // Delay the navigation to ensure the storage update is complete
+    setTimeout(() => {
+      // Navigate to Main screen instead of using reset
+      navigation.navigate('Home');
+    }, 100);
   };
   
   const selectPet = async (pet: Pet) => {
     try {
+      // Check if this is already the active pet
       if (pet.id === activePetId) {
         // If the same pet is selected, just close the dropdown
         setDropdownVisible(false);
         return;
       }
       
-      // Update active pet in AsyncStorage and context
+      console.log('Switching active pet from', activePetId, 'to', pet.id);
+      
+      // Update active pet in AsyncStorage first
       await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, pet.id);
-      setActivePetId(pet.id);
+      
+      // Then update the active pet in state and context
       setActivePet(pet);
+      setActivePetId(pet.id);
       setDropdownVisible(false);
       
       // Notify parent component if callback provided
@@ -266,8 +285,9 @@ const TopNavBar: React.FC<TopNavBarProps> = ({
           return;
         }
         
-        // Use repository method instead of manual filtering
-        const userPets = await databaseManager.pets.findByUserId(userId);
+        // Use getAll and filter by userId instead of findByUserId
+        const allPets = await unifiedDatabaseManager.pets.getAll();
+        const userPets = allPets.filter(pet => pet.userId === userId);
         console.log(`Refreshed pet list: ${userPets.length} pets for user ${userId}`);
         setPets(userPets);
       } catch (error) {
@@ -443,7 +463,7 @@ const TopNavBar: React.FC<TopNavBarProps> = ({
       </Modal>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -80,6 +80,9 @@ export type RootStackParamList = {
   AuthStack: NavigatorScreenParams<AuthStackParamList>;
   MainStack: NavigatorScreenParams<MainStackParamList>;
   ManagePets: undefined;
+  OnboardingFeatures: undefined;
+  AddFirstPet: undefined;
+  PetProfile: { petId: string };
 };
 
 // Export a custom navigation type for use in components

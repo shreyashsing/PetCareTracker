@@ -1,163 +1,167 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { supabase } from '../supabase';
+import { Platform } from 'react-native';
+import { API_URL, testApiConnection } from '../../config/network';
 
-// Define API URL based on development mode
-// Use localhost for development, and the real URL for production
-const API_URL = __DEV__ 
-  ? 'http://localhost:8888/.netlify/functions' 
-  : 'https://your-netlify-site.netlify.app/.netlify/functions';
+// Log the API URL for debugging
+console.log(`SecureApiClient using API URL: ${API_URL}`);
 
 /**
- * Secure API client for server communication
- * This replaces direct Supabase queries from the mobile app for sensitive operations
+ * Secure API client that adds authentication headers
+ * and manages API requests to the Netlify serverless functions
  */
 class SecureApiClient {
-  private axiosInstance: AxiosInstance;
-  private static instance: SecureApiClient;
+  private client: AxiosInstance;
+  private initialized: boolean = false;
 
-  private constructor() {
-    this.axiosInstance = axios.create({
+  constructor() {
+    // Create Axios client with default config
+    this.client = axios.create({
       baseURL: API_URL,
-      timeout: 15000,
+      timeout: 30000, // 30 seconds timeout
       headers: {
         'Content-Type': 'application/json',
-      },
+        'X-Client-Platform': Platform.OS
+      }
     });
 
-    // Add request interceptor to add auth token
-    this.axiosInstance.interceptors.request.use(
+    // Configure request interceptor to add auth token
+    this.client.interceptors.request.use(
       async (config) => {
         try {
-          const { data } = await supabase.auth.getSession();
+          const { data: { session }, error } = await supabase.auth.getSession();
           
-          if (data.session?.access_token) {
-            // Add the Authorization header with the token
-            config.headers.Authorization = `Bearer ${data.session.access_token}`;
+          if (session?.access_token) {
+            config.headers['Authorization'] = `Bearer ${session.access_token}`;
+          } else {
+            console.warn('No valid session found for API request');
           }
-          
-          return config;
         } catch (error) {
-          console.error('Error getting auth token for API request:', error);
-          return config;
+          console.error('Error getting session for API request:', error);
         }
+        
+        return config;
       },
-      (error) => {
-        return Promise.reject(error);
-      }
+      error => Promise.reject(error)
     );
 
-    // Add response interceptor for error handling
-    this.axiosInstance.interceptors.response.use(
-      (response) => {
-        return response;
-      },
-      async (error) => {
-        const originalRequest = error.config;
-
-        // If the error is due to an expired token and we haven't already tried to refresh
-        if (error.response?.status === 401 && !originalRequest._retry) {
-          originalRequest._retry = true;
-
-          try {
-            // Try to refresh the session
-            const { data, error: refreshError } = await supabase.auth.refreshSession();
-            
-            if (refreshError || !data.session) {
-              // If refresh fails, redirect to login or show an error
-              console.error('Session refresh failed during API call:', refreshError);
-              return Promise.reject(error);
-            }
-
-            // Update the request with the new token
-            originalRequest.headers.Authorization = `Bearer ${data.session.access_token}`;
-            
-            // Retry the request with the new token
-            return this.axiosInstance(originalRequest);
-          } catch (refreshError) {
-            console.error('Error refreshing token:', refreshError);
-            return Promise.reject(error);
-          }
-        }
-
-        return Promise.reject(error);
-      }
-    );
+    // Test if the API is reachable during initialization
+    this.testConnection();
   }
 
-  /**
-   * Get the singleton instance
-   */
-  public static getInstance(): SecureApiClient {
-    if (!SecureApiClient.instance) {
-      SecureApiClient.instance = new SecureApiClient();
+  private async testConnection(): Promise<void> {
+    try {
+      const isConnected = await testApiConnection();
+      this.initialized = isConnected;
+      
+      if (isConnected) {
+        console.log('SecureApiClient successfully connected to API');
+      } else {
+        console.warn('SecureApiClient failed to connect to API');
+      }
+    } catch (error) {
+      console.error('Error testing API connection:', error);
+      this.initialized = false;
     }
-    return SecureApiClient.instance;
   }
 
   /**
    * Make a GET request to the API
    */
-  async get<T = any>(endpoint: string, params?: Record<string, any>): Promise<T> {
-    const config: AxiosRequestConfig = {};
-    if (params) {
-      config.params = params;
-    }
-
-    try {
-      const response = await this.axiosInstance.get<{success: boolean, data: T, error: string | null}>(endpoint, config);
-      
-      if (!response.data.success) {
-        throw new Error(response.data.error || 'Unknown API error');
-      }
-      
-      return response.data.data;
-    } catch (error) {
-      console.error(`API GET error for ${endpoint}:`, error);
-      throw error;
-    }
+  async get<T = any>(endpoint: string, config?: AxiosRequestConfig): Promise<T> {
+    return this.client.get<T>(endpoint, config).then(response => response.data);
   }
 
   /**
    * Make a POST request to the API
    */
-  async post<T = any>(endpoint: string, data?: any): Promise<T> {
-    try {
-      const response = await this.axiosInstance.post<{success: boolean, data: T, error: string | null}>(endpoint, data);
-      
-      if (!response.data.success) {
-        throw new Error(response.data.error || 'Unknown API error');
-      }
-      
-      return response.data.data;
-    } catch (error) {
-      console.error(`API POST error for ${endpoint}:`, error);
-      throw error;
-    }
+  async post<T = any>(endpoint: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    return this.client.post<T>(endpoint, data, config).then(response => response.data);
+  }
+
+  /**
+   * Make a PUT request to the API
+   */
+  async put<T = any>(endpoint: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    return this.client.put<T>(endpoint, data, config).then(response => response.data);
   }
 
   /**
    * Make a DELETE request to the API
    */
-  async delete<T = any>(endpoint: string, params?: Record<string, any>): Promise<T> {
-    const config: AxiosRequestConfig = {};
-    if (params) {
-      config.params = params;
-    }
+  async delete<T = any>(endpoint: string, config?: AxiosRequestConfig): Promise<T> {
+    return this.client.delete<T>(endpoint, config).then(response => response.data);
+  }
 
-    try {
-      const response = await this.axiosInstance.delete<{success: boolean, data: T, error: string | null}>(endpoint, config);
-      
-      if (!response.data.success) {
-        throw new Error(response.data.error || 'Unknown API error');
-      }
-      
-      return response.data.data;
-    } catch (error) {
-      console.error(`API DELETE error for ${endpoint}:`, error);
-      throw error;
-    }
+  /**
+   * Check if the client is initialized and connected to the API
+   */
+  isInitialized(): boolean {
+    return this.initialized;
   }
 }
 
-// Export the singleton instance
-export const secureApiClient = SecureApiClient.getInstance(); 
+// Export a singleton instance
+export const secureApiClient = new SecureApiClient();
+
+/**
+ * Make an authenticated request to the backend API
+ * @param method HTTP method
+ * @param endpoint API endpoint
+ * @param data Request data
+ * @returns Promise with response data
+ */
+export async function makeAuthenticatedRequest<T>(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE', 
+  endpoint: string, 
+  data?: any
+): Promise<T> {
+  try {
+    console.log(`Making ${method} request to ${endpoint}...`);
+    
+    // Get authentication tokens
+    const { data: authData, error: authError } = await supabase.auth.getSession();
+    
+    if (authError || !authData.session?.access_token) {
+      console.error('Authentication error:', authError);
+      throw new Error('Authentication required');
+    }
+    
+    // Prepare request
+    const url = `${API_URL}/${endpoint}`;
+    console.log(`Request URL: ${url}`);
+    
+    // Make request with timeout
+    const response = await axios({
+      method,
+      url,
+      data: method !== 'GET' ? data : undefined,
+      params: method === 'GET' ? data : undefined,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authData.session.access_token}`
+      },
+      timeout: 10000 // 10 second timeout
+    });
+    
+    console.log(`Response from ${endpoint}:`, response.status);
+    
+    if (response.data.error) {
+      console.error(`API error from ${endpoint}:`, response.data.error);
+      throw new Error(response.data.error);
+    }
+    
+    // Return the response data
+    return response.data as T;
+  } catch (error: any) {
+    console.error(`API request failed for ${endpoint}:`, error.message || error);
+    
+    // Check if it's a network error
+    if (error.message === 'Network Error' || error.code === 'ECONNABORTED') {
+      throw new Error('NETWORK_ERROR');
+    }
+    
+    // Re-throw the error
+    throw error;
+  }
+} 

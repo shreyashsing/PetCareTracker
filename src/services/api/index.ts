@@ -1,11 +1,8 @@
 import { supabase } from '../supabase';
+import { API_URL } from '../../config/network';
 
-// Define API base URL
-// For development, this should be your local Netlify dev server on port 8888
-// For production, this should be your deployed Netlify site URL
-const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:8888/.netlify/functions/api'
-  : 'https://pet-care-tracker.netlify.app/.netlify/functions/api';
+// Define API base URL - use the centralized configuration
+const API_BASE_URL = API_URL;
 
 interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -114,12 +111,27 @@ const apiClient = new ApiClient();
  */
 export const chatApi = {
   /**
+   * Check if the chat API is available
+   * @returns True if the API is available
+   */
+  async checkHealth() {
+    try {
+      console.log(`Checking chat health at: ${API_BASE_URL}/chat-health-check`);
+      const response = await fetch(`${API_BASE_URL}/chat-health-check`);
+      return response.ok;
+    } catch (error) {
+      console.error('Health check failed:', error);
+      return false;
+    }
+  },
+
+  /**
    * Get messages for a chat session
    * @param sessionId The chat session ID
    * @returns Chat messages
    */
   async getMessages(sessionId: string) {
-    return apiClient.request('chat/get-messages', {
+    return apiClient.request('chat-get-session-messages', {
       body: { sessionId }
     });
   },
@@ -132,7 +144,7 @@ export const chatApi = {
    * @returns The AI response
    */
   async sendMessage(sessionId: string, message: string, petId?: string) {
-    return apiClient.request('chat/send-message', {
+    return apiClient.request('chat-send-message', {
       body: { sessionId, message, petId }
     });
   },
@@ -144,7 +156,7 @@ export const chatApi = {
    * @returns The new session details
    */
   async createSession(petId?: string, title?: string) {
-    return apiClient.request('chat/create-session', {
+    return apiClient.request('chat-create-session', {
       body: { petId, title }
     });
   }

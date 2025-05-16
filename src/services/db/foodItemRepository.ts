@@ -4,6 +4,7 @@ import { BaseRepository } from './repository';
 import { notificationService } from '../notifications';
 
 /**
+ * @deprecated Use unifiedDatabaseManager.foodItems instead. This repository is being phased out.
  * Repository for managing FoodItem entities
  */
 export class FoodItemRepository extends BaseRepository<FoodItem> {

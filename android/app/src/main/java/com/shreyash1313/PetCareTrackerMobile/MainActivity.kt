@@ -2,6 +2,8 @@ package com.shreyash1313.PetCareTrackerMobile
 
 import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
+import android.os.StrictMode.ThreadPolicy
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -16,6 +18,16 @@ class MainActivity : ReactActivity() {
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
+    
+    // Allow network operations on main thread for development only
+    // WARNING: This should NOT be used in production!
+    if (BuildConfig.DEBUG) {
+      val policy = ThreadPolicy.Builder()
+        .permitAll()
+        .build()
+      StrictMode.setThreadPolicy(policy)
+    }
+    
     super.onCreate(null)
   }
 

@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import { Task, Medication, Meal, FoodItem } from '../../types/components';
-import { databaseManager } from '../db';
+import {unifiedDatabaseManager} from "../db";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Constants
@@ -187,7 +187,7 @@ class NotificationService {
       );
       
       // Get pet details for notification text
-      const pet = await databaseManager.pets.getById(task.petId);
+      const pet = await unifiedDatabaseManager.pets.getById(task.petId);
       const petName = pet ? pet.name : 'your pet';
       
       // Set up notification content
@@ -348,7 +348,7 @@ class NotificationService {
       await this.cancelMedicationNotifications(medication.id);
       
       // Get pet details for notification text
-      const pet = await databaseManager.pets.getById(medication.petId);
+      const pet = await unifiedDatabaseManager.pets.getById(medication.petId);
       const petName = pet ? pet.name : 'your pet';
       
       // Get the medication schedule details
@@ -674,7 +674,7 @@ class NotificationService {
       await this.cancelMealNotifications(meal.id);
       
       // Get pet details for notification text
-      const pet = await databaseManager.pets.getById(meal.petId);
+      const pet = await unifiedDatabaseManager.pets.getById(meal.petId);
       const petName = pet ? pet.name : 'your pet';
       
       // Get meal date and time
@@ -839,7 +839,7 @@ class NotificationService {
       await this.cancelInventoryAlert(foodItem.id);
       
       // Get pet details for notification text
-      const pet = await databaseManager.pets.getById(foodItem.petId);
+      const pet = await unifiedDatabaseManager.pets.getById(foodItem.petId);
       const petName = pet ? pet.name : 'your pet';
       
       // Calculate days remaining
@@ -987,11 +987,11 @@ class NotificationService {
   async checkAndScheduleInventoryAlerts(): Promise<void> {
     try {
       // Get all active pets
-      const pets = await databaseManager.pets.getAll();
+      const pets = await unifiedDatabaseManager.pets.getAll();
       
       for (const pet of pets) {
         // Get low stock food items for each pet
-        const lowStockItems = await databaseManager.foodItems.getLowStock(pet.id);
+        const lowStockItems = await unifiedDatabaseManager.foodItems.getLowStock(pet.id);
         
         // Schedule alerts for each low stock item
         for (const item of lowStockItems) {
@@ -1020,7 +1020,7 @@ class NotificationService {
       await AsyncStorage.setItem(INVENTORY_ALERT_NOTIFICATIONS_KEY, JSON.stringify([]));
       
       // Reschedule task notifications
-      const tasks = await databaseManager.tasks.find(
+      const tasks = await unifiedDatabaseManager.tasks.find(
         task => task.status !== 'completed' && task.reminderSettings.enabled
       );
       
@@ -1031,7 +1031,7 @@ class NotificationService {
       console.log(`Rescheduled notifications for ${tasks.length} tasks`);
       
       // Reschedule medication notifications
-      const medications = await databaseManager.medications.find(
+      const medications = await unifiedDatabaseManager.medications.find(
         medication => medication.status === 'active' && medication.reminderSettings.enabled
       );
       
@@ -1046,7 +1046,7 @@ class NotificationService {
       const twoDaysLater = new Date();
       twoDaysLater.setDate(now.getDate() + 2);
       
-      const meals = await databaseManager.meals.find(
+      const meals = await unifiedDatabaseManager.meals.find(
         meal => {
           // Check if the meal has a reminder enabled
           if (!meal.reminderSettings?.enabled) return false;

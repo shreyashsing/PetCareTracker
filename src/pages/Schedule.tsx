@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
@@ -64,7 +64,16 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
-        const todayTasks = await databaseManager.tasks.getByPetIdAndDate(petId, today);
+        // Get all tasks and filter by pet ID and date
+        const allTasksData = await unifiedDatabaseManager.tasks.getAll();
+        const todayTasks = allTasksData.filter(task => {
+          if (task.petId !== petId) return false;
+          
+          const taskDate = new Date(task.scheduleInfo.date);
+          taskDate.setHours(0, 0, 0, 0);
+          
+          return taskDate.getTime() === today.getTime();
+        });
         
         // Format today's tasks for UI display
         const formattedTodayTasks = todayTasks.map(task => {
@@ -124,7 +133,8 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
         const twoWeeksLater = new Date();
         twoWeeksLater.setDate(today.getDate() + 14);
         
-        const allTasks = await databaseManager.tasks.getByPetId(petId);
+        // Filter all tasks for this pet
+        const allTasks = allTasksData.filter(task => task.petId === petId);
         
         // Filter for upcoming tasks within the next 14 days
         const upcomingTasks = allTasks.filter(task => {
@@ -216,7 +226,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await databaseManager.tasks.delete(taskId);
+              await unifiedDatabaseManager.tasks.delete(taskId);
               loadData(); // Reload data after deletion
             } catch (error) {
               console.error('Error deleting task:', error);
@@ -233,7 +243,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
       console.log(`Toggling task ${taskId} completion status. Current status: ${currentStatus}`);
       
       // First get the task to ensure we have the latest data
-      const task = await databaseManager.tasks.getById(taskId);
+      const task = await unifiedDatabaseManager.tasks.getById(taskId);
       
       if (!task) {
         console.error(`Task with ID ${taskId} not found`);
@@ -244,8 +254,8 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
       const newStatus = currentStatus ? 'pending' : 'completed';
       console.log(`Setting task status to: ${newStatus}`);
       
-      // Use the repository method to update the status
-      await databaseManager.tasks.updateStatus(taskId, newStatus);
+      // Use the standard update method to update the status
+      await unifiedDatabaseManager.tasks.update(taskId, { ...task, status: newStatus });
       
       // If the task was completed, cancel any notifications
       if (newStatus === 'completed') {

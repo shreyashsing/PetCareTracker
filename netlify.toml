@@ -1,25 +1,36 @@
+# Netlify configuration file
 [build]
-  # Directory with the serverless functions
+  # Directory with the functions code
   functions = "functions"
-  # Directory to publish if you have a build step for your app
-  publish = "build"
+  # Directory with the frontend code to deploy
+  publish = "dist"
 
-[dev]
-  # Port for the local dev server
-  port = 8888
-  # Port for the functions
-  functionsPort = 9001
-  # Explicitly tell Netlify Dev to only run functions - not attempt to start a framework
-  framework = "#static"
-  # Turn off autoLaunch to prevent opening browser
-  autoLaunch = false
-  # Set to true to explicitly tell Netlify Dev to start the functions server
-  functions = "functions"
-  # Disable attempts to detect a framework
-  detectedFramework = false
-  
+# Redirect all API requests to the serverless functions
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
-  status = 200 
- 
+  status = 200
+
+# Development settings
+[dev]
+  port = 8888
+  # Listen on all interfaces to allow access from emulators
+  # This is important for Android emulators to reach the server
+  command = "netlify dev --port 8888 --host 0.0.0.0"
+
+# Set PetCareTracker function-specific settings
+[functions."chat-completion"]
+  # Increase the timeout for chat functions as they may take longer
+  timeout = 30
+
+[functions."health-check"]
+  # Quick health endpoint
+  timeout = 10
+
+# Headers for CORS
+[[headers]]
+  for = "/*"
+    [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Client-Platform" 

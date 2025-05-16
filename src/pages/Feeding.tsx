@@ -23,7 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Meal, FoodItem, Pet } from '../types/components';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
 import { notificationService } from '../services/notifications';
@@ -149,8 +149,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      // Fetch all meals for active pet
-      const allMeals = await databaseManager.meals.getByPetId(activePetId);
+      // Fetch all meals and filter for active pet
+      const allMealsData = await unifiedDatabaseManager.meals.getAll();
+      const allMeals = allMealsData.filter(meal => meal.petId === activePetId);
       
       // Filter for today's meals
       const mealsToday = allMeals.filter(meal => {
@@ -227,30 +228,30 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     try {
       if (mealId === 'mock-meal') return; // Don't process mock meal
       
+      // Get the meal first
+      const meal = await unifiedDatabaseManager.meals.getById(mealId);
+      if (!meal) {
+        console.error(`Meal with ID ${mealId} not found`);
+        return;
+      }
+      
       if (isCompleted) {
-        await databaseManager.meals.markAsCompleted(mealId);
+        // Update the meal with completed status
+        await unifiedDatabaseManager.meals.update(mealId, { ...meal, completed: true });
         
-        // If marking as completed, reschedule or cancel notifications as needed
-        const meal = await databaseManager.meals.getById(mealId);
-        if (meal) {
-          // If the meal is completed, we may want to cancel its notifications
-          // since they're no longer needed
-          await notificationService.cancelMealNotifications(mealId);
-        }
+        // If the meal is completed, cancel its notifications
+        await notificationService.cancelMealNotifications(mealId);
       } else {
-        const meal = await databaseManager.meals.getById(mealId);
-        if (meal) {
-          await databaseManager.meals.update(mealId, { ...meal, completed: false });
-          
-          // If un-completing a meal scheduled for the future, we might want to
-          // schedule notifications again
-          const mealTime = new Date(meal.time);
-          if (mealTime > new Date()) {
-            try {
-              await notificationService.scheduleMealNotifications(meal);
-            } catch (notifError) {
-              console.error('Error re-scheduling meal notifications:', notifError);
-            }
+        await unifiedDatabaseManager.meals.update(mealId, { ...meal, completed: false });
+        
+        // If un-completing a meal scheduled for the future, we might want to
+        // schedule notifications again
+        const mealTime = new Date(meal.time);
+        if (mealTime > new Date()) {
+          try {
+            await notificationService.scheduleMealNotifications(meal);
+          } catch (notifError) {
+            console.error('Error re-scheduling meal notifications:', notifError);
           }
         }
       }
@@ -283,7 +284,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                 await notificationService.cancelMealNotifications(mealId);
                 
                 // Delete the meal from database
-                await databaseManager.meals.delete(mealId);
+                await unifiedDatabaseManager.meals.delete(mealId);
                 
                 // Show success toast
                 toast({
@@ -666,8 +667,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       setLoading(true);
       console.log('Loading history data for period:', historyPeriod, 'and pet ID:', activePetId);
       
-      // Fetch all meals for the active pet
-      const allMeals = await databaseManager.meals.getByPetId(activePetId);
+      // Fetch all meals and filter for active pet
+      const allMealsData = await unifiedDatabaseManager.meals.getAll();
+      const allMeals = allMealsData.filter(meal => meal.petId === activePetId);
       console.log('Fetched meals count:', allMeals.length);
       
       // Debug meal data
@@ -777,8 +779,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     if (!activePetId) return;
     
     try {
-      // Fetch food items from database
-      const inventory = await databaseManager.foodItems.getByPetId(activePetId);
+      // Fetch all food items and filter for active pet
+      const allFoodItems = await unifiedDatabaseManager.foodItems.getAll();
+      const inventory = allFoodItems.filter(item => item.petId === activePetId);
       setFoodInventory(inventory);
     } catch (error) {
       console.error('Error loading inventory data:', error);
@@ -996,8 +999,13 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     try {
       if (!activePetId) return;
       
-      // Get low stock items
-      const lowStockItems = await databaseManager.foodItems.getLowStock(activePetId);
+      // Get all food items and filter for low stock
+      const allFoodItems = await unifiedDatabaseManager.foodItems.getAll();
+      const lowStockItems = allFoodItems.filter(item => 
+        item.petId === activePetId && 
+        item.inventory && 
+        item.inventory.daysRemaining <= 7
+      );
       
       if (lowStockItems.length === 0) {
         // Show toast that no items are low in stock
@@ -1042,7 +1050,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
             style: "destructive",
             onPress: async () => {
               try {
-                await databaseManager.foodItems.delete(itemId);
+                await unifiedDatabaseManager.foodItems.delete(itemId);
                 // Refresh the inventory list
                 loadInventoryData();
                 // Show success toast

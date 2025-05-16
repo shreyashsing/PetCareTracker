@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } fr
 import { Ionicons } from '@expo/vector-icons';
 import { useAppColors } from '../hooks/useAppColors';
 import { Medication } from '../types/components';
-import { databaseManager } from '../services/db';
+import {unifiedDatabaseManager} from "../services/db";
 import { formatDate } from '../utils/helpers';
 
 interface MedicationDetailsProps {
@@ -42,7 +42,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
           style: 'destructive',
           onPress: async () => {
             try {
-              await databaseManager.medications.delete(medication.id);
+              await unifiedDatabaseManager.medications.delete(medication.id);
               onRefresh();
               onClose();
               Alert.alert('Success', 'Medication deleted successfully');

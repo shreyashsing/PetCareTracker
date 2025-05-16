@@ -1,5 +1,7 @@
+const dotenv = require('dotenv');
+
 // Load environment variables from .env file
-require('dotenv').config();
+dotenv.config();
 
 /**
  * Environment variables for serverless functions
@@ -47,5 +49,4 @@ function validateEnvironment() {
 module.exports = {
   env,
   validateEnvironment
-}; 
- 
+};

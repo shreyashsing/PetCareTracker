@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -14,7 +14,7 @@ import {
 import { useToast } from '../hooks/use-toast';
 import { useActivePet } from '../hooks/useActivePet';
 import { format } from 'date-fns';
-import { Pet, PetStatsProps, Task, Meal, ActivitySession } from '../types/components';
+import { Pet, PetStatsProps, Task, Meal, ActivitySession, HealthRecord } from '../types/components';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,12 +23,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { TopNavBar } from '../components';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { STORAGE_KEYS, databaseManager } from '../services/db';
+import { STORAGE_KEYS, unifiedDatabaseManager } from '../services/db';
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate, calculateAge } from '../utils/helpers';
 import { useAppColors } from '../hooks/useAppColors';
 import Footer from '../components/layout/Footer';
 import { useAuth } from '../providers/AuthProvider';
+import { useFocusEffect } from '@react-navigation/native';
+import { syncHealthRecordsForPet } from '../utils/healthRecordSync';
 
 const { width } = Dimensions.get('window');
 
@@ -268,6 +270,14 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [healthStatus, setHealthStatus] = useState<'healthy' | 'recovering' | 'ill' | 'chronic' | 'unknown'>('healthy');
   const [loading, setLoading] = useState(true);
   const [hasPets, setHasPets] = useState(true);
+  const [pets, setPets] = useState<Pet[]>([]);
+  const [recentHealthRecords, setRecentHealthRecords] = useState<HealthRecord[]>([]);
+  const [debugMessage, setDebugMessage] = useState<string>('');
+  
+  // Add a loading ref to prevent multiple simultaneous loads
+  const isLoadingRef = useRef(false);
+  // Add a debounce timer ref
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Optimize with useCallback to prevent recreation on every render
   const calculateNextCheckup = useCallback(() => {
@@ -356,109 +366,288 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     return allActivities;
   }, []);
   
-  const loadData = useCallback(async () => {
+  const loadUserPets = async () => {
     try {
-      console.log("Loading Home data...");
-      setLoading(true);
-      
-      // Make sure user is logged in
-      if (!user) {
-        console.log("No user logged in");
-        setHasPets(false);
-        setLoading(false);
-        return;
-      }
-      
-      // Get only the current user's pets
-      const pets = await databaseManager.pets.findByUserId(user.id);
-      console.log(`Found ${pets.length} pets for user ${user.id}`);
-      
-      if (pets.length === 0) {
-        // No pets exist, set hasPets to false
-        console.log("No pets found for current user, showing empty state");
-        setHasPets(false);
-        setLoading(false);
-        return;
-      } else {
-        // Pets exist, make sure hasPets is true
-        setHasPets(true);
-      }
-      
-      // Get active pet ID from AsyncStorage
-      let petToLoadId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-      console.log(`Active pet ID from storage: ${petToLoadId}`);
-      
-      // If no active pet ID is set or it doesn't belong to this user, use the first pet as the active pet
-      if (!petToLoadId || !(await databaseManager.pets.exists(petToLoadId))) {
-        petToLoadId = pets[0].id;
-        console.log(`Setting first pet as active: ${petToLoadId}`);
-        // Save this as the active pet ID
-        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
-        setActivePetId(petToLoadId);
-      } else {
-        // Verify that the active pet belongs to the current user
-        const activePet = await databaseManager.pets.getById(petToLoadId);
-        if (!activePet || activePet.userId !== user.id) {
-          // Active pet belongs to a different user or doesn't exist, use the first pet of this user
-          petToLoadId = pets[0].id;
-          console.log(`Active pet belongs to another user or doesn't exist, setting first pet as active: ${petToLoadId}`);
-          await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
-          setActivePetId(petToLoadId);
+      if (user) {
+        setLoading(true);
+        
+        // Load all pets for the current user
+        const allPets = await unifiedDatabaseManager.pets.getAll();
+        const userPets = allPets.filter(p => p.userId === user.id);
+        console.log(`Found ${userPets.length} pets for user ${user?.id}`);
+        
+        setPets(userPets);
+        
+        // If no active pet is set, use the first pet
+        const activePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
+        
+        if (userPets.length > 0) {
+          if (!activePetId || !userPets.some((p: Pet) => p.id === activePetId)) {
+            // Set the first pet as active if there's no active pet or the active pet doesn't belong to this user
+            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, userPets[0].id);
+            setActivePet(userPets[0]);
+            await loadPetData(userPets[0].id);
+          } else {
+            // Load the active pet
+            setActivePet(userPets.find((p: Pet) => p.id === activePetId) || userPets[0]);
+            await loadPetData(activePetId || userPets[0].id);
+          }
+        } else {
+          setActivePet(null);
         }
       }
+    } catch (error) {
+      console.error('Error loading pets:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadPetData = async (petToLoadId: string) => {
+    try {
+      if (!petToLoadId) return;
       
+      // Load the selected pet and its data
+      const pet = await unifiedDatabaseManager.pets.getById(petToLoadId);
+      if (pet) {
+        console.log(`Loaded pet: ${pet.name} (${pet.id})`);
+        setActivePet(pet);
+        
+        // Load tasks, meals, and health records for today
+        const today = new Date();
+        
+        // Get all tasks and filter by pet ID and date
+        const allTasks = await unifiedDatabaseManager.tasks.getAll();
+        const petTasks = allTasks.filter(task => {
+          return task.petId === petToLoadId && 
+                 task.scheduleInfo?.date && 
+                 new Date(task.scheduleInfo.date).toDateString() === today.toDateString();
+        });
+        setTasks(petTasks);
+        
+        // Get all meals and filter by pet ID and date
+        const allMeals = await unifiedDatabaseManager.meals.getAll();
+        const petMeals = allMeals.filter(meal => {
+          return meal.petId === petToLoadId && 
+                 meal.date && 
+                 new Date(meal.date).toDateString() === today.toDateString();
+        });
+        setMeals(petMeals);
+        
+        // Load recent health records (last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        const allHealthRecords = await unifiedDatabaseManager.healthRecords.getAll();
+        const healthRecords = allHealthRecords.filter(record => {
+          return record.petId === petToLoadId;
+        });
+        console.log(`Loaded ${healthRecords.length} health records for pet ${petToLoadId}`);
+        
+        // Filter to recent records
+        const recentRecords = healthRecords.filter(record => {
+          const recordDate = new Date(record.date);
+          return recordDate >= sevenDaysAgo;
+        });
+        setRecentHealthRecords(recentRecords);
+        
+        // Save this pet as the active pet
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
+      }
+    } catch (error) {
+      console.error('Error loading pet data:', error);
+    }
+  };
+
+  const loadHomeData = useCallback(async () => {
+    if (isLoadingRef.current) {
+      console.log('Already loading data, skipping...');
+      return;
+    }
+    
+    isLoadingRef.current = true;
+    setLoading(true);
+    console.log('Loading home data...');
+    
+    try {
+      // Always check the latest active pet ID from storage
+      const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
+      console.log(`Stored active pet ID: ${storedActivePetId}`);
+      
+      // Check if activePetId in context matches storage, and update if needed
+      if (storedActivePetId !== activePetId) {
+        console.log(`Active pet ID mismatch (context: ${activePetId}, storage: ${storedActivePetId}), updating context`);
+        setActivePetId(storedActivePetId);
+      }
+      
+      // Load all pets for the current user
+      const allPets = await unifiedDatabaseManager.pets.getAll();
+      const userPets = allPets.filter(pet => pet.userId === user?.id);
+      console.log(`Found ${userPets.length} pets for user ${user?.id}`);
+      
+      // Update hasPets state based on pets array
+      setHasPets(userPets.length > 0);
+      
+      if (userPets.length === 0) {
+        console.log('No pets found for user, redirecting to add pet screen');
+        setActivePet(null);
+        setActivePetId(null);
+        await AsyncStorageService.removeItem(STORAGE_KEYS.ACTIVE_PET_ID);
+        setLoading(false);
+        isLoadingRef.current = false;
+        return;
+      }
+      
+      // Determine which pet to load
+      let petToLoadId = storedActivePetId;
+      
+      // If no pet ID in storage or the stored ID doesn't exist in user's pets, use the first pet
+      if (!petToLoadId || !userPets.some((p: Pet) => p.id === petToLoadId)) {
+        petToLoadId = userPets[0].id;
+        console.log(`No valid active pet ID found, using first pet: ${petToLoadId}`);
+        // Update active pet ID in storage and context
+        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
+        setActivePetId(petToLoadId);
+      }
+      
+      console.log(`Loading data for pet: ${petToLoadId}`);
+      
+      // Synchronize health records for this pet with Supabase
       if (petToLoadId) {
-        const pet = await databaseManager.pets.getById(petToLoadId);
+        try {
+          console.log(`Synchronizing health records for pet: ${petToLoadId}`);
+          const syncResult = await syncHealthRecordsForPet(petToLoadId);
+          console.log(`Health records sync result:`, syncResult);
+          
+          if (!syncResult.success) {
+            console.warn(`Health records sync failed: ${syncResult.error}`);
+          } else if (syncResult.syncedRecords > 0) {
+            console.log(`Successfully synced ${syncResult.syncedRecords} health records`);
+          }
+        } catch (syncError) {
+          console.error('Error syncing health records:', syncError);
+          // Continue with loading - not critical enough to fail the whole data loading process
+        }
+        
+        // Load the selected pet and its data
+        const pet = await unifiedDatabaseManager.pets.getById(petToLoadId);
         if (pet) {
-          console.log(`Loaded pet: ${pet.name}`);
+          console.log(`Loaded pet: ${pet.name} (${pet.id})`);
           setActivePet(pet);
           setHealthStatus(pet.status);
           
+          // Load tasks, meals, and health records for today
           const today = new Date();
-          const petTasks = await databaseManager.tasks.getByPetIdAndDate(petToLoadId, today);
+          
+          // Get all tasks and filter by pet ID and date
+          const allTasks = await unifiedDatabaseManager.tasks.getAll();
+          const petTasks = allTasks.filter(task => {
+            return task.petId === petToLoadId && 
+                  task.scheduleInfo?.date && 
+                  new Date(task.scheduleInfo.date).toDateString() === today.toDateString();
+          });
           setTasks(petTasks);
           
-          const petMeals = await databaseManager.meals.getByPetIdAndDate(petToLoadId, today);
+          // Get all meals and filter by pet ID and date
+          const allMeals = await unifiedDatabaseManager.meals.getAll();
+          const petMeals = allMeals.filter(meal => {
+            return meal.petId === petToLoadId && 
+                  meal.date && 
+                  new Date(meal.date).toDateString() === today.toDateString();
+          });
           setMeals(petMeals);
           
           // Load recent health records (last 7 days)
           const sevenDaysAgo = new Date();
           sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          const healthRecords = await databaseManager.healthRecords.getByPetId(petToLoadId);
+          
+          // Get all health records and filter by pet ID
+          const allHealthRecords = await unifiedDatabaseManager.healthRecords.getAll();
+          const healthRecords = allHealthRecords.filter(record => record.petId === petToLoadId);
+          console.log(`Loaded ${healthRecords.length} health records for pet ${petToLoadId}`);
+          
           const recentHealthRecords = healthRecords.filter(
-            record => new Date(record.date) >= sevenDaysAgo
+            (record: HealthRecord) => new Date(record.date) >= sevenDaysAgo
           );
           
           const formattedActivities = formatActivities(petTasks, petMeals, recentHealthRecords);
           setActivities(formattedActivities);
         } else {
           console.log(`Pet with ID ${petToLoadId} not found`);
-          
-          // If the active pet can't be found but we know pets exist,
-          // try to use the first pet in the list as a fallback
-          if (pets.length > 0) {
-            console.log(`Falling back to first pet: ${pets[0].name} (${pets[0].id})`);
-            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, pets[0].id);
-            setActivePetId(pets[0].id);
-            setActivePet(pets[0]);
-            setHealthStatus(pets[0].status);
-            
-            // Force a re-render to show the pet data
-            setTimeout(() => loadData(), 100);
+          // This should not happen with our validation above, but handle it just in case
+          if (userPets.length > 0) {
+            console.log(`Falling back to first pet: ${userPets[0].name} (${userPets[0].id})`);
+            await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, userPets[0].id);
+            setActivePetId(userPets[0].id);
+            setActivePet(userPets[0]);
+            setHealthStatus(userPets[0].status);
           } else {
             setHasPets(false);
           }
         }
-      } else {
-        console.log("No pet ID to load after all checks");
-        setHasPets(false);
       }
     } catch (error) {
       console.error('Error loading home data:', error);
     } finally {
       setLoading(false);
+      isLoadingRef.current = false;
     }
-  }, [user, setActivePetId, formatActivities]);
+  }, [activePetId, setActivePetId, user?.id, formatActivities]);
+  
+  // Create a debounced version of loadData
+  const debouncedLoadData = useCallback(() => {
+    // Clear any existing timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    // Set a new timer
+    debounceTimerRef.current = setTimeout(() => {
+      loadHomeData();
+    }, 300); // 300ms debounce time
+  }, [loadHomeData]);
+
+  // Load data on initial mount
+  useEffect(() => {
+    loadHomeData();
+    
+    // Cleanup function
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [loadHomeData]);
+  
+  // Use useFocusEffect to reload data when the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      const loadData = async () => {
+        console.log('Home screen focused, checking if data reload is needed');
+        
+        // Check if we need to load data (not already loading and either first load or active pet changed)
+        const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
+        
+        if (isLoadingRef.current) {
+          console.log('Already loading data, skipping...');
+          return;
+        }
+        
+        if (!activePet || activePet.id !== storedActivePetId) {
+          console.log('Active pet changed or not loaded, reloading data');
+          await loadHomeData();
+        } else {
+          console.log('Active pet unchanged, no need to reload data');
+        }
+      };
+      
+      loadData();
+      
+      return () => {
+        // Clean up if needed
+      };
+    }, [loadHomeData, activePet])
+  );
   
   // Use useCallback for the getTodaysActivities function
   const getTodaysActivities = useCallback((allActivities: Activity[]): Activity[] => {
@@ -521,20 +710,29 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     return calculateNextCheckup();
   }, [calculateNextCheckup]);
 
-  // Load data on initial mount
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-  
-  // Reload data when screen is focused (coming back from AddPet)
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      loadData();
-    });
-    
-    return unsubscribe;
-  }, [navigation, loadData]);
-  
+  // Debug sync function
+  const debugSync = async () => {
+    try {
+      if (user) {
+        setDebugMessage('Starting debug sync...');
+        
+        // Debug: Check if pets exist for this user
+        const allPets = await unifiedDatabaseManager.pets.getAll();
+        const userPets = allPets.filter((pet: Pet) => pet.userId === user.id);
+        console.log(`Debug: Found ${userPets.length} pets for user ${user.id}`);
+        userPets.forEach((pet: Pet) => console.log(`- Pet: ${pet.name} (${pet.id}), owned by: ${pet.userId}`));
+        
+        // Check total pets in DB for debugging
+        console.log(`Debug: Total pets in DB: ${allPets.length}`);
+        
+        // ... rest of the debug function ...
+      }
+    } catch (error: any) {
+      console.error('Debug sync error:', error);
+      setDebugMessage(`Error: ${error.message}`);
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -582,13 +780,14 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 }
                 
                 // Debug: Check if pets exist for this user
-                const userPets = await databaseManager.pets.findByUserId(user.id);
+                const allPets = await unifiedDatabaseManager.pets.getAll();
+                const userPets = allPets.filter((pet: Pet) => pet.userId === user.id);
                 console.log(`Debug: Found ${userPets.length} pets for user ${user.id}`);
-                userPets.forEach(pet => console.log(`- Pet: ${pet.name} (${pet.id}), owned by: ${pet.userId}`));
+                userPets.forEach((pet: Pet) => console.log(`- Pet: ${pet.name} (${pet.id}), owned by: ${pet.userId}`));
                 
                 // Check total pets in DB for debugging
-                const allPets = await databaseManager.pets.getAll();
-                console.log(`Debug: Total pets in DB: ${allPets.length}`);
+                const allDbPets = await unifiedDatabaseManager.pets.getAll();
+                console.log(`Debug: Total pets in DB: ${allDbPets.length}`);
                 
                 // Try to get active pet ID
                 const activeId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
@@ -628,7 +827,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 
                 // Force reload data
                 if (userPets.length > 0) {
-                  loadData();
+                  loadHomeData();
                 }
               } catch (error: any) {
                 console.error('Debug error:', error);
@@ -1279,3 +1478,4 @@ const styles = StyleSheet.create({
 });
 
 // Export with React.memo for better performance
+export default React.memo(Home);

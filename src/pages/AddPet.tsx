@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList, AppNavigationProp } from '../types/navigation';
+import { RootStackParamList } from '../types/navigation';
 import { 
   Form, 
   Input, 
@@ -27,19 +27,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
 import { Pet } from '../types/components';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { generateUUID } from '../utils/helpers';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../providers/AuthProvider';
 
 const { width } = Dimensions.get('window');
 
-// Use a simpler type that won't cause TypeScript errors
-type AddPetScreenProps = {
-  navigation: AppNavigationProp;
-  route: any;
-};
+// Use the correct type from NativeStackScreenProps
+type AddPetScreenProps = NativeStackScreenProps<RootStackParamList, 'AddPet'>;
 
 type PetType = 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
 
@@ -324,7 +321,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
       
       try {
         // Save to database with error handling
-        await databaseManager.pets.create(newPet);
+        await unifiedDatabaseManager.pets.create(newPet);
         console.log(`Pet ${newPet.name} saved successfully`);
         
         // Set as active pet
@@ -355,7 +352,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         console.error('Error adding pet to database:', dbError);
         
         // Check if pet was saved to local storage at least
-        const savedPets = await databaseManager.pets.getAll();
+        const savedPets = await unifiedDatabaseManager.pets.getAll();
         const petWasSaved = savedPets.some(p => p.id === petId);
         
         if (petWasSaved) {
@@ -836,3 +833,5 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 });
+
+export default AddPet;

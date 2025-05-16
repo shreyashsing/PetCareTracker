@@ -4,7 +4,9 @@ import { validateData, validationSchemas, formatValidationErrors } from '../vali
 import { Alert } from 'react-native';
 
 /**
- * Base repository class for managing entities in AsyncStorage
+ * @deprecated Use UnifiedDatabaseManager instead. This repository pattern is being phased out in favor of DataManager.
+ * Base repository class for database operations.
+ * Provides common CRUD operations for entities.
  */
 export class BaseRepository<T extends { id: string }> {
   constructor(private storageKey: string) {}

@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '../services/supabase';
+import { supabase, getCurrentUser, refreshSessionSafe } from '../services/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 export interface AuthContextType {
   user: User | null;
@@ -15,6 +15,9 @@ export interface AuthContextType {
   isAuthenticated: boolean;
   lastRefreshed: number | null;
   completeOnboarding: () => Promise<void>;
+  login: (email: string, password: string) => Promise<{ error: any | null }>;
+  register: (email: string, password: string) => Promise<{ error: any | null; data: any | null }>;
+  forgotPassword: (email: string) => Promise<void>;
 }
 
 // Create the auth context with default values
@@ -28,7 +31,10 @@ const AuthContext = createContext<AuthContextType>({
   refreshSession: async () => false,
   isAuthenticated: false,
   lastRefreshed: null,
-  completeOnboarding: async () => {}
+  completeOnboarding: async () => {},
+  login: async () => ({ error: null }),
+  register: async () => ({ error: null, data: null }),
+  forgotPassword: async () => {}
 });
 
 // Custom hook to easily use auth context
@@ -116,9 +122,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
       
-      const { data, error } = await supabase.auth.refreshSession({
-        refresh_token: session.refresh_token,
-      });
+      // Use our safe refresh function to prevent lock contention
+      const { data, error } = await refreshSessionSafe();
       
       if (error) {
         console.error('Auth: Session refresh error:', error);
@@ -165,24 +170,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     
-    // Initialize auth state
-    supabase.auth.getSession().then(async ({ data: { session: initialSession }, error }) => {
-      if (error) {
-        console.error('Auth: Error getting session:', error);
-      }
-      
-      if (initialSession) {
-        console.log('Auth: Got active session from Supabase');
-        setSession(initialSession);
-        setUser(initialSession.user);
-        await saveAuthState();
-      } else {
-        console.log('Auth: No active session, loading from storage');
+    // Initialize auth state using our safe function
+    const initializeAuth = async () => {
+      try {
+        // Use our safe getCurrentUser function to prevent lock contention
+        const { data, error } = await getCurrentUser();
+        
+        if (error) {
+          console.error('Auth: Error getting user:', error);
+          await loadStoredAuthState();
+          return;
+        }
+        
+        if (data.user) {
+          console.log('Auth: Got active user from Supabase');
+          
+          // Get the session
+          const sessionResult = await supabase.auth.getSession();
+          if (sessionResult.data.session) {
+            setSession(sessionResult.data.session);
+            setUser(data.user);
+            await saveAuthState();
+          } else {
+            console.log('Auth: No active session, loading from storage');
+            await loadStoredAuthState();
+          }
+        } else {
+          console.log('Auth: No active user, loading from storage');
+          await loadStoredAuthState();
+        }
+      } catch (error) {
+        console.error('Auth: Error initializing auth:', error);
         await loadStoredAuthState();
+      } finally {
+        setIsLoading(false);
       }
-      
-      setIsLoading(false);
-    });
+    };
+    
+    initializeAuth();
     
     // Cleanup subscription
     return () => {
@@ -190,7 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
   
-  // Setup periodic token refresh
+  // Setup periodic token refresh with a more reliable approach
   useEffect(() => {
     if (!session) return;
     
@@ -211,15 +236,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setIsLoading(true);
       
-      const { error } = await supabase.auth.signInWithPassword({
+      // Add timeout to prevent getting stuck
+      const signInPromise = supabase.auth.signInWithPassword({
         email,
         password,
       });
       
-      if (error) {
-        console.error('Auth: Sign in error:', error);
-        Alert.alert('Sign In Error', error.message);
-        return { error };
+      const result = await Promise.race([
+        signInPromise,
+        timeout(10000) // 10 second timeout
+      ]).catch(error => {
+        console.warn('Auth: Sign in timed out:', error.message);
+        return { error: new Error('Sign in timed out. Please try again.') } as SignInResponse;
+      });
+      
+      // Type assertion for result
+      const typedResult = result as SignInResponse;
+      
+      if (typedResult.error) {
+        console.error('Auth: Sign in error:', typedResult.error);
+        Alert.alert('Sign In Error', typedResult.error.message);
+        return { error: typedResult.error };
       }
       
       return { error: null };
@@ -237,18 +274,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setIsLoading(true);
       
-      const { data, error } = await supabase.auth.signUp({
+      // Add timeout to prevent getting stuck
+      const signUpPromise = supabase.auth.signUp({
         email,
         password,
       });
       
-      if (error) {
-        console.error('Auth: Sign up error:', error);
-        Alert.alert('Sign Up Error', error.message);
-        return { error, data: null };
+      const result = await Promise.race([
+        signUpPromise,
+        timeout(10000) // 10 second timeout
+      ]).catch(error => {
+        console.warn('Auth: Sign up timed out:', error.message);
+        return { data: null, error: new Error('Sign up timed out. Please try again.') } as SignUpResponse;
+      });
+      
+      // Type assertion for result
+      const typedResult = result as SignUpResponse;
+      
+      if (typedResult.error) {
+        console.error('Auth: Sign up error:', typedResult.error);
+        Alert.alert('Sign Up Error', typedResult.error.message);
+        return { error: typedResult.error, data: null };
       }
       
-      return { error: null, data };
+      return { error: null, data: typedResult.data };
     } catch (error: any) {
       console.error('Auth: Sign up exception:', error);
       Alert.alert('Sign Up Error', error.message || 'An unexpected error occurred');
@@ -263,11 +312,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setIsLoading(true);
       
-      const { error } = await supabase.auth.signOut();
+      // Add timeout to prevent getting stuck
+      const signOutPromise = supabase.auth.signOut();
       
-      if (error) {
-        console.error('Auth: Sign out error:', error);
-        Alert.alert('Sign Out Error', error.message);
+      const result = await Promise.race([
+        signOutPromise,
+        timeout(5000) // 5 second timeout
+      ]).catch(error => {
+        console.warn('Auth: Sign out timed out:', error.message);
+        // Continue with local sign out even if the API call times out
+        return { error: null } as SignOutResponse;
+      });
+      
+      // Type assertion for result
+      const typedResult = result as SignOutResponse;
+      
+      if (typedResult.error) {
+        console.error('Auth: Sign out error:', typedResult.error);
+        Alert.alert('Sign Out Error', typedResult.error.message);
       }
       
       // Clear state regardless of API success - force cleanup locally
@@ -277,6 +339,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       console.error('Auth: Sign out exception:', error);
       Alert.alert('Sign Out Error', error.message || 'An unexpected error occurred');
+      
+      // Force cleanup locally even if there's an error
+      setSession(null);
+      setUser(null);
+      await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
     } finally {
       setIsLoading(false);
     }
@@ -292,16 +359,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       console.log('Auth: Marking onboarding as complete for user');
       
-      // Update user metadata to mark onboarding as complete
-      const { error } = await supabase.auth.updateUser({
+      // Update user metadata to mark onboarding as complete with timeout
+      const updatePromise = supabase.auth.updateUser({
         data: {
           onboarding_complete: true,
           is_new_user: false
         }
       });
       
-      if (error) {
-        console.error('Auth: Error updating user metadata:', error);
+      const result = await Promise.race([
+        updatePromise,
+        timeout(5000) // 5 second timeout
+      ]).catch(error => {
+        console.warn('Auth: Update user metadata timed out:', error.message);
+        return { error: new Error('Update user metadata timed out') } as UpdateUserResponse;
+      });
+      
+      // Type assertion for result
+      const typedResult = result as UpdateUserResponse;
+      
+      if (typedResult.error) {
+        console.error('Auth: Error updating user metadata:', typedResult.error);
         return;
       }
       
@@ -314,8 +392,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
   
-  // Combine values for the context
-  const contextValue = {
+  // Determine if the user is authenticated
+  const isAuthenticated = !!user && !!session;
+
+  // Create the auth context value
+  const contextValue: AuthContextType = {
     user,
     session,
     isLoading,
@@ -323,9 +404,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signUp,
     signOut,
     refreshSession,
-    isAuthenticated: !!user && !!session,
+    isAuthenticated,
     lastRefreshed,
-    completeOnboarding
+    completeOnboarding,
+    // Add implementations for new methods that map to existing functionality
+    login: signIn,
+    register: signUp,
+    forgotPassword: async (email: string) => {
+      try {
+        setIsLoading(true);
+        
+        // Add timeout to prevent getting stuck
+        const resetPromise = supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: Platform.OS === 'web' ? 
+            window.location.origin + '/reset-password' : 
+            'yourapp://reset-password',
+        });
+        
+        const result = await Promise.race([
+          resetPromise,
+          timeout(5000) // 5 second timeout
+        ]).catch(error => {
+          console.warn('Auth: Password reset timed out:', error.message);
+          return { error: new Error('Password reset timed out. Please try again.') };
+        });
+        
+        // Type assertion for result
+        const typedResult = result as { error: Error | null };
+        
+        if (typedResult.error) {
+          console.error('Auth: Password reset error:', typedResult.error);
+          Alert.alert('Password Reset Error', typedResult.error.message);
+          throw typedResult.error;
+        }
+      } catch (error: any) {
+        console.error('Auth: Password reset exception:', error);
+        Alert.alert('Password Reset Error', error.message || 'An unexpected error occurred');
+        throw error;
+      } finally {
+        setIsLoading(false);
+      }
+    }
   };
   
   return (

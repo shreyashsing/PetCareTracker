@@ -12,7 +12,7 @@ import {
   DatePicker
 } from '../forms';
 import { LinearGradient } from 'expo-linear-gradient';
-import { databaseManager, STORAGE_KEYS } from '../services/db';
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { Medication } from '../types/components';
 import { generateUUID } from '../utils/helpers';
@@ -256,7 +256,7 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       
       if (isEditMode && medicationId) {
         console.log('Updating medication:', JSON.stringify(medicationRecord, null, 2));
-        await databaseManager.medications.update(medicationId, medicationRecord as Medication);
+        await unifiedDatabaseManager.medications.update(medicationId, medicationRecord as Medication);
         
         // Handle notification scheduling for updated medication
         if (formState.reminderEnabled) {
@@ -270,7 +270,7 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
         }
       } else {
         console.log('Creating new medication:', JSON.stringify(medicationRecord, null, 2));
-        await databaseManager.medications.create(medicationRecord as Medication);
+        await unifiedDatabaseManager.medications.create(medicationRecord as Medication);
         
         // Schedule notifications if reminders are enabled
         if (formState.reminderEnabled) {

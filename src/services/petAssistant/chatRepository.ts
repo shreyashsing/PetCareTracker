@@ -30,12 +30,12 @@ class ChatRepository {
       
       // Verify user exists in auth.users
       try {
-        const { data: userCheck, error: userError } = await supabase.auth.admin.getUserById(userId);
+        const { data: userCheck, error: userError } = await supabase.auth.getUser();
         
         if (userError) {
-          console.log('Cannot verify user directly through auth admin API, continuing anyway');
+          console.log('Cannot verify user through auth API, continuing anyway');
         } else if (!userCheck?.user) {
-          console.warn(`Warning: User ID ${userId} not found in auth.users, but continuing`);
+          console.warn(`Warning: User ID ${userId} not found in auth data, but continuing`);
         } else {
           console.log(`User ${userId} verified through auth API`);
         }
@@ -82,21 +82,53 @@ class ChatRepository {
       // Make sure auth is refreshed before creating the session
       await this.refreshAuthIfNeeded();
       
-      // Create the session
-      const { data, error } = await supabase
-        .from('chat_sessions')
-        .insert(sessionData)
-        .select('id')
-        .single();
+      // Create the session with retry mechanism
+      let attempts = 0;
+      const maxAttempts = 3;
+      let lastError = null;
+      
+      while (attempts < maxAttempts) {
+        try {
+          const { data, error } = await supabase
+            .from('chat_sessions')
+            .insert(sessionData)
+            .select('id')
+            .single();
 
-      if (error) {
-        console.error('Error creating chat session:', error);
-        console.error('Error details:', JSON.stringify(error));
-        return null;
+          if (error) {
+            lastError = error;
+            console.error(`Error creating chat session (attempt ${attempts + 1}/${maxAttempts}):`, error);
+            
+            // If it's a foreign key violation, try without pet_id
+            if (error.code === '23503' && sessionData.pet_id) {
+              console.log('Foreign key violation detected, trying again without pet_id');
+              delete sessionData.pet_id;
+            }
+            
+            attempts++;
+            if (attempts < maxAttempts) {
+              // Wait before retrying
+              await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+              continue;
+            }
+          } else {
+            console.log(`Chat session created with ID: ${data?.id}`);
+            return data?.id || null;
+          }
+        } catch (attemptError) {
+          lastError = attemptError;
+          console.error(`Exception in chat session creation attempt ${attempts + 1}/${maxAttempts}:`, attemptError);
+          attempts++;
+          if (attempts < maxAttempts) {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+            continue;
+          }
+        }
       }
-
-      console.log(`Chat session created with ID: ${data?.id}`);
-      return data?.id || null;
+      
+      console.error(`Failed to create chat session after ${maxAttempts} attempts. Last error:`, lastError);
+      return null;
     } catch (error) {
       console.error('Exception creating chat session:', error);
       if (error instanceof Error) {

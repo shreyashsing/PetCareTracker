@@ -32,6 +32,7 @@ import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { generateUUID } from '../utils/helpers';
 import { useAuth } from '../providers/AuthProvider';
+import { uploadImageToSupabase, setImagePickerActive, deleteImageFromSupabase, updatePetImage } from '../utils/imageUpload';
 
 const { width } = Dimensions.get('window');
 
@@ -214,20 +215,28 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Image selected and cropped successfully, updating form state');
+        // Safely update the image state
         handleChange('image', result.assets[0].uri);
+      } else {
+        console.log('Image selection was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error picking image:', error);
       Alert.alert('Error', 'Failed to pick image');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   
@@ -246,20 +255,28 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Photo taken and cropped successfully, updating form state');
+        // Safely update the image state
         handleChange('image', result.assets[0].uri);
+      } else {
+        console.log('Photo capture was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   
@@ -290,6 +307,21 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
       const petId = generateUUID();
       console.log(`Creating pet with ID: ${petId}`);
       
+      // If there's an image, upload it to Supabase storage
+      let imageUrl = 'https://via.placeholder.com/150';
+      
+      if (formState.image) {
+        try {
+          // Just use uploadImageToSupabase for a new pet since there's no old image to delete
+          imageUrl = await uploadImageToSupabase(formState.image);
+          console.log('Final image URL being saved to pet record:', imageUrl);
+        } catch (imageError) {
+          console.error('Error uploading image:', imageError);
+          // Continue with the local URI if upload fails
+          imageUrl = formState.image;
+        }
+      }
+      
       // Create the pet object
       const newPet: Pet = {
         id: petId,
@@ -306,7 +338,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         neutered: formState.neutered,
         adoptionDate: formState.adoptionDate || undefined,
         color: formState.color || '',
-        image: formState.image || 'https://via.placeholder.com/150',
+        image: imageUrl,
         medicalConditions: formState.medicalConditions.split(',').map(item => item.trim()).filter(Boolean),
         allergies: formState.allergies.split(',').map(item => item.trim()).filter(Boolean),
         veterinarian: {

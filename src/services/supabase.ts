@@ -18,12 +18,93 @@ if (!supabaseUrl || !supabaseAnonKey) {
   Alert.alert('Configuration Error', 'Missing Supabase credentials. Please check your .env file.');
 }
 
-// Session lock mechanism to prevent concurrent operations
+// Enhanced session lock mechanism to prevent concurrent operations
 let sessionLock = false;
 let sessionLockPromise: Promise<void> | null = null;
 let sessionLockResolve: (() => void) | null = null;
 let sessionLockTimer: NodeJS.Timeout | null = null;
 const SESSION_LOCK_TIMEOUT = 5000; // 5 seconds max lock time
+
+// Queue for auth operations to prevent race conditions
+interface AuthOperation {
+  id: string;
+  operation: () => Promise<any>;
+  resolve: (value: any) => void;
+  reject: (error: any) => void;
+  timeoutMs: number;
+}
+
+const authOperationsQueue: AuthOperation[] = [];
+let isProcessingQueue = false;
+
+// Process the auth operations queue sequentially
+const processAuthOperationsQueue = async () => {
+  if (isProcessingQueue || authOperationsQueue.length === 0) {
+    return;
+  }
+
+  isProcessingQueue = true;
+
+  while (authOperationsQueue.length > 0) {
+    const nextOp = authOperationsQueue.shift();
+    if (!nextOp) continue;
+
+    try {
+      console.log(`Processing auth operation ${nextOp.id}`);
+      
+      // Set timeout for this operation
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error(`Auth operation ${nextOp.id} timed out after ${nextOp.timeoutMs}ms`)), 
+        nextOp.timeoutMs)
+      );
+      
+      // Execute the operation with timeout
+      const result = await Promise.race([nextOp.operation(), timeoutPromise]);
+      nextOp.resolve(result);
+    } catch (error) {
+      console.error(`Error in auth operation ${nextOp.id}:`, error);
+      nextOp.reject(error);
+    }
+  }
+
+  isProcessingQueue = false;
+};
+
+/**
+ * Queue an auth operation to be executed sequentially
+ * This prevents race conditions between different auth operations
+ * @param operation Function that performs the auth operation
+ * @param operationName Name of the operation for logging
+ * @param timeoutMs Maximum time to wait for operation to complete
+ * @returns Promise that resolves with the operation result
+ */
+const queueAuthOperation = <T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  timeoutMs = 5000
+): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const opId = `${operationName}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    
+    console.log(`Queueing auth operation: ${operationName} (${opId})`);
+    
+    // Add operation to queue
+    authOperationsQueue.push({
+      id: opId,
+      operation,
+      resolve,
+      reject,
+      timeoutMs,
+    });
+    
+    // Start processing the queue if not already processing
+    if (!isProcessingQueue) {
+      processAuthOperationsQueue().catch(error => {
+        console.error('Error processing auth queue:', error);
+      });
+    }
+  });
+};
 
 /**
  * Acquire a lock for session operations
@@ -329,83 +410,234 @@ export const ensureAuthQuery = async <T>(
   }
 };
 
-// Function to safely get the current user with lock mechanism
+// Function to safely get the current user using queue and retry logic
 export const getCurrentUser = async () => {
-  try {
-    await acquireSessionLock();
-    
-    try {
-      // Set a timeout for getting the current user
-      const userPromise = supabase.auth.getUser();
-      const timeoutPromise = new Promise<{data: {user: null}, error: Error}>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('Get user timed out'));
-        }, 3000); // 3 second timeout
-      });
-      
-      const result = await Promise.race([
-        userPromise,
-        timeoutPromise
-      ]).catch(error => {
-        console.warn('Supabase: Get user timed out:', error.message);
-        return { data: { user: null }, error: null };
-      });
-      
-      // If we got an AuthSessionMissingError, try to recover by checking local storage
-      if (result.error && result.error.message === 'Auth session missing!') {
-        console.log('Supabase: Auth session missing, trying to recover from local storage');
-        // Return empty user without throwing error to allow app to continue
-        return { data: { user: null }, error: null };
+  // Use the auth operation queue to prevent race conditions
+  return queueAuthOperation(async () => {
+    // Add retry mechanism with exponential backoff
+    const maxRetries = 3;
+    let retryCount = 0;
+    let lastError: any = null;
+    let lockAcquired = false;
+
+    while (retryCount < maxRetries) {
+      try {
+        // Don't try to acquire the lock if we're already waiting for a long time
+        if (!lockAcquired) {
+          const lockAcquisitionTimeout = new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error('Lock acquisition timeout')), 1000);
+          });
+
+          try {
+            // Try to acquire the lock with a timeout
+            await Promise.race([acquireSessionLock(), lockAcquisitionTimeout]);
+            lockAcquired = true;
+            console.log(`GetUser attempt ${retryCount + 1}: Lock successfully acquired`);
+          } catch (lockError) {
+            // If lock acquisition times out, wait a bit and try again
+            if (retryCount < maxRetries - 1) {
+              console.warn(`GetUser attempt ${retryCount + 1}: Lock acquisition timed out, retrying after delay`);
+              retryCount++;
+              const backoffTime = Math.min(300 * Math.pow(2, retryCount - 1), 2000);
+              await new Promise(resolve => setTimeout(resolve, backoffTime));
+              continue;
+            } else {
+              // On last retry, proceed without lock as a fallback
+              console.warn(`GetUser attempt ${retryCount + 1}: Lock acquisition timed out, proceeding without lock`);
+            }
+          }
+        }
+        
+        try {
+          // Set a timeout for getting the current user
+          const userPromise = supabase.auth.getUser();
+          const timeoutPromise = new Promise<{data: {user: null}, error: Error}>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(`Get user timed out (attempt ${retryCount + 1})`));
+            }, 4000); // 4 second timeout
+          });
+          
+          const result = await Promise.race([
+            userPromise,
+            timeoutPromise
+          ]).catch(error => {
+            console.warn(`Supabase: Get user timed out (attempt ${retryCount + 1}):`, error.message);
+            throw error; // Re-throw to trigger retry
+          });
+          
+          // If we got an AuthSessionMissingError, try to recover
+          if (result.error && result.error.message === 'Auth session missing!') {
+            console.log('Supabase: Auth session missing, trying to recover from local storage');
+            // Return empty user without throwing error to allow app to continue
+            return { data: { user: null }, error: null };
+          }
+          
+          // If successful, return the result
+          if (!result.error) {
+            console.log(`GetUser completed successfully on attempt ${retryCount + 1}`);
+            return result;
+          }
+          
+          // If we got a result but it had an error, throw it to trigger retry
+          throw result.error;
+        } finally {
+          // Release lock if we acquired it
+          if (lockAcquired) {
+            try {
+              releaseSessionLock();
+              lockAcquired = false;
+            } catch (releaseError) {
+              console.warn('Error releasing session lock:', releaseError);
+            }
+          }
+        }
+      } catch (error) {
+        lastError = error;
+        retryCount++;
+        
+        if (retryCount < maxRetries) {
+          // Exponential backoff: 300ms, 600ms, 1200ms, etc.
+          const backoffTime = Math.min(300 * Math.pow(2, retryCount - 1), 2000);
+          console.warn(`GetUser failed (attempt ${retryCount}), retrying in ${backoffTime}ms:`, error);
+          await new Promise(resolve => setTimeout(resolve, backoffTime));
+        } else {
+          console.error(`Failed to get user after ${maxRetries} attempts:`, error);
+        }
       }
-      
-      return result;
-    } finally {
-      releaseSessionLock();
     }
-  } catch (error) {
-    releaseSessionLock();
-    console.error('Error getting current user:', error);
-    return { data: { user: null }, error };
-  }
+    
+    // Release lock if we still have it after all retries
+    if (lockAcquired) {
+      try {
+        releaseSessionLock();
+      } catch (releaseError) {
+        console.warn('Error releasing session lock after retry failure:', releaseError);
+      }
+    }
+    
+    // Return error if all retries failed
+    return { 
+      data: { user: null }, 
+      error: lastError || new Error(`Failed to get user after ${maxRetries} attempts`) 
+    };
+  }, 'getCurrentUser', 10000); // 10 second timeout for the entire operation
 };
 
-// Function to safely refresh the session with lock mechanism
+// Function to safely refresh the session using queue and retry logic
 export const refreshSessionSafe = async () => {
-  try {
-    await acquireSessionLock();
-    
-    try {
-      // Set a timeout for refreshing the session
-      const refreshPromise = supabase.auth.refreshSession();
-      const timeoutPromise = new Promise<{data: {session: null, user: null}, error: Error}>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('Session refresh timed out'));
-        }, 3000); // 3 second timeout
-      });
-      
-      const result = await Promise.race([
-        refreshPromise,
-        timeoutPromise
-      ]).catch(error => {
-        console.warn('Supabase: Session refresh timed out:', error.message);
-        return { data: { session: null, user: null }, error: null };
-      });
-      
-      // If we got an AuthSessionMissingError, handle it gracefully
-      if (result.error && result.error.message === 'Auth session missing!') {
-        console.log('Supabase: Auth session missing during refresh, returning empty session');
-        return { data: { session: null, user: null }, error: null };
+  // Use the auth operation queue to prevent race conditions
+  return queueAuthOperation(async () => {
+    // Add retry mechanism with exponential backoff
+    const maxRetries = 3;
+    let retryCount = 0;
+    let lastError: any = null;
+    let lockAcquired = false;
+
+    while (retryCount < maxRetries) {
+      try {
+        // Don't try to acquire the lock if we're already waiting for a long time
+        if (!lockAcquired) {
+          const lockAcquisitionTimeout = new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error('Lock acquisition timeout')), 1000);
+          });
+
+          try {
+            // Try to acquire the lock with a timeout
+            await Promise.race([acquireSessionLock(), lockAcquisitionTimeout]);
+            lockAcquired = true;
+            console.log(`Refresh attempt ${retryCount + 1}: Lock successfully acquired`);
+          } catch (lockError) {
+            // If lock acquisition times out, wait a bit and try again
+            if (retryCount < maxRetries - 1) {
+              console.warn(`Refresh attempt ${retryCount + 1}: Lock acquisition timed out, retrying after delay`);
+              retryCount++;
+              const backoffTime = Math.min(500 * Math.pow(2, retryCount - 1), 3000);
+              await new Promise(resolve => setTimeout(resolve, backoffTime));
+              continue;
+            } else {
+              // On last retry, proceed without lock as a fallback
+              console.warn(`Refresh attempt ${retryCount + 1}: Lock acquisition timed out, proceeding without lock`);
+            }
+          }
+        }
+        
+        try {
+          // Set a timeout for refreshing the session
+          const refreshPromise = supabase.auth.refreshSession();
+          const timeoutPromise = new Promise<{data: {session: null, user: null}, error: Error}>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(`Session refresh timed out (attempt ${retryCount + 1})`));
+            }, 5000); // 5 second timeout
+          });
+          
+          const result = await Promise.race([
+            refreshPromise,
+            timeoutPromise
+          ]).catch(error => {
+            console.warn(`Supabase: Session refresh timed out (attempt ${retryCount + 1}):`, error.message);
+            throw error; // Re-throw to trigger retry
+          });
+          
+          // If we got an AuthSessionMissingError, handle it gracefully
+          if (result.error && result.error.message === 'Auth session missing!') {
+            console.log('Supabase: Auth session missing during refresh, returning empty session');
+            return { data: { session: null, user: null }, error: null };
+          }
+          
+          // If successful, return the result
+          if (!result.error && result.data?.session) {
+            console.log(`Session refreshed successfully on attempt ${retryCount + 1}`);
+            return result;
+          }
+          
+          // If we got a result but it had an error, throw it to trigger retry
+          if (result.error) {
+            throw result.error;
+          }
+          
+          // If we got a result but no session, throw a custom error
+          throw new Error('No session returned from refresh operation');
+        } finally {
+          // Release lock if we acquired it
+          if (lockAcquired) {
+            try {
+              releaseSessionLock();
+              lockAcquired = false;
+            } catch (releaseError) {
+              console.warn('Error releasing session lock:', releaseError);
+            }
+          }
+        }
+      } catch (error) {
+        lastError = error;
+        retryCount++;
+        
+        if (retryCount < maxRetries) {
+          // Exponential backoff: 500ms, 1000ms, 2000ms, etc.
+          const backoffTime = Math.min(500 * Math.pow(2, retryCount - 1), 3000);
+          console.warn(`Session refresh failed (attempt ${retryCount}), retrying in ${backoffTime}ms:`, error);
+          await new Promise(resolve => setTimeout(resolve, backoffTime));
+        } else {
+          console.error(`Failed to refresh session after ${maxRetries} attempts:`, error);
+        }
       }
-      
-      return result;
-    } finally {
-      releaseSessionLock();
     }
-  } catch (error) {
-    releaseSessionLock();
-    console.error('Error refreshing session:', error);
-    return { data: { session: null, user: null }, error };
-  }
+    
+    // Release lock if we still have it after all retries
+    if (lockAcquired) {
+      try {
+        releaseSessionLock();
+      } catch (releaseError) {
+        console.warn('Error releasing session lock after retry failure:', releaseError);
+      }
+    }
+    
+    // Return error if all retries failed
+    return { 
+      data: { session: null, user: null }, 
+      error: lastError || new Error(`Failed to refresh session after ${maxRetries} attempts`) 
+    };
+  }, 'refreshSession', 15000); // 15 second timeout for the entire operation
 };
 
 // Define type safe database interfaces based on your structure

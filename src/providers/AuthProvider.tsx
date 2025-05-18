@@ -4,6 +4,39 @@ import { supabase, getCurrentUser, refreshSessionSafe } from '../services/supaba
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform } from 'react-native';
 
+// Helper function to create a timeout promise
+const timeout = (ms: number) => new Promise((_, reject) => 
+  setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms)
+);
+
+// Define response types for Supabase auth operations
+interface SignInResponse {
+  data: {
+    session: Session | null;
+    user: User | null;
+  } | null;
+  error: Error | null;
+}
+
+interface SignUpResponse {
+  data: {
+    session: Session | null;
+    user: User | null;
+  } | null;
+  error: Error | null;
+}
+
+interface SignOutResponse {
+  error: Error | null;
+}
+
+interface UpdateUserResponse {
+  data: {
+    user: User | null;
+  } | null;
+  error: Error | null;
+}
+
 export interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -18,6 +51,7 @@ export interface AuthContextType {
   login: (email: string, password: string) => Promise<{ error: any | null }>;
   register: (email: string, password: string) => Promise<{ error: any | null; data: any | null }>;
   forgotPassword: (email: string) => Promise<void>;
+  skipAuth: () => void;
 }
 
 // Create the auth context with default values
@@ -34,7 +68,8 @@ const AuthContext = createContext<AuthContextType>({
   completeOnboarding: async () => {},
   login: async () => ({ error: null }),
   register: async () => ({ error: null, data: null }),
-  forgotPassword: async () => {}
+  forgotPassword: async () => {},
+  skipAuth: () => {}
 });
 
 // Custom hook to easily use auth context
@@ -395,6 +430,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Determine if the user is authenticated
   const isAuthenticated = !!user && !!session;
 
+  // Skip authentication for debugging or testing
+  const skipAuth = () => {
+    // Create a mock user
+    const mockUser = {
+      id: 'test-user-id',
+      email: 'test@example.com',
+      app_metadata: {},
+      user_metadata: {},
+      aud: 'authenticated',
+      created_at: new Date().toISOString()
+    } as User;
+    
+    // Update auth state
+    setUser(mockUser);
+    setIsLoading(false);
+    
+    console.log('Auth: Authentication skipped with mock user');
+  };
+
   // Create the auth context value
   const contextValue: AuthContextType = {
     user,
@@ -410,6 +464,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Add implementations for new methods that map to existing functionality
     login: signIn,
     register: signUp,
+    skipAuth,
     forgotPassword: async (email: string) => {
       try {
         setIsLoading(true);

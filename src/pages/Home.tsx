@@ -31,6 +31,7 @@ import Footer from '../components/layout/Footer';
 import { useAuth } from '../providers/AuthProvider';
 import { useFocusEffect } from '@react-navigation/native';
 import { syncHealthRecordsForPet } from '../utils/healthRecordSync';
+import { addCacheBuster, refreshImageCache } from '../utils/imageCacheHelper';
 
 const { width } = Dimensions.get('window');
 
@@ -623,6 +624,9 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   useFocusEffect(
     useCallback(() => {
       const loadData = async () => {
+        console.log('Home screen in focus, refreshing image cache');
+        refreshImageCache();
+        
         console.log('Home screen focused, checking if data reload is needed');
         
         // Check if we need to load data (not already loading and either first load or active pet changed)
@@ -633,12 +637,8 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
           return;
         }
         
-        if (!activePet || activePet.id !== storedActivePetId) {
-          console.log('Active pet changed or not loaded, reloading data');
-          await loadHomeData();
-        } else {
-          console.log('Active pet unchanged, no need to reload data');
-        }
+        // Always reload data when returning to Home screen
+        await loadHomeData();
       };
       
       loadData();
@@ -646,7 +646,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       return () => {
         // Clean up if needed
       };
-    }, [loadHomeData, activePet])
+    }, [loadHomeData])
   );
   
   // Use useCallback for the getTodaysActivities function

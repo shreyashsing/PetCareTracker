@@ -1,16 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, Pressable } from 'react-native';
-import withMemoryLeakProtection, { WithMemoryLeakProtectionProps } from './withMemoryLeakProtection';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import OptimizedImage from './OptimizedImage';
 import { useSafeAsync } from '../utils/memoryLeakDetection';
-import { ImageSize, ImageQuality } from '../utils/imageOptimization';
+import { unifiedDatabaseManager } from '../services/db';
+import { supabase } from '../services/supabase';
+
+// Define memory leak protection props interface
+interface WithMemoryLeakProtectionProps {
+  componentId?: string;
+  debugName?: string;
+}
 
 interface PetProfileImageProps extends WithMemoryLeakProtectionProps {
-  petId: string;
+  petId?: string;
+  petData?: any;
   imageUrl?: string;
   size?: 'small' | 'medium' | 'large';
+  width?: number;
+  height?: number;
+  quality?: number;
   onPress?: () => void;
   placeholder?: string;
+  loadImageFromCache?: boolean;
 }
 
 /**
@@ -22,64 +33,115 @@ interface PetProfileImageProps extends WithMemoryLeakProtectionProps {
  */
 const PetProfileImage: React.FC<PetProfileImageProps> = ({ 
   petId, 
+  petData, 
   imageUrl, 
   size = 'medium',
+  width = 120,
+  height = 120, 
+  quality = 0.7, // Medium quality
   onPress, 
   placeholder,
-  isMounted 
+  loadImageFromCache = true
 }) => {
+  const [imageSource, setImageSource] = useState<string | null>(imageUrl || (petData?.image || null));
+  const [loadingPet, setLoadingPet] = useState(false);
+  const [petError, setPetError] = useState(false);
+  
   // Get the appropriate image size based on the size prop
   const getDimensions = () => {
     switch (size) {
-      case 'small':
-        return { width: ImageSize.AVATAR.width, height: ImageSize.AVATAR.height };
-      case 'large':
-        return { width: ImageSize.MEDIUM.width, height: ImageSize.MEDIUM.height };
-      case 'medium':
-      default:
-        return { width: ImageSize.SMALL.width, height: ImageSize.SMALL.height };
+      case 'small': return { width: 60, height: 60 };
+      case 'medium': return { width: 120, height: 120 };
+      case 'large': return { width: 180, height: 180 };
+      default: return { width, height };
     }
   };
+  
+  const { width: finalWidth, height: finalHeight } = getDimensions();
+  
+  // Load pet image either from passed data or by fetching with ID
+  useEffect(() => {
+    if (petData?.image) {
+      console.log(`Using provided pet image: ${petData.image.substring(0, 50)}...`);
+      setImageSource(petData.image);
+      return;
+    }
+    
+    if (petId) {
+      loadPetImage(petId);
+    }
+  }, [petId, petData]);
 
-  // Get the appropriate quality based on size
-  const getQuality = () => {
-    switch (size) {
-      case 'small':
-        return ImageQuality.MEDIUM;
-      case 'large':
-        return ImageQuality.HIGH;
-      case 'medium':
-      default:
-        return ImageQuality.MEDIUM;
+  // Check if storage bucket exists and is accessible
+  const checkBucketAccess = async () => {
+    try {
+      console.log('Checking storage bucket access...');
+      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets();
+      
+      if (bucketsError) {
+        console.error('Error listing buckets:', bucketsError.message);
+        return false;
+      }
+      
+      if (!buckets || buckets.length === 0) {
+        console.error('No storage buckets found');
+        return false;
+    }
+
+      console.log(`Found ${buckets.length} storage buckets:`, buckets.map(b => b.name).join(', '));
+      const petImagesBucket = buckets.find(b => b.name === 'pet-images');
+      
+      if (!petImagesBucket) {
+        console.error('pet-images bucket not found in available buckets');
+        return false;
+      }
+      
+      console.log('pet-images bucket found:', petImagesBucket);
+      return true;
+    } catch (error) {
+      console.error('Exception checking bucket access:', error);
+      return false;
     }
   };
-
-  const { width, height } = getDimensions();
-  const quality = getQuality();
-
-  // Use the safe async hook to load pet data if needed
-  const { data: petData, loading: loadingPet, error: petError } = useSafeAsync(
-    async (signal) => {
-      // If we already have an image URL, don't fetch pet data
-      if (imageUrl) {
-        return { imageUrl };
-      }
-
-      // Example API call - replace with your actual data fetching logic
-      const response = await fetch(`/api/pets/${petId}`, { signal });
+  
+  const loadPetImage = async (id: string) => {
+    setLoadingPet(true);
+    setPetError(false);
+    
+    try {
+      // First check if we can access the bucket
+      await checkBucketAccess();
       
-      if (!response.ok) {
-        throw new Error('Failed to load pet data');
+      const pet = await unifiedDatabaseManager.pets.getById(id);
+      if (pet?.image) {
+        // Check if the image is a URL or a local file URI
+        const isRemoteUrl = pet.image.startsWith('http');
+        
+        if (isRemoteUrl) {
+          // If it's a remote URL, try to verify the image works
+          try {
+            console.log(`Loading remote pet image: ${pet.image.substring(0, 50)}...`);
+            setImageSource(pet.image);
+          } catch (imageError) {
+            console.error('Error loading remote image:', imageError);
+            setPetError(true);
       }
-      
-      return await response.json();
-    },
-    [petId, imageUrl],
-    { debugName: `PetProfileImage-${petId}` }
-  );
-
-  // Extract the image URL from either props or fetched data
-  const imageSource = imageUrl || (petData?.imageUrl || null);
+        } else {
+          // If it's a local file URI, just use it directly
+          console.log(`Loading local pet image: ${pet.image.substring(0, 50)}...`);
+          setImageSource(pet.image);
+        }
+      } else {
+        console.log(`No image found for pet ID: ${id}`);
+        setImageSource(null);
+      }
+    } catch (error) {
+      console.error(`Error loading pet image for ID ${id}:`, error);
+      setPetError(true);
+    } finally {
+      setLoadingPet(false);
+    }
+  };
   
   // Generate placeholder text from name if available
   const getPlaceholderText = () => {
@@ -88,32 +150,57 @@ const PetProfileImage: React.FC<PetProfileImageProps> = ({
     return 'PET';
   };
 
+  // Handle image loading error
+  const handleImageError = (error: any) => {
+    console.log(`Image failed to load: ${imageSource}`);
+    console.log('Error details:', error);
+    
+    // If the image source is a Supabase URL but failed to load, 
+    // it might be a storage bucket permission issue
+    if (imageSource && imageSource.includes('supabase.co')) {
+      console.log('Possible Supabase storage permission issue - check RLS policies');
+      
+      // Check bucket access on error
+      checkBucketAccess().then(accessible => {
+        console.log(`Bucket accessible: ${accessible}`);
+      });
+    }
+    
+    // Check if the local file exists
+    if (imageSource && imageSource.startsWith('file://')) {
+      console.log('Local file URI might be temporary or no longer exists');
+    }
+    
+    setPetError(true);
+  };
+
   // Wrapper to make the image pressable if onPress is provided
   const renderContent = () => (
-    <View style={[styles.container, { width, height }]}>
+    <View style={[styles.container, { width: finalWidth, height: finalHeight }]}>
       {imageSource ? (
         <OptimizedImage
           source={{ uri: imageSource }}
-          width={width}
-          height={height}
+          width={finalWidth}
+          height={finalHeight}
           quality={quality}
           style={styles.image}
+          onError={handleImageError}
         />
       ) : (
-        <View style={[styles.placeholder, { width, height }]}>
+        <View style={[styles.placeholder, { width: finalWidth, height: finalHeight }]}>
           <Text style={styles.placeholderText}>{getPlaceholderText()}</Text>
         </View>
       )}
       
       {loadingPet && (
-        <View style={[styles.overlay, { width, height }]}>
+        <View style={[styles.overlay, { width: finalWidth, height: finalHeight }]}>
           <Text style={styles.loadingText}>Loading...</Text>
         </View>
       )}
       
       {petError && (
-        <View style={[styles.errorOverlay, { width, height }]}>
-          <Text style={styles.errorText}>!</Text>
+        <View style={[styles.errorOverlay, { width: finalWidth, height: finalHeight }]}>
+          <Text style={styles.placeholderText}>{getPlaceholderText()}</Text>
         </View>
       )}
     </View>
@@ -132,42 +219,45 @@ const PetProfileImage: React.FC<PetProfileImageProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 999, // Make it perfectly round
+    borderRadius: 100,
     overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: '#e1e1e1',
   },
   image: {
     width: '100%',
     height: '100%',
   },
   placeholder: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: '#BDBDBD',
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 100,
   },
   placeholderText: {
-    color: '#757575',
+    color: '#FFFFFF',
     fontSize: 24,
     fontWeight: 'bold',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 100,
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 14,
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,0,0,0.3)',
+    backgroundColor: '#ee5253',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  loadingText: {
-    color: 'white',
-    fontSize: 12,
+    borderRadius: 100,
   },
   errorText: {
-    color: 'white',
+    color: '#FFFFFF',
     fontSize: 24,
     fontWeight: 'bold',
   },
@@ -176,5 +266,4 @@ const styles = StyleSheet.create({
   },
 });
 
-// Export the component with memory leak protection applied
-export default withMemoryLeakProtection(PetProfileImage, 'PetProfileImage'); 
+export default PetProfileImage; 

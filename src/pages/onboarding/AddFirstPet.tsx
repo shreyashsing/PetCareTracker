@@ -13,6 +13,7 @@ import { AsyncStorageService } from '../../services/db/asyncStorage';
 import { Pet } from '../../types/components';
 import { generateUUID } from '../../utils/helpers';
 import { useAuth } from '../../contexts/AuthContext';
+import { uploadImageToSupabase, setImagePickerActive, updatePetImage } from '../../utils/imageUpload';
 
 type AddFirstPetNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -78,7 +79,26 @@ export const AddFirstPet: React.FC = () => {
     setIsLoading(true);
     
     try {
-      // Create pet with the same structure as AddPet.tsx
+      // Ensure user is authenticated
+      if (!user) {
+        throw new Error('No authenticated user');
+      }
+      
+      // Upload image to Supabase if it exists
+      let imageUrl = null;
+      
+      if (petImage) {
+        try {
+          console.log('Uploading pet image to Supabase storage...');
+          imageUrl = await uploadImageToSupabase(petImage);
+          console.log('Final image URL being saved to pet record:', imageUrl);
+        } catch (imageError) {
+          console.error('Error uploading image:', imageError);
+          // Continue with the local URI if upload fails
+          imageUrl = petImage;
+        }
+      }
+      
       const petId = generateUUID();
       console.log(`Creating pet with ID: ${petId}`);
       
@@ -92,7 +112,7 @@ export const AddFirstPet: React.FC = () => {
       // Create the pet object
       const newPet: Pet = {
         id: petId,
-        userId: user?.id || 'user123',
+        userId: user.id,
         name: petName,
         type: petType,
         breed: petBreed,
@@ -105,7 +125,7 @@ export const AddFirstPet: React.FC = () => {
         neutered: neutered,
         adoptionDate: undefined, // Not collecting this in the first pet flow
         color: petColor || '',
-        image: petImage || 'https://via.placeholder.com/150',
+        image: imageUrl || 'https://via.placeholder.com/150',
         medicalConditions: petMedicalConditions.split(',').map(item => item.trim()).filter(Boolean),
         allergies: petAllergies.split(',').map(item => item.trim()).filter(Boolean),
         veterinarian: {
@@ -193,20 +213,28 @@ export const AddFirstPet: React.FC = () => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Image selected and cropped successfully, updating pet image');
+        // Safely update the image state
         setPetImage(result.assets[0].uri);
+      } else {
+        console.log('Image selection was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error picking image:', error);
       Alert.alert('Error', 'Failed to pick image');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   
@@ -225,20 +253,28 @@ export const AddFirstPet: React.FC = () => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Photo taken and cropped successfully, updating pet image');
+        // Safely update the image state
         setPetImage(result.assets[0].uri);
+      } else {
+        console.log('Photo capture was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   

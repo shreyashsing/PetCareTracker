@@ -95,31 +95,401 @@ export class DataManager<T extends BaseEntity> {
    * @returns The entity in Supabase format
    */
   private toSupabaseFormat(entity: T): Record<string, any> {
-    // Convert camelCase to snake_case
-    const snakeCaseEntity = camelToSnake(entity);
+    // Pre-sanitize known problematic fields before conversion
+    // This catches fields that cause issues in their camelCase form
+    const sanitizedEntity = {...entity};
     
-    // Special handling for createdAt field which might be a column in the database
-    if ((entity as any).createdAt && !snakeCaseEntity['created_at']) {
-      snakeCaseEntity['createdAt'] = (entity as any).createdAt instanceof Date 
+    // Remove known problematic camelCase fields before conversion
+    const problematicFields = ['adoptionDate', 'microchipId', 'birthDate', 'createdAt'];
+    for (const field of problematicFields) {
+      if (field in sanitizedEntity) {
+        console.log(`Pre-sanitizing problematic field: ${field}`);
+        delete (sanitizedEntity as any)[field];
+      }
+    }
+    
+    // Use a deep snake case conversion instead of just top-level
+    const snakeCaseEntity = this.deepCamelToSnake(sanitizedEntity);
+    
+    // Special handling for createdAt field - ensure it's only represented as created_at
+    if ((entity as any).createdAt) {
+      // Add snake_case version if missing
+      if (!snakeCaseEntity['created_at']) {
+      snakeCaseEntity['created_at'] = (entity as any).createdAt instanceof Date 
         ? formatDateForSupabase((entity as any).createdAt)
         : (entity as any).createdAt;
+      }
+      
+      // Make sure to remove camelCase version if it somehow got in
+      if ('createdAt' in snakeCaseEntity) {
+        delete snakeCaseEntity['createdAt'];
+        console.log('Removed duplicate camelCase createdAt field after conversion');
+      }
     }
     
     // Handle date fields
-    for (const key in entity) {
-      const value = entity[key];
-      // Use type assertion to avoid TypeScript error
-      if (typeof value === 'object' && value !== null && 'getMonth' in value) {
-        snakeCaseEntity[camelToSnake(key)] = formatDateForSupabase(value as Date);
-      }
-    }
+    this.convertDatesToISOStrings(entity, snakeCaseEntity);
     
     // Handle userId field if it exists
     if (entity.userId && !snakeCaseEntity['user_id']) {
       snakeCaseEntity['user_id'] = entity.userId;
     }
     
+    // Special handling for arrays (before sanitization)
+    if (this.tableName === 'pets') {
+      // Properly format known array fields for PostgreSQL
+      const arrayFields = ['medical_conditions', 'allergies'];
+      
+      arrayFields.forEach(field => {
+        if (field in snakeCaseEntity && Array.isArray(snakeCaseEntity[field])) {
+          snakeCaseEntity[field] = this.formatSupabaseArray(snakeCaseEntity[field]);
+          console.log(`Formatted ${field} as PostgreSQL array: ${snakeCaseEntity[field]}`);
+        }
+      });
+    }
+    
+    // Sanitize fields that might not exist in the Supabase schema
+    this.sanitizeFieldsForSupabase(snakeCaseEntity);
+    
+    // Final safety check - ensure no camelCase fields remain that should be snake_case
+    const camelCaseFields = Object.keys(snakeCaseEntity).filter(key => 
+      key.match(/[A-Z]/) && !key.startsWith('_')
+    );
+    
+    if (camelCaseFields.length > 0) {
+      console.warn(`Warning: Found ${camelCaseFields.length} camelCase keys after conversion: `, camelCaseFields);
+      // Remove any remaining camelCase keys and convert them
+      camelCaseFields.forEach(camelKey => {
+        const snakeKey = camelToSnake(camelKey);
+        if (!(snakeKey in snakeCaseEntity) && snakeCaseEntity[camelKey] !== undefined) {
+          // Transfer value to snake_case key if it doesn't exist
+          snakeCaseEntity[snakeKey] = snakeCaseEntity[camelKey];
+          console.log(`Last-minute conversion: ${camelKey} → ${snakeKey}`);
+        }
+        // Remove the camelCase key
+        delete snakeCaseEntity[camelKey];
+        console.log(`Removed unexpected camelCase key: ${camelKey}`);
+      });
+    }
+    
+    console.log(`DataManager: Converted entity for ${this.tableName}:`, 
+      JSON.stringify({
+        original: Object.keys(entity),
+        converted: Object.keys(snakeCaseEntity)
+      }, null, 2)
+    );
+    
     return snakeCaseEntity;
+  }
+  
+  /**
+   * Sanitize fields that might not exist in the Supabase schema
+   * This prevents errors when sending data to Supabase with fields that don't exist in the table
+   * @param entity The entity to sanitize
+   */
+  private sanitizeFieldsForSupabase(entity: Record<string, any>): void {
+    // Add table-specific field sanitization
+    if (this.tableName === 'pets') {
+      // Handle known schema mismatches for the pets table
+      
+      // Fields that might not exist in the Supabase pets table schema (snake_case format)
+      const fieldsToCheck = [
+        'adoption_date',   // adoptionDate in local model
+        'birth_date',      // birthDate in local model
+        'neutered',        // Check if this exists in schema
+        'microchipped',    // Check if this exists in schema
+        'microchip_id',    // Check if this exists in schema
+        'veterinarian',    // This might be a nested object in local but not in Supabase
+        'medical_conditions', // This might be stored differently in Supabase
+        'allergies',       // This might be stored differently in Supabase
+        'status'           // This might not exist in older schemas
+      ];
+      
+      // Check for camelCase version of the fields too (in case they weren't properly converted)
+      const camelCaseFieldsToCheck = [
+        'adoptionDate',
+        'microchipId',
+        'birthDate',
+        'createdAt'
+      ];
+      
+      // Log all entity keys for debugging
+      console.log(`Entity keys for ${this.tableName}:`, Object.keys(entity));
+      
+      // Log fields being sanitized for debugging
+      console.log(`Sanitizing fields for Supabase (${this.tableName}):`, 
+        Object.keys(entity).filter(k => fieldsToCheck.includes(k) || camelCaseFieldsToCheck.includes(k)));
+      
+      // Remove fields that might cause issues with the schema (snake_case version)
+      fieldsToCheck.forEach(field => {
+        if (field in entity) {
+          // Special case for veterinarian field which might be a nested object
+          if (field === 'veterinarian' && typeof entity[field] === 'object') {
+            // Create flattened veterinarian fields that match the schema
+            if (entity[field]) {
+              try {
+                // Try to extract and format veterinarian data if the schema supports it
+                if (entity[field].name) entity['vet_name'] = entity[field].name;
+                if (entity[field].phone) entity['vet_phone'] = entity[field].phone;
+                if (entity[field].clinic) entity['vet_clinic'] = entity[field].clinic;
+              } catch (e) {
+                console.log(`Error processing veterinarian data:`, e);
+              }
+            }
+            // Remove the nested object
+            delete entity[field];
+            console.log(`Transformed 'veterinarian' field to flat fields for Supabase compatibility`);
+          }
+          // Special handling for array fields that might be stored differently
+          else if ((field === 'medical_conditions' || field === 'allergies') && Array.isArray(entity[field])) {
+            // Handle arrays properly for PostgreSQL compatibility
+            try {
+              // Check if array is empty
+              if (entity[field].length === 0) {
+                // Format as PostgreSQL empty array - Use '{}' syntax instead of '[]'
+                entity[field] = '{}';
+                console.log(`Formatted empty ${field} array as '{}' for PostgreSQL compatibility`);
+              } else {
+                // For non-empty arrays, convert to proper PostgreSQL array literal format
+                // Creates a string like '{value1,value2,value3}' instead of JSON '[value1,value2,value3]'
+                const arrayItems = entity[field].map((item: any) => {
+                  // Escape any quotes or special characters in array items
+                  if (typeof item === 'string') {
+                    return `"${item.replace(/"/g, '\\"')}"`;
+                  }
+                  return item;
+                });
+                entity[field] = `{${arrayItems.join(',')}}`;
+                console.log(`Formatted ${field} array as PostgreSQL array literal: ${entity[field]}`);
+              }
+            } catch (e) {
+              console.log(`Error formatting ${field} as PostgreSQL array:`, e);
+              // Default to empty array if conversion fails
+              entity[field] = '{}';
+            }
+          }
+          // Standard field that might not exist in schema - remove it to prevent errors
+          else {
+            delete entity[field];
+            console.log(`Removed '${field}' field from ${this.tableName} entity for Supabase compatibility`);
+          }
+        }
+      });
+      
+      // Also check and remove camelCase versions that might have slipped through conversion
+      camelCaseFieldsToCheck.forEach(field => {
+        if (field in entity) {
+          delete entity[field];
+          console.log(`Removed camelCase field '${field}' from ${this.tableName} entity for Supabase compatibility`);
+        }
+      });
+    }
+    
+    // Special handling for tasks table
+    if (this.tableName === 'tasks') {
+      // Ensure pet_id is properly set from petId if it exists
+      if (!entity['pet_id'] && (entity['petId'] || (entity as any).petId)) {
+        entity['pet_id'] = entity['petId'] || (entity as any).petId;
+        console.log(`Added missing pet_id field from petId for tasks table`);
+      }
+      
+      // Ensure schedule_info is properly handled
+      if (!entity['schedule_info'] && (entity['scheduleInfo'] || (entity as any).scheduleInfo)) {
+        // Create new object to avoid reference issues
+        entity['schedule_info'] = {...(entity['scheduleInfo'] || (entity as any).scheduleInfo)};
+        
+        // Handle nested date fields
+        if (entity['schedule_info'].date) {
+          if (entity['schedule_info'].date instanceof Date) {
+            entity['schedule_info'].date = formatDateForSupabase(entity['schedule_info'].date);
+          }
+        }
+        
+        if (entity['schedule_info'].time) {
+          if (entity['schedule_info'].time instanceof Date) {
+            entity['schedule_info'].time = formatDateForSupabase(entity['schedule_info'].time);
+          }
+        }
+        
+        // Handle any nested camelCase keys
+        if (entity['schedule_info'].recurringPattern) {
+          entity['schedule_info'].recurring_pattern = entity['schedule_info'].recurringPattern;
+          delete entity['schedule_info'].recurringPattern;
+        }
+        
+        if (entity['schedule_info'].recurringDays) {
+          entity['schedule_info'].recurring_days = entity['schedule_info'].recurringDays;
+          delete entity['schedule_info'].recurringDays;
+        }
+        
+        if (entity['schedule_info'].endRecurrence) {
+          entity['schedule_info'].end_recurrence = entity['schedule_info'].endRecurrence;
+          delete entity['schedule_info'].endRecurrence;
+        }
+        
+        console.log(`Added missing schedule_info field from scheduleInfo for tasks table`);
+      }
+      
+      // Ensure reminder_settings is properly handled
+      if (!entity['reminder_settings'] && (entity['reminderSettings'] || (entity as any).reminderSettings)) {
+        // Create new object to avoid reference issues
+        entity['reminder_settings'] = {...(entity['reminderSettings'] || (entity as any).reminderSettings)};
+        
+        // Handle nested camelCase keys
+        if (entity['reminder_settings'].notificationType) {
+          entity['reminder_settings'].notification_type = entity['reminder_settings'].notificationType;
+          delete entity['reminder_settings'].notificationType;
+        }
+        
+        console.log(`Added missing reminder_settings field from reminderSettings for tasks table`);
+      }
+      
+      // Remove any remaining camelCase fields related to tasks
+      const taskCamelCaseFields = ['petId', 'scheduleInfo', 'reminderSettings', 'completionDetails'];
+      taskCamelCaseFields.forEach(field => {
+        if (field in entity) {
+          delete entity[field];
+          console.log(`Removed camelCase field '${field}' from tasks entity`);
+        }
+      });
+    }
+        
+    // Add sanitization for other tables as needed
+    // if (this.tableName === 'other_table') { ... }
+  }
+  
+  /**
+   * Deep convert camelCase keys to snake_case with special handling for arrays
+   */
+  private deepCamelToSnake(obj: any): any {
+    if (obj === null || typeof obj !== 'object' || obj instanceof Date) {
+      return obj;
+    }
+    
+    if (Array.isArray(obj)) {
+      const processedArray = obj.map(item => this.deepCamelToSnake(item));
+      
+      // Special handling for known array fields that need to be formatted for PostgreSQL
+      // Note: We'll still do final formatting in sanitizeFieldsForSupabase, but this helps with type detection
+      if (this.tableName === 'pets' && (
+          obj === (obj as any).medical_conditions || 
+          obj === (obj as any).allergies ||
+          obj === (obj as any).medicalConditions || 
+          obj === (obj as any).allergies)
+      ) {
+        console.log(`Pre-processing array field for Supabase compatibility in deepCamelToSnake`);
+      }
+      
+      return processedArray;
+    }
+    
+    const result: Record<string, any> = {};
+    
+    Object.keys(obj).forEach(key => {
+      const snakeKey = camelToSnake(key);
+      const value = obj[key];
+      
+      // Special handling for task-specific fields
+      if (this.tableName === 'tasks') {
+        // Critical fields that need to be properly converted
+        if (key === 'petId') {
+          result['pet_id'] = value;
+          console.log(`Converting critical field petId → pet_id in tasks`);
+        }
+        else if (key === 'scheduleInfo') {
+          result['schedule_info'] = this.deepCamelToSnake(value);
+          console.log(`Converting nested field scheduleInfo → schedule_info in tasks`);
+        }
+        else if (key === 'reminderSettings') {
+          result['reminder_settings'] = this.deepCamelToSnake(value);
+          console.log(`Converting nested field reminderSettings → reminder_settings in tasks`);
+        }
+        else {
+          result[snakeKey] = this.deepCamelToSnake(value);
+        }
+      }
+      // Special handling for arrays in pet fields that need PostgreSQL formatting
+      else if (this.tableName === 'pets' && 
+              (key === 'medicalConditions' || key === 'allergies') && 
+              Array.isArray(value)) {
+        // Mark that we found these arrays for later processing
+        console.log(`Found array field ${key} in pet object during conversion`);
+        result[snakeKey] = this.deepCamelToSnake(value);
+      } 
+      else {
+        result[snakeKey] = this.deepCamelToSnake(value);
+      }
+    });
+    
+    return result;
+  }
+  
+  /**
+   * Convert Date objects to ISO strings in both original and snake_case objects
+   */
+  private convertDatesToISOStrings(original: any, converted: any, prefix: string = ''): void {
+    if (original === null || typeof original !== 'object' || !converted) {
+      return;
+    }
+    
+    if (original instanceof Date) {
+      // If it's directly a Date, convert the corresponding path in the converted object
+      const path = prefix.length > 0 ? prefix.substring(1) : ''; // Remove leading dot
+      if (path) {
+        let target = converted;
+        const parts = path.split('.');
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!target[parts[i]]) {
+            // If any part of the path doesn't exist, create it
+            target[parts[i]] = {};
+          }
+          target = target[parts[i]];
+        }
+        const lastPart = parts[parts.length - 1];
+        target[lastPart] = formatDateForSupabase(original);
+      }
+      return;
+    }
+    
+    if (Array.isArray(original)) {
+      if (!Array.isArray(converted)) {
+        // If converted isn't an array (but original is), make it an array
+        converted = [];
+      }
+      for (let i = 0; i < original.length; i++) {
+        if (!converted[i]) {
+          converted[i] = {};
+        }
+        this.convertDatesToISOStrings(original[i], converted[i], `${prefix}.${i}`);
+      }
+      return;
+    }
+    
+    // Process object properties
+    Object.keys(original).forEach(key => {
+      const value = original[key];
+      const snakeKey = camelToSnake(key);
+      
+      // Special handling for task-specific fields
+      if (this.tableName === 'tasks') {
+        // Ensure nested objects exist for schedule_info and reminder_settings
+        if ((key === 'scheduleInfo' || key === 'schedule_info') && typeof value === 'object') {
+          if (!converted[snakeKey]) converted[snakeKey] = {};
+        }
+        if ((key === 'reminderSettings' || key === 'reminder_settings') && typeof value === 'object') {
+          if (!converted[snakeKey]) converted[snakeKey] = {};
+        }
+      }
+      
+      if (value instanceof Date) {
+        converted[snakeKey] = formatDateForSupabase(value);
+      } else if (typeof value === 'object' && value !== null) {
+        if (!converted[snakeKey]) {
+          converted[snakeKey] = Array.isArray(value) ? [] : {};
+        }
+        this.convertDatesToISOStrings(value, converted[snakeKey], `${prefix}.${key}`);
+      }
+    });
   }
 
   /**
@@ -299,6 +669,13 @@ export class DataManager<T extends BaseEntity> {
         try {
           const supabaseEntity = this.toSupabaseFormat(fullEntity);
           
+          console.log(`DataManager: Creating entity in ${this.tableName}:`, 
+            JSON.stringify({
+              entityKeys: Object.keys(supabaseEntity),
+              nestedKeys: supabaseEntity.schedule_info ? Object.keys(supabaseEntity.schedule_info) : 'N/A'
+            }, null, 2)
+          );
+          
           const { data, error } = await supabase
             .from(this.tableName)
             .insert([supabaseEntity])
@@ -307,6 +684,8 @@ export class DataManager<T extends BaseEntity> {
           
           if (error) {
             console.error(`Error creating ${this.tableName} in Supabase:`, error);
+            console.error(`Error details - code: ${error.code}, message: ${error.message}`);
+            console.error(`Entity being created:`, JSON.stringify(supabaseEntity, null, 2));
           } else if (data) {
             // Update local entity with any server-generated fields
             const updatedEntity = this.fromSupabaseFormat(data);
@@ -334,72 +713,82 @@ export class DataManager<T extends BaseEntity> {
    */
   async update(id: string, update: Partial<T>): Promise<T | null> {
     try {
-      // Get current entities
-      const entities = await AsyncStorageService.getItem<T[]>(this.storageKey) || [];
-      const entityIndex = entities.findIndex(entity => entity.id === id);
+      // Get the current data
+      const currentData = await AsyncStorageService.getItem<T[]>(this.storageKey) || [];
       
-      if (entityIndex === -1) {
+      // Find the entity by ID
+      const index = currentData.findIndex(e => e.id === id);
+      
+      // If not found, return null
+      if (index === -1) {
         return null;
       }
       
-      // Update entity
-      const updatedEntity = { ...entities[entityIndex], ...update } as T;
+      // Get the current entity
+      const currentEntity = currentData[index];
       
-      // Validate updated entity
-      this.validateEntity(updatedEntity);
+      // Merge the update with the current entity
+      const updatedEntity = { ...currentEntity, ...update };
       
-      // Update local storage
-      entities[entityIndex] = updatedEntity;
-      await AsyncStorageService.setItem(this.storageKey, entities);
+      // Validate the updated entity
+      try {
+        this.validateEntity(updatedEntity as T);
+      } catch (validationError) {
+        console.error(`Validation error updating ${this.tableName}:`, validationError);
+        throw validationError;
+      }
       
-      // If sync is enabled, update in Supabase
-      if (this.syncEnabled) {
+      // Update the entity in the local data
+      currentData[index] = updatedEntity as T;
+      
+      // Save the updated data to AsyncStorage
+      await AsyncStorageService.setItem(this.storageKey, currentData);
+      
+      // If sync is enabled and the table exists, update in Supabase
+      if (this.syncEnabled && await this.tableExists()) {
         try {
-          const supabaseEntity = this.toSupabaseFormat(updatedEntity);
+          // Convert to Supabase format
+          const supabaseEntity = this.toSupabaseFormat(updatedEntity as T);
           
-          const { data, error } = await supabase
+          // Update in Supabase
+          const { error } = await supabase
             .from(this.tableName)
             .update(supabaseEntity)
-            .eq('id', id)
-            .select()
-            .single();
+            .eq('id', id);
           
           if (error) {
+            // Enhanced error reporting with more details
             console.error(`Error updating ${this.tableName} in Supabase:`, error);
             
-            // Try insert if update fails (might not exist in Supabase yet)
-            if (error.code === 'PGRST116') {
-              const { data: insertData, error: insertError } = await supabase
-                .from(this.tableName)
-                .insert([supabaseEntity])
-                .select()
-                .single();
+            // Detailed error logging with the specific field causing the problem
+            if (error.code === 'PGRST204' && error.message?.includes('column')) {
+              // Extract column name from error message
+              const match = error.message.match(/Could not find the '(.+?)' column/);
+              const columnName = match ? match[1] : 'unknown column';
               
-              if (insertError) {
-                console.error(`Error inserting ${this.tableName} in Supabase:`, insertError);
-              } else if (insertData) {
-                // Update local entity with any server-generated fields
-                const serverEntity = this.fromSupabaseFormat(insertData);
-                entities[entityIndex] = { ...updatedEntity, ...serverEntity };
-                await AsyncStorageService.setItem(this.storageKey, entities);
-                return entities[entityIndex];
-              }
+              console.error(`[SCHEMA MISMATCH] Supabase schema doesn't have the '${columnName}' column in the '${this.tableName}' table`);
+              console.log(`Data keys that were sent: ${Object.keys(supabaseEntity).join(', ')}`);
+              
+              // Log this as a critical error that needs schema update
+              console.error(`[CRITICAL] Schema mismatch detected in Supabase. The ${this.tableName} table needs to be updated to include the '${columnName}' column.`);
+            } else {
+              // Standard error logging for other types of errors
+              console.log(`[ERROR TRACKING] REGULAR: Error updating ${this.tableName} in Supabase:`);
+              console.error(`Error updating ${this.tableName} in Supabase:`, error);
             }
-          } else if (data) {
-            // Update local entity with any server-generated fields
-            const serverEntity = this.fromSupabaseFormat(data);
-            entities[entityIndex] = { ...updatedEntity, ...serverEntity };
-            await AsyncStorageService.setItem(this.storageKey, entities);
-            return entities[entityIndex];
           }
         } catch (supabaseError) {
-          console.error(`Error syncing updated ${this.tableName} to Supabase:`, supabaseError);
+          // Handle specific Supabase errors here
+          console.error(`Exception during Supabase update for ${this.tableName}:`, supabaseError);
+          
+          // Continue since we've already updated the local storage successfully
+          // This ensures our app works offline or when there are Supabase issues
         }
       }
       
-      return updatedEntity;
+      return updatedEntity as T;
     } catch (error) {
-      console.error(`Error in update for ${this.storageKey}:`, error);
+      console.error(`Error in update operation for ${this.tableName}:`, error);
       throw error;
     }
   }
@@ -643,6 +1032,47 @@ export class DataManager<T extends BaseEntity> {
     } catch (error) {
       console.error(`Error updating local storage for ${this.storageKey}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Format an array for Supabase/PostgreSQL compatibility
+   * @param arr The array to format
+   * @returns A string in PostgreSQL array format
+   */
+  private formatSupabaseArray(arr: any[]): string {
+    if (!arr || !Array.isArray(arr)) {
+      return '{}';
+    }
+    
+    if (arr.length === 0) {
+      return '{}';
+    }
+    
+    try {
+      const formattedItems = arr.map(item => {
+        if (item === null || item === undefined) {
+          return 'NULL';
+        }
+        
+        if (typeof item === 'string') {
+          // Escape quotes and special characters for PostgreSQL
+          return `"${item.replace(/"/g, '\\"')}"`;
+        }
+        
+        if (typeof item === 'object') {
+          // For objects, convert to JSON string and escape
+          return `"${JSON.stringify(item).replace(/"/g, '\\"')}"`;
+        }
+        
+        // For numbers, booleans, etc.
+        return item.toString();
+      });
+      
+      return `{${formattedItems.join(',')}}`;
+    } catch (error) {
+      console.error('Error formatting array for Supabase:', error);
+      return '{}';
     }
   }
 } 

@@ -11,6 +11,9 @@ import { initializeDeepLinks } from '../utils/deepLinks';
 import { supabase } from '../services/supabase';
 import {unifiedDatabaseManager} from "../services/db";
 import type { ComponentType } from 'react';
+import StorageDiagnostic from '../pages/debug/StorageDiagnostic';
+import DebugMenu from '../pages/debug/DebugMenu';
+import { isImagePickerActive } from '../utils/imageUpload';
 
 // Create a type specifically for the App root navigator
 type AppRootStackParamList = {
@@ -28,11 +31,18 @@ const NavigationContent = () => {
   const [needsFirstPet, setNeedsFirstPet] = useState(false);
   const [checkingPets, setCheckingPets] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0); // Add a refresh key to force re-render
+  const [lastRoute, setLastRoute] = useState<string | null>(null);
   
   // Check if user has any pets
   const checkUserPets = useCallback(async () => {
     if (!user) {
       setCheckingPets(false);
+      return;
+    }
+    
+    // Prevent pet check if image picker is active to avoid navigation issues
+    if (isImagePickerActive) {
+      console.log('[AppNavigator] Image picker active, skipping pet check');
       return;
     }
     
@@ -53,16 +63,24 @@ const NavigationContent = () => {
   
   // Run the pet check when user changes or refresh key changes
   useEffect(() => {
+    if (!isImagePickerActive) {
     checkUserPets();
-  }, [checkUserPets, refreshKey]);
+    }
+  }, [checkUserPets, refreshKey, isImagePickerActive]);
 
   // Listen for app state changes to re-check pets when app comes to foreground
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        // Force re-check when app comes to foreground
-        console.log('[AppNavigator] App became active, re-checking pets');
+        // Force re-check when app comes to foreground, but only if image picker isn't active
+        console.log('[AppNavigator] App became active, checking if re-check is needed');
+        
+        if (isImagePickerActive) {
+          console.log('[AppNavigator] Image picker active, skipping re-check');
+        } else {
+          console.log('[AppNavigator] Re-checking pets');
         setRefreshKey(prev => prev + 1);
+        }
       }
     };
 
@@ -72,6 +90,32 @@ const NavigationContent = () => {
       subscription.remove();
     };
   }, []);
+
+  // Track changes in navigation state
+  const handleNavigationStateChange = useCallback((state: any) => {
+    if (!state) return;
+    
+    try {
+      const currentRouteName = state.routes[state.index]?.name;
+      
+      if (currentRouteName && lastRoute !== currentRouteName) {
+        console.log(`[AppNavigator] Navigation changed: ${lastRoute || 'none'} -> ${currentRouteName}`);
+        
+        // If image picker is active, prevent certain navigation changes
+        if (isImagePickerActive && 
+            (currentRouteName === 'MainStack' || currentRouteName === 'AuthStack')) {
+          console.log('[AppNavigator] Preventing navigation during active image picker');
+          
+          // Don't update lastRoute to allow navigation back to correct screen
+          return;
+        }
+        
+        setLastRoute(currentRouteName);
+      }
+    } catch (error) {
+      console.error('[AppNavigator] Error handling navigation state change:', error);
+    }
+  }, [lastRoute]);
 
   useEffect(() => {
     if (navigationRef.current) {
@@ -90,7 +134,10 @@ const NavigationContent = () => {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer 
+      ref={navigationRef}
+      onStateChange={handleNavigationStateChange}
+    >
       <ThemedStatusBar />
       <RootStack.Navigator 
         screenOptions={{ 
@@ -108,9 +155,14 @@ const NavigationContent = () => {
                 focus: () => {
                   // When AddFirstPet screen comes into focus, re-check for pets
                   // This handles the case where a pet was just added
+                  // But only if image picker isn't active
+                  if (!isImagePickerActive) {
                   console.log('[AppNavigator] AddFirstPet focused, scheduling re-check');
                   // Add a slight delay to ensure the DB operation has completed
                   setTimeout(() => setRefreshKey(prev => prev + 1), 1000);
+                  } else {
+                    console.log('[AppNavigator] Ignoring focus event during image picker');
+                  }
                 }
               }}
             />
@@ -131,3 +183,33 @@ const AppNavigator = () => {
 };
 
 export default AppNavigator;
+
+// Separate navigator type for the debug stack
+type DebugStackParamList = {
+  DebugMenu: undefined;
+  StorageDiagnostic: undefined;
+};
+
+const DebugStack = createNativeStackNavigator<DebugStackParamList>();
+
+export const DebugStackNavigator = () => {
+  return (
+    <DebugStack.Navigator
+      screenOptions={{
+        headerShown: true,
+      }}
+    >
+      <DebugStack.Screen 
+        name="DebugMenu" 
+        component={DebugMenu} 
+        options={{ title: 'Debug Menu' }} 
+      />
+      <DebugStack.Screen 
+        name="StorageDiagnostic" 
+        component={StorageDiagnostic} 
+        options={{ title: 'Storage Diagnostic' }} 
+      />
+      {/* Other debug screens */}
+    </DebugStack.Navigator>
+  );
+};

@@ -13,6 +13,7 @@ import { createDemoUserIfNeeded } from './utils/demoUsers';
 import { setupErrorHandling } from './utils/errorHandler';
 import { unifiedDatabaseManager } from "./services/db";
 import { notificationService } from './services/notifications';
+import { initializeStorage } from './utils/setupStorage';
 
 // Initialize memory leak detection in development mode
 if (__DEV__) {
@@ -46,6 +47,9 @@ if (Platform.OS === 'android') {
 let appInitialized = false;
 let initializationTimer: NodeJS.Timeout | null = null;
 
+// Flag to track initialization status
+let isInitializationComplete = false;
+
 /**
  * Helper function to create a timeout promise
  * @param ms Timeout in milliseconds
@@ -59,16 +63,23 @@ const timeout = (ms: number) => new Promise((_, reject) =>
  * This prevents the app from getting stuck during initialization
  */
 function forceInitializationComplete() {
-  if (!appInitialized) {
-    console.warn('App initialization taking too long, forcing completion');
-    appInitialized = true;
-    
-    // Clear the timer to prevent multiple calls
-    if (initializationTimer) {
-      clearTimeout(initializationTimer);
-      initializationTimer = null;
-    }
-  }
+  console.log('[App.init] Forcing initialization complete flag');
+  isInitializationComplete = true;
+}
+
+/**
+ * Check if initialization is complete
+ */
+export function checkInitializationComplete() {
+  return isInitializationComplete;
+}
+
+/**
+ * Mark initialization as complete
+ */
+export function markInitializationComplete() {
+  console.log('[App.init] Marking initialization complete');
+  isInitializationComplete = true;
 }
 
 /**
@@ -196,3 +207,31 @@ export function handleAuthError(error: any): void {
 
 // Log the initialization
 console.log('PetCareTracker app initialized with all patches applied'); 
+
+/**
+ * Initialize storage buckets and other essentials
+ */
+async function initializeAppEssentials() {
+  try {
+    console.log('[App.init] Starting essential app initialization');
+    
+    // Initialize storage buckets for pet images
+    await initializeStorage();
+
+    console.log('[App.init] Essential initialization complete');
+  } catch (error) {
+    console.error('[App.init] Error during essential initialization:', error);
+    // Continue despite errors - the app should still work with degraded functionality
+  }
+}
+
+// Start storage initialization in the background
+// Don't await it - let it happen in parallel with app startup
+initializeAppEssentials().then(() => {
+  console.log('[App.init] Background initialization complete');
+}).catch(error => {
+  console.error('[App.init] Background initialization failed:', error);
+});
+
+// Apply other app-wide patches and configurations here
+console.log(`[App.init] Running on ${Platform.OS} (${Platform.Version})`); 

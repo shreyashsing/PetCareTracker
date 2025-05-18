@@ -31,6 +31,8 @@ import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAuth } from '../providers/AuthProvider';
+import { uploadImageToSupabase, setImagePickerActive, deleteImageFromSupabase, updatePetImage } from '../utils/imageUpload';
+import { supabase } from '../services/supabase';
 
 const { width } = Dimensions.get('window');
 
@@ -269,20 +271,28 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Image selected and cropped successfully, updating form state');
+        // Safely update the image state
         handleChange('image', result.assets[0].uri);
+      } else {
+        console.log('Image selection was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error picking image:', error);
       Alert.alert('Error', 'Failed to pick image');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   
@@ -301,20 +311,28 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
     
     try {
       setImageLoading(true);
+      setImagePickerActive(true);
+      
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
+      // Check if user canceled or result is invalid
+      if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
+        console.log('Photo taken and cropped successfully, updating form state');
+        // Safely update the image state
         handleChange('image', result.assets[0].uri);
+      } else {
+        console.log('Photo capture was canceled or returned invalid result');
       }
     } catch (error) {
       console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo');
     } finally {
       setImageLoading(false);
+      setImagePickerActive(false);
     }
   };
   
@@ -352,6 +370,20 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
         throw new Error("Pet not found");
       }
       
+      // If there's a new image, upload it to Supabase storage
+      let imageUrl = currentPet.image;
+      
+      if (formState.image && formState.image !== currentPet.image) {
+        try {
+          imageUrl = await updatePetImage(currentPet.image, formState.image);
+          console.log('Final image URL being saved to pet record:', imageUrl);
+        } catch (imageError) {
+          console.error('Error updating image:', imageError);
+          // Continue with the local URI if upload fails
+          imageUrl = formState.image;
+        }
+      }
+      
       // Update the pet object with new values from the form
       const updatedPet: Pet = {
         ...currentPet,
@@ -367,7 +399,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
         neutered: formState.neutered,
         adoptionDate: formState.adoptionDate,
         color: formState.color || '',
-        image: formState.image || currentPet.image,
+        image: imageUrl,
         medicalConditions: formState.medicalConditions.split(',').map(item => item.trim()).filter(Boolean),
         allergies: formState.allergies.split(',').map(item => item.trim()).filter(Boolean),
         veterinarian: {
@@ -384,7 +416,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       await unifiedDatabaseManager.pets.update(petId, updatedPet);
       console.log(`Pet ${updatedPet.name} updated successfully`);
       
-      // Navigate back and show success message
+      // Navigate to Home screen and show success message
       Alert.alert(
         'Success',
         'Pet updated successfully!',
@@ -392,7 +424,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
           {
             text: 'OK',
             onPress: () => {
-              navigation.goBack();
+              navigation.navigate('Home');
             }
           }
         ]
@@ -406,7 +438,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
   };
   
   const handleGoBack = () => {
-    navigation.goBack();
+    navigation.navigate('Home');
   };
   
   if (loadingPet) {

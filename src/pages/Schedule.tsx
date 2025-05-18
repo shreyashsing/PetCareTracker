@@ -14,10 +14,13 @@ import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
 import { notificationService } from '../services/notifications';
+import { supabase } from '../services/supabase';
+import { Task } from '../types/components';
 
 type ScheduleScreenProps = NativeStackScreenProps<RootStackParamList, 'Schedule'>;
 
-type Task = {
+// Local type for simplified version of Task used only in this component
+type LocalTask = {
   id: string;
   time: string;
   title: string;
@@ -44,7 +47,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
   const formattedDate = format(today, 'EEEE, MMMM d, yyyy');
   const [selectedDate, setSelectedDate] = useState(today);
   const [activeTab, setActiveTab] = useState<'today' | 'upcoming'>('today');
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<LocalTask[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -254,8 +257,48 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
       const newStatus = currentStatus ? 'pending' : 'completed';
       console.log(`Setting task status to: ${newStatus}`);
       
+      // Get current user for completion details
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Create a properly typed update object that preserves existing data
+      // Make sure to create new Date objects for the dates to ensure proper validation
+      const updateData: Partial<Task> = { 
+        status: newStatus,
+        // Create a new scheduleInfo object with explicitly created Date objects
+        scheduleInfo: {
+          ...task.scheduleInfo,
+          date: new Date(task.scheduleInfo.date),
+          time: new Date(task.scheduleInfo.time),
+          // If there's an endRecurrence date, recreate it too
+          ...(task.scheduleInfo.endRecurrence ? { endRecurrence: new Date(task.scheduleInfo.endRecurrence) } : {})
+        },
+        // Preserve the reminder settings
+        reminderSettings: { ...task.reminderSettings }
+      };
+      
+      // If task is being completed, add completion details
+      if (newStatus === 'completed') {
+        updateData.completionDetails = {
+          completedAt: new Date(),
+          completedBy: user?.id || 'unknown',
+          notes: ''
+        };
+      } else {
+        // When uncompleting a task, set completionDetails to undefined
+        updateData.completionDetails = undefined;
+      }
+      
+      console.log('Updating task with data:', JSON.stringify({
+        id: taskId,
+        status: updateData.status,
+        scheduleInfo: {
+          date: updateData.scheduleInfo?.date?.toISOString(),
+          time: updateData.scheduleInfo?.time?.toISOString(),
+        }
+      }));
+      
       // Use the standard update method to update the status
-      await unifiedDatabaseManager.tasks.update(taskId, { ...task, status: newStatus });
+      await unifiedDatabaseManager.tasks.update(taskId, updateData);
       
       // If the task was completed, cancel any notifications
       if (newStatus === 'completed') {

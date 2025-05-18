@@ -1,4 +1,5 @@
 import { formatDateForSupabase, parseSupabaseDate } from './dateUtils';
+import { supabase } from '../services/supabase';
 
 /**
  * Utility functions for Supabase data handling 
@@ -135,4 +136,61 @@ export function handleSupabaseError(error: any, context: string): string {
   }
   
   return errorMessage;
+}
+
+/**
+ * Checks Supabase storage configuration and returns information about available buckets
+ * @returns Object containing status of storage and available buckets
+ */
+export async function checkSupabaseStorage(): Promise<{
+  isAvailable: boolean;
+  buckets: string[];
+  defaultBucket: string | null;
+  error?: string;
+}> {
+  try {
+    // Attempt to list buckets
+    const { data: buckets, error } = await supabase.storage.listBuckets();
+    
+    if (error) {
+      console.error('Error checking Supabase storage:', error);
+      return {
+        isAvailable: false,
+        buckets: [],
+        defaultBucket: null,
+        error: error.message
+      };
+    }
+    
+    if (!buckets || buckets.length === 0) {
+      console.log('No storage buckets found in Supabase');
+      return {
+        isAvailable: false,
+        buckets: [],
+        defaultBucket: null,
+        error: 'No storage buckets available'
+      };
+    }
+    
+    // Log all found buckets
+    const bucketNames = buckets.map(bucket => bucket.name);
+    console.log('Available storage buckets:', bucketNames.join(', '));
+    
+    // Default to using the first bucket
+    const defaultBucket = bucketNames[0];
+    
+    return {
+      isAvailable: true,
+      buckets: bucketNames,
+      defaultBucket
+    };
+  } catch (error) {
+    console.error('Exception checking Supabase storage:', error);
+    return {
+      isAvailable: false,
+      buckets: [],
+      defaultBucket: null,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
 } 

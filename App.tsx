@@ -38,6 +38,9 @@ import AppNavigator from './src/navigation/AppNavigator';
 // Import pet synchronization utility - ensure we're importing from the .ts file
 import { syncPetsWithSupabase, loadPetsForUser } from './src/utils/petSync';
 
+// Import storage bucket initialization
+import { ensurePetImagesBucketExists } from './src/utils/imageBucketHelper';
+
 // Disable screens - prevents the "tried to register two views with the same name" error
 enableScreens(false);
 
@@ -140,7 +143,8 @@ const LoadingScreen: React.FC<{
 
 // Main app content component
 const AppContent: React.FC = () => {
-  const { skipAuth } = useAuth();
+  const auth = useAuth();
+  const { skipAuth } = auth;
   const [dbInitialized, setDbInitialized] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -298,14 +302,32 @@ const AppContent: React.FC = () => {
       }
     };
     
+    if (authChecked && !securityInitialized) {
     initializeSecurity();
-  }, []);
+    }
+  }, [authChecked, securityInitialized]);
 
-  // Initialize database
+  // Initialize database and ensure all required tables exist
   useEffect(() => {
     const initializeDatabase = async () => {
       try {
         setInitializationStage("Initializing database...");
+        console.log('App: Initializing database...');
+        
+        // Ensure the pet-images bucket exists for storing pet images
+        try {
+          console.log('App: Ensuring pet-images storage bucket exists');
+          const bucketName = await ensurePetImagesBucketExists();
+          if (bucketName) {
+            console.log(`App: Using storage bucket: ${bucketName}`);
+          } else {
+            console.warn('App: Could not ensure pet-images bucket exists');
+          }
+        } catch (bucketError) {
+          console.error('App: Error initializing pet-images bucket:', bucketError);
+          // Continue anyway, as this is not a critical error
+        }
+
         // Initialize the unified database manager with timeout
         await Promise.race([
           unifiedDatabaseManager.initialize(),
@@ -325,16 +347,18 @@ const AppContent: React.FC = () => {
         } catch (migrationError) {
           console.error('Error running migrations:', migrationError);
         }
-      } catch (error) {
-        console.error('Error initializing database:', error);
+      } catch (dbError) {
+        console.error('Error initializing database:', dbError);
       } finally {
         // Always set dbInitialized to true to prevent getting stuck
         setDbInitialized(true);
       }
     };
     
+    if (authChecked && !dbInitialized) {
     initializeDatabase();
-  }, []);
+    }
+  }, [authChecked, securityInitialized, dbInitialized, currentUser]);
 
   // Initialize notifications
   useEffect(() => {

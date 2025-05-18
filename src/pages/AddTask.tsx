@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
+import { supabase } from '../services/supabase'; // Only for auth
 
 type AddTaskScreenProps = NativeStackScreenProps<RootStackParamList, 'AddTask'>;
 
@@ -205,28 +206,26 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
       const dueDate = new Date(formState.dueDate);
       const dueTime = new Date(formState.dueTime);
       
-      // Create a consistent date format
-      const combinedDateTime = new Date(
-        dueDate.getFullYear(),
-        dueDate.getMonth(),
-        dueDate.getDate(),
-        dueTime.getHours(),
-        dueTime.getMinutes(),
-        0,
-        0
-      );
+      // Get current user ID from Supabase
+      const { data: { user } } = await supabase.auth.getUser();
+      const userId = user?.id;
       
-      // Create a task object to save - make sure it matches the Task interface
+      if (!userId) {
+        throw new Error('User not authenticated');
+      }
+      
+      // First create a task object that matches the Task interface for TypeScript
       const taskData = {
         id: isEditMode ? taskId as string : generateUUID(),
         petId: activePetId as string,
+        userId: userId, // Add the user ID to connect the task to the user
         title: formState.title,
         description: formState.description,
         category: formState.category,
         priority: formState.priority,
         scheduleInfo: {
-          date: dueDate,
-          time: dueTime,
+          date: dueDate, // Use the actual Date object
+          time: dueTime, // Use the actual Date object
           recurringPattern: formState.recurrence === 'once' ? undefined : formState.recurrence
         },
         reminderSettings: {
@@ -238,50 +237,71 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         location: {
           name: 'Home'
         },
-        assignedTo: [],
         completionDetails: formState.isCompleted ? {
-          completedAt: new Date(),
+          completedAt: new Date(), // Use the actual Date object
           completedBy: 'User',
           notes: ''
         } : undefined
       };
       
-      console.log('Saving task data:', JSON.stringify(taskData, null, 2));
-
-      if (isEditMode) {
-        // Update existing task
-        await unifiedDatabaseManager.tasks.update(taskId as string, taskData);
-        
-        // Schedule notifications if reminders are enabled and task is not completed
-        if (formState.reminderEnabled && !formState.isCompleted) {
-          await notificationService.scheduleTaskNotifications(taskData);
-        } else {
-          // Cancel any notifications for this task if reminders are disabled or task is completed
-          await notificationService.cancelTaskNotifications(taskData.id);
-        }
-        
-        Alert.alert('Success', 'Task updated successfully!');
-      } else {
-        // Create new task
-        await unifiedDatabaseManager.tasks.create(taskData);
-        
-        // Schedule notifications if reminders are enabled and task is not completed
-        if (formState.reminderEnabled && !formState.isCompleted) {
-          await notificationService.scheduleTaskNotifications(taskData);
-          console.log('Notifications scheduled for task:', taskData.id);
-        }
-        
-        Alert.alert('Success', 'Task created successfully!');
-      }
+      // Log data about what we're trying to save
+      console.log('About to save task to Supabase:', JSON.stringify(taskData, null, 2));
       
-      // Instead of navigating directly to Schedule, go back to previous screen
-      navigation.goBack();
+      try {
+        if (isEditMode) {
+          // Update existing task using TypeScript-friendly version
+          await unifiedDatabaseManager.tasks.update(taskId as string, taskData);
+          
+          // Schedule notifications if reminders are enabled and task is not completed
+          if (formState.reminderEnabled && !formState.isCompleted) {
+            await notificationService.scheduleTaskNotifications(taskData);
+          } else {
+            // Cancel any notifications for this task if reminders are disabled or task is completed
+            await notificationService.cancelTaskNotifications(taskData.id);
+          }
+          
+          Alert.alert('Success', 'Task updated successfully!');
+        } else {
+          // Create new task using TypeScript-friendly version
+          // The DataManager will handle both local storage and Supabase operations
+          await unifiedDatabaseManager.tasks.create(taskData);
+          
+          // Schedule notifications if reminders are enabled and task is not completed
+          if (formState.reminderEnabled && !formState.isCompleted) {
+            await notificationService.scheduleTaskNotifications(taskData);
+            console.log('Notifications scheduled for task:', taskData.id);
+          }
+          
+          Alert.alert('Success', 'Task created successfully!');
+        }
+        
+        // Instead of navigating directly to Schedule, go back to previous screen
+        navigation.goBack();
+      } catch (error) {
+        console.error('Error saving task:', error);
+        if (error instanceof Error) {
+          console.error('Error message:', error.message);
+          console.error('Error stack:', error.stack);
+        }
+        if (typeof error === 'object' && error !== null) {
+          console.error('Error details:', JSON.stringify(error, null, 2));
+        }
+        // Handle error (show alert, etc.)
+        Alert.alert('Error', `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      } finally {
+        setIsLoading(false);
+      }
     } catch (error) {
       console.error('Error saving task:', error);
+      if (error instanceof Error) {
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+      if (typeof error === 'object' && error !== null) {
+        console.error('Error details:', JSON.stringify(error, null, 2));
+      }
       // Handle error (show alert, etc.)
       Alert.alert('Error', `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsLoading(false);
     }
   };
 

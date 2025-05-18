@@ -83,6 +83,8 @@ export type RootStackParamList = {
   OnboardingFeatures: undefined;
   AddFirstPet: undefined;
   PetProfile: { petId: string };
+  StorageDiagnostic: undefined;
+  DebugMenu: undefined;
 };
 
 // Export a custom navigation type for use in components

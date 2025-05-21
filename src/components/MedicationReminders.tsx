@@ -44,7 +44,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
       
       // Filter to only active medications with reminders enabled
       const activeMedications = medications.filter(
-        med => med.status === 'active' && med.reminderSettings.enabled
+        med => med.status === 'active' && med.reminderSettings && med.reminderSettings.enabled
       );
       
       // Get pet names for medications

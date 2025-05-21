@@ -19,6 +19,23 @@ import { FoodItem } from '../types/components';
 import {unifiedDatabaseManager} from "../services/db";
 import { notificationService } from '../services/notifications';
 
+// Unit conversion constants
+const UNIT_CONVERSIONS = {
+  // Weight conversions
+  'kg_to_g': 1000,
+  'g_to_kg': 0.001,
+  'lb_to_oz': 16,
+  'oz_to_lb': 0.0625,
+  'lb_to_kg': 0.453592,
+  'kg_to_lb': 2.20462,
+  'g_to_oz': 0.035274,
+  'oz_to_g': 28.3495,
+  // Volume approximations (rough estimates)
+  'cups_to_oz': 8,
+  'oz_to_cups': 0.125,
+  // Others kept as 1:1 since they're different units (like packages or cans)
+};
+
 // Helper function to generate a UUID
 const generateUUID = (): string => {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c: string): string => {
@@ -69,6 +86,40 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   
+  // Convert quantity when changing between units
+  const convertQuantity = (value: number, fromUnit: string, toUnit: string): number => {
+    if (fromUnit === toUnit) return value;
+    
+    const conversionKey = `${fromUnit}_to_${toUnit}`;
+    const conversionRate = UNIT_CONVERSIONS[conversionKey as keyof typeof UNIT_CONVERSIONS];
+    
+    if (conversionRate) {
+      const converted = value * conversionRate;
+      console.log(`Converting ${value} ${fromUnit} to ${toUnit}: ${converted}`);
+      return converted;
+    }
+    
+    // If direct conversion not found, try to convert through a common unit (kg)
+    if (fromUnit !== 'kg' && toUnit !== 'kg') {
+      const toKgKey = `${fromUnit}_to_kg`;
+      const fromKgKey = `kg_to_${toUnit}`;
+      
+      const toKgRate = UNIT_CONVERSIONS[toKgKey as keyof typeof UNIT_CONVERSIONS];
+      const fromKgRate = UNIT_CONVERSIONS[fromKgKey as keyof typeof UNIT_CONVERSIONS];
+      
+      if (toKgRate && fromKgRate) {
+        const toKg = value * toKgRate;
+        const converted = toKg * fromKgRate;
+        console.log(`Converting ${value} ${fromUnit} to ${toUnit} via kg: ${converted}`);
+        return converted;
+      }
+    }
+    
+    // If no conversion available, return the original value
+    console.log(`No conversion available from ${fromUnit} to ${toUnit}. Keeping value as is.`);
+    return value;
+  };
+  
   // Use useMemo for static arrays to prevent recreating them on each render
   const foodCategoryOptions = useMemo(() => [
     { label: 'Dry Food', value: 'dry' },
@@ -101,18 +152,26 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
           const item = await unifiedDatabaseManager.foodItems.getById(route.params.itemId);
           
           if (item) {
+            // Handle both nested structure and flattened structure from database
+            const currentAmount = item.inventory?.currentAmount ?? item.current_amount ?? 0;
+            const dailyAmount = item.inventory?.dailyFeedingAmount ?? item.daily_feeding_amount ?? 0;
+            const unit = item.inventory?.unit ?? item.unit ?? 'kg';
+            const dailyUnit = item.inventory?.dailyFeedingUnit ?? item.daily_feeding_unit ?? 'g';
+            const purchaseDate = new Date(item.purchaseDetails?.date ?? item.purchase_date ?? new Date());
+            const expiryDate = item.purchaseDetails?.expiryDate ?? item.expiry_date;
+            
             setFormState({
               name: item.name,
               brand: item.brand,
               category: item.category as FoodCategory,
-              quantity: item.inventory.currentAmount.toString(),
-              unit: item.inventory.unit,
-              dailyFeedingQuantity: item.inventory.dailyFeedingAmount.toString(),
-              dailyFeedingUnit: item.inventory.dailyFeedingUnit,
-              purchaseDate: new Date(item.purchaseDetails.date),
-              expiryDate: item.purchaseDetails.expiryDate ? new Date(item.purchaseDetails.expiryDate) : undefined,
-              notes: item.specialNotes || '',
-              isPreferred: item.petPreference === 'favorite',
+              quantity: currentAmount.toString(),
+              unit: unit,
+              dailyFeedingQuantity: dailyAmount.toString(),
+              dailyFeedingUnit: dailyUnit,
+              purchaseDate: purchaseDate,
+              expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+              notes: item.specialNotes || item.special_notes || '',
+              isPreferred: item.is_preferred === true,
             });
           }
         } catch (error) {
@@ -128,10 +187,41 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   
   // Use useCallback for event handlers to prevent recreating them on each render
   const handleChange = useCallback((name: keyof FormState, value: string | Date | boolean) => {
-    setFormState(prev => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormState(prev => {
+      // Special handling for unit changes
+      if (name === 'unit' && typeof value === 'string' && value !== prev.unit) {
+        // Convert quantity when changing units
+        const numericQuantity = parseFloat(prev.quantity);
+        if (!isNaN(numericQuantity)) {
+          const convertedQuantity = convertQuantity(numericQuantity, prev.unit, value);
+          return {
+            ...prev,
+            [name]: value,
+            quantity: convertedQuantity.toFixed(2).replace(/\.00$/, '')
+          };
+        }
+      }
+      
+      // Special handling for dailyFeedingUnit changes
+      if (name === 'dailyFeedingUnit' && typeof value === 'string' && value !== prev.dailyFeedingUnit) {
+        // Convert daily feeding quantity when changing units
+        const numericQuantity = parseFloat(prev.dailyFeedingQuantity);
+        if (!isNaN(numericQuantity)) {
+          const convertedQuantity = convertQuantity(numericQuantity, prev.dailyFeedingUnit, value);
+          return {
+            ...prev,
+            [name]: value,
+            dailyFeedingQuantity: convertedQuantity.toFixed(2).replace(/\.00$/, '')
+          };
+        }
+      }
+      
+      // Default handling for other field changes
+      return {
+        ...prev,
+        [name]: value,
+      };
+    });
     
     setTouched(prev => ({
       ...prev,
@@ -174,6 +264,27 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       newErrors.dailyFeedingQuantity = 'Daily feeding quantity must be greater than 0';
     }
     
+    // Check if the daily feeding amount is reasonable compared to the total
+    if (!isNaN(parseFloat(formState.quantity)) && !isNaN(parseFloat(formState.dailyFeedingQuantity))) {
+      const totalQuantity = parseFloat(formState.quantity);
+      const dailyQuantity = parseFloat(formState.dailyFeedingQuantity);
+      
+      let daysRemainingEstimate = 0;
+      if (formState.unit === formState.dailyFeedingUnit) {
+        daysRemainingEstimate = totalQuantity / dailyQuantity;
+      } else {
+        const totalInDailyUnit = convertQuantity(totalQuantity, formState.unit, formState.dailyFeedingUnit);
+        daysRemainingEstimate = totalInDailyUnit / dailyQuantity;
+      }
+      
+      // If conversion resulted in a very small number, warn the user
+      if (daysRemainingEstimate < 1) {
+        newErrors.dailyFeedingQuantity = `Daily amount too large. Would only last ${daysRemainingEstimate.toFixed(2)} days.`;
+      } else if (daysRemainingEstimate > 1000) {
+        newErrors.dailyFeedingQuantity = `Daily amount too small compared to total. Would last ${Math.floor(daysRemainingEstimate)} days.`;
+      }
+    }
+    
     if (formState.expiryDate && formState.purchaseDate > formState.expiryDate) {
       newErrors.expiryDate = 'Expiry date must be after purchase date';
     }
@@ -200,14 +311,35 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
       const totalQuantity = parseFloat(formState.quantity);
       const dailyQuantity = parseFloat(formState.dailyFeedingQuantity);
       
-      // Calculate days remaining
-      const daysRemaining = totalQuantity / dailyQuantity;
+      // Calculate days remaining, converting to common unit if necessary
+      let daysRemaining = 0;
+      if (dailyQuantity > 0) {
+        if (formState.unit === formState.dailyFeedingUnit) {
+          // Same units, simple division
+          daysRemaining = Math.floor(totalQuantity / dailyQuantity);
+        } else {
+          // Different units, need conversion
+          const totalInDailyUnit = convertQuantity(totalQuantity, formState.unit, formState.dailyFeedingUnit);
+          daysRemaining = Math.floor(totalInDailyUnit / dailyQuantity);
+          console.log(`Converted ${totalQuantity} ${formState.unit} to ${totalInDailyUnit} ${formState.dailyFeedingUnit} for days calculation`);
+        }
+      }
+      
+      console.log(`Days remaining calculation: ${totalQuantity} ${formState.unit} / ${dailyQuantity} ${formState.dailyFeedingUnit} = ${daysRemaining} days`);
       
       // Calculate low stock threshold
       const lowStockThreshold = Math.max(7, Math.floor(daysRemaining * 0.2)); // 20% of total days or 7 days, whichever is higher
       
       // Check if item will be low stock at creation time
       const isLowStock = Math.floor(daysRemaining) <= lowStockThreshold;
+
+      console.log('Form data for food item:', {
+        totalQuantity,
+        unit: formState.unit,
+        dailyQuantity,
+        dailyUnit: formState.dailyFeedingUnit,
+        daysRemaining
+      });
       
       // Build the food item object
       const foodItemData: Omit<FoodItem, 'id'> = {
@@ -215,43 +347,46 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         name: formState.name,
         brand: formState.brand,
         category: formState.category,
-        nutritionalInfo: {
-          calories: 0, // These should be input by the user
-          protein: 0,
-          fat: 0,
-          fiber: 0,
-          ingredients: [],
-          allergens: []
-        },
+        
+        // Include both nested structure for the app and flattened fields for the database
         inventory: {
           currentAmount: totalQuantity,
           totalAmount: totalQuantity,
           unit: formState.unit as 'g' | 'kg' | 'lb' | 'oz' | 'cups' | 'packages' | 'cans',
           dailyFeedingAmount: dailyQuantity,
           dailyFeedingUnit: formState.dailyFeedingUnit as 'g' | 'kg' | 'lb' | 'oz' | 'cups' | 'packages' | 'cans',
-          daysRemaining: Math.floor(daysRemaining),
+          daysRemaining: daysRemaining,
           lowStockThreshold: lowStockThreshold,
           reorderAlert: isLowStock
         },
+        
+        // IMPORTANT: Include flattened fields for database compatibility
+        // These are the fields that will be directly used by Supabase
+        total_amount: totalQuantity,
+        current_amount: totalQuantity,
+        unit: formState.unit,
+        daily_feeding_amount: dailyQuantity,
+        daily_feeding_unit: formState.dailyFeedingUnit,
+        days_remaining: daysRemaining,
+        low_stock_threshold: lowStockThreshold,
+        reorder_alert: isLowStock,
+        
         purchaseDetails: {
           date: formState.purchaseDate,
           expiryDate: formState.expiryDate,
           price: 0,
           supplier: ''
         },
-        servingSize: {
-          amount: 100,
-          unit: 'g',
-          caloriesPerServing: 0
-        },
-        rating: formState.isPreferred ? 5 : 3,
+        
+        // Flattened date fields
+        purchase_date: formState.purchaseDate,
+        expiry_date: formState.expiryDate,
+        
+        is_preferred: formState.isPreferred,
         petPreference: formState.isPreferred ? 'favorite' : 'neutral',
-        veterinarianApproved: false,
         specialNotes: formState.notes,
-        // UI-specific properties
-        amount: `${totalQuantity} ${formState.unit}`,
+        special_notes: formState.notes,
         lowStock: isLowStock,
-        nextPurchase: 'Not scheduled'
       };
       
       // Use appropriate method based on whether we're creating or updating
@@ -398,6 +533,18 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
             </View>
           </FormRow>
           
+          {/* Show unit equivalent if total and daily units differ */}
+          {formState.unit !== formState.dailyFeedingUnit && 
+           formState.quantity && 
+           !isNaN(parseFloat(formState.quantity)) && (
+            <View style={styles.unitConversionInfo}>
+              <Text style={[styles.unitConversionText, {color: colors.text + '80'}]}>
+                {parseFloat(formState.quantity)} {formState.unit} = 
+                {' '}{convertQuantity(parseFloat(formState.quantity), formState.unit, formState.dailyFeedingUnit).toFixed(2)} {formState.dailyFeedingUnit}
+              </Text>
+            </View>
+          )}
+          
           <FormRow>
             <View style={[styles.formRowItem, { flex: 1 }]}>
               <Input
@@ -424,6 +571,31 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
               />
             </View>
           </FormRow>
+          
+          {/* Days calculation preview */}
+          {formState.quantity && 
+           formState.dailyFeedingQuantity && 
+           !isNaN(parseFloat(formState.quantity)) &&
+           !isNaN(parseFloat(formState.dailyFeedingQuantity)) && (
+            <View style={styles.daysCalculationPreview}>
+              <Text style={[styles.calculationExplanation, {color: colors.text + '80'}]}>
+                {(() => {
+                  const totalQuantity = parseFloat(formState.quantity);
+                  const dailyQuantity = parseFloat(formState.dailyFeedingQuantity);
+                  let days = 0;
+                  
+                  if (formState.unit === formState.dailyFeedingUnit) {
+                    days = totalQuantity / dailyQuantity;
+                  } else {
+                    const totalInDailyUnit = convertQuantity(totalQuantity, formState.unit, formState.dailyFeedingUnit);
+                    days = totalInDailyUnit / dailyQuantity;
+                  }
+                  
+                  return `At ${dailyQuantity} ${formState.dailyFeedingUnit}/day, this food will last approximately ${Math.floor(days)} days`;
+                })()}
+              </Text>
+            </View>
+          )}
           
           <FormRow>
             <View style={[styles.formRowItem, { flex: 1 }]}>
@@ -605,5 +777,29 @@ const styles = StyleSheet.create({
   noSelectionText: {
     fontSize: 16,
     textAlign: 'center',
+  },
+  unitConversionInfo: {
+    marginHorizontal: 8,
+    marginTop: -8,
+    marginBottom: 8,
+    padding: 8,
+    borderRadius: 8,
+  },
+  unitConversionText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+  },
+  daysCalculationPreview: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    marginHorizontal: 8,
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  calculationExplanation: {
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '500',
   },
 }); 

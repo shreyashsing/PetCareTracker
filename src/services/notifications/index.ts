@@ -164,7 +164,7 @@ class NotificationService {
   async scheduleTaskNotifications(task: Task): Promise<void> {
     try {
       // Check if notifications are enabled for this task
-      if (!task.reminderSettings.enabled) {
+      if (!task.reminderSettings || !task.reminderSettings.enabled) {
         return;
       }
       
@@ -340,9 +340,12 @@ class NotificationService {
   async scheduleMedicationNotifications(medication: Medication): Promise<void> {
     try {
       // Check if notifications are enabled for this medication
-      if (!medication.reminderSettings.enabled) {
+      if (!medication.reminderSettings || !medication.reminderSettings.enabled) {
         return;
       }
+      
+      // Set a limit to prevent hitting system notification limits
+      const MAX_NOTIFICATIONS = 100; // Safety limit
       
       // Cancel any existing notifications for this medication
       await this.cancelMedicationNotifications(medication.id);
@@ -363,10 +366,10 @@ class NotificationService {
       // Create an array to store all scheduled notifications
       const scheduledNotifications: ScheduledMedicationNotification[] = [];
       
-      // Calculate how many days to schedule in advance (up to 30 days)
+      // Calculate how many days to schedule in advance (up to 7 days to avoid hitting system limits)
       const now = new Date();
       const maxScheduleDate = new Date();
-      maxScheduleDate.setDate(now.getDate() + 30); // Schedule up to 30 days in advance
+      maxScheduleDate.setDate(now.getDate() + 7); // Schedule up to 7 days in advance to prevent hitting notification limits
       
       // Calculate the end of scheduling period
       const schedulingEndDate = endDate && endDate < maxScheduleDate ? endDate : maxScheduleDate;
@@ -515,8 +518,16 @@ class NotificationService {
         }
       }
       
+      // Check if we're exceeding the notification limit
+      if (scheduledNotifications.length > MAX_NOTIFICATIONS) {
+        console.warn(`Limiting medication notifications to ${MAX_NOTIFICATIONS} (was trying to schedule ${scheduledNotifications.length})`);
+        scheduledNotifications.length = MAX_NOTIFICATIONS;
+      }
+      
       // Save scheduled notifications
       await this.saveScheduledMedicationNotifications(scheduledNotifications);
+      
+      console.log(`Successfully scheduled ${scheduledNotifications.length} notifications for medication ${medication.name}`);
       
     } catch (error) {
       console.error('Error scheduling medication notifications:', error);
@@ -666,7 +677,7 @@ class NotificationService {
   async scheduleMealNotifications(meal: Meal): Promise<void> {
     try {
       // Check if notifications are enabled for this meal
-      if (!meal.reminderSettings.enabled) {
+      if (!meal.reminderSettings || !meal.reminderSettings.enabled) {
         return;
       }
       
@@ -711,13 +722,13 @@ class NotificationService {
       if (scheduledDateTime > new Date()) {
         // Calculate reminder time (X minutes before the meal)
         const reminderDate = new Date(scheduledDateTime);
-        reminderDate.setMinutes(reminderDate.getMinutes() - meal.reminderSettings.reminderTime);
+        reminderDate.setMinutes(reminderDate.getMinutes() - (meal.reminderSettings?.reminderTime || 15));
         
         // Only schedule the reminder if it's in the future
         if (reminderDate > new Date()) {
           const content = {
             ...baseContent,
-            body: `In ${meal.reminderSettings.reminderTime} minutes: ${baseContent.body}`
+            body: `In ${meal.reminderSettings?.reminderTime || 15} minutes: ${baseContent.body}`
           };
           
           const notificationId = await this.scheduleNotification(content, reminderDate);
@@ -830,6 +841,11 @@ class NotificationService {
    */
   async scheduleInventoryAlert(foodItem: FoodItem): Promise<void> {
     try {
+      // Check if inventory exists
+      if (!foodItem.inventory) {
+        return;
+      }
+      
       // Only schedule if the inventory is below threshold
       if (foodItem.inventory.currentAmount > foodItem.inventory.lowStockThreshold) {
         return;
@@ -843,7 +859,7 @@ class NotificationService {
       const petName = pet ? pet.name : 'your pet';
       
       // Calculate days remaining
-      const daysRemaining = foodItem.inventory.daysRemaining;
+      const daysRemaining = foodItem.inventory?.daysRemaining || 0;
       
       // Create notification content
       const content = {

@@ -77,6 +77,7 @@ export interface Task {
 export interface Meal {
   id: string;
   petId: string;
+  userId?: string;
   date: Date;
   time: Date;
   type: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'medication' | 'custom';
@@ -117,7 +118,7 @@ export interface FoodItem {
   name: string;
   brand: string;
   category: 'dry' | 'wet' | 'treats' | 'supplements' | 'prescription' | 'other';
-  nutritionalInfo: {
+  nutritionalInfo?: {
     calories: number;
     protein: number;
     fat: number;
@@ -125,7 +126,7 @@ export interface FoodItem {
     ingredients: string[];
     allergens?: string[];
   };
-  inventory: {
+  inventory?: {
     currentAmount: number;
     totalAmount: number;
     unit: 'g' | 'kg' | 'lb' | 'oz' | 'cups' | 'packages' | 'cans';
@@ -135,25 +136,38 @@ export interface FoodItem {
     lowStockThreshold: number;
     reorderAlert: boolean;
   };
-  purchaseDetails: {
+  purchaseDetails?: {
     date: Date;
     expiryDate?: Date;
     price: number;
     supplier: string;
   };
-  servingSize: {
+  servingSize?: {
     amount: number;
     unit: string;
     caloriesPerServing: number;
   };
-  rating: number;
-  petPreference: 'favorite' | 'neutral' | 'disliked';
-  veterinarianApproved: boolean;
+  rating?: number;
+  petPreference?: 'favorite' | 'neutral' | 'disliked';
+  is_preferred?: boolean;
+  veterinarianApproved?: boolean;
   specialNotes?: string;
   // UI-specific properties
-  amount: string;
-  lowStock: boolean;
-  nextPurchase: string;
+  amount?: string;
+  lowStock?: boolean;
+  nextPurchase?: string;
+  // Flattened properties directly from database
+  total_amount?: number;
+  unit?: string;
+  current_amount?: number;
+  daily_feeding_amount?: number;
+  daily_feeding_unit?: string;
+  days_remaining?: number;
+  low_stock_threshold?: number;
+  reorder_alert?: boolean;
+  purchase_date?: Date;
+  expiry_date?: Date;
+  special_notes?: string;
 }
 
 export interface Medication {
@@ -237,17 +251,21 @@ export interface HealthRecord {
     phone?: string;
     email?: string;
   };
-  cost: number;
+  // Direct properties for provider info
+  veterinarian?: string;
+  clinic?: string;
+  // Snake case for database
+  provider_name?: string;  
+  provider_clinic?: string;
+  // Camel case for direct database operations
+  providerName?: string;
+  providerClinic?: string;
   insuranceCovered: boolean;
   followUpNeeded: boolean;
   followUpDate?: Date;
-  attachments?: {
-    id: string;
-    type: 'image' | 'document' | 'pdf';
-    url: string;
-    name: string;
-  }[];
   status: 'completed' | 'ongoing' | 'scheduled';
+  severity?: 'low' | 'medium' | 'high';
+  weight?: number;
 }
 
 export interface WeightRecord {

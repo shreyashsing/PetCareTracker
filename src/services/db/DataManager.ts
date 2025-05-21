@@ -99,6 +99,12 @@ export class DataManager<T extends BaseEntity> {
     // This catches fields that cause issues in their camelCase form
     const sanitizedEntity = {...entity};
     
+    // Add detailed logging for the meals table
+    if (this.tableName === 'meals') {
+      console.log(`[MEAL DEBUG] Original entity keys: ${Object.keys(entity).join(', ')}`);
+      console.log(`[MEAL DEBUG] Original petId: ${(entity as any).petId}`);
+    }
+    
     // Remove known problematic camelCase fields before conversion
     const problematicFields = ['adoptionDate', 'microchipId', 'birthDate', 'createdAt'];
     for (const field of problematicFields) {
@@ -133,6 +139,24 @@ export class DataManager<T extends BaseEntity> {
     // Handle userId field if it exists
     if (entity.userId && !snakeCaseEntity['user_id']) {
       snakeCaseEntity['user_id'] = entity.userId;
+    }
+    
+    // Handle petId field if it exists (for meals, tasks, etc.)
+    if ((entity as any).petId && !snakeCaseEntity['pet_id']) {
+      snakeCaseEntity['pet_id'] = (entity as any).petId;
+      console.log(`Added missing pet_id from petId in toSupabaseFormat`);
+    }
+    
+    // Additional logging for meals table after conversion
+    if (this.tableName === 'meals') {
+      console.log(`[MEAL DEBUG] After conversion, snake_case entity keys: ${Object.keys(snakeCaseEntity).join(', ')}`);
+      console.log(`[MEAL DEBUG] After conversion, pet_id: ${snakeCaseEntity['pet_id']}`);
+      
+      // Ensure pet_id is set as a last resort for meals
+      if (!snakeCaseEntity['pet_id'] && (entity as any).petId) {
+        snakeCaseEntity['pet_id'] = (entity as any).petId;
+        console.log(`[MEAL DEBUG] Force-added pet_id as last resort: ${snakeCaseEntity['pet_id']}`);
+      }
     }
     
     // Special handling for arrays (before sanitization)
@@ -224,65 +248,119 @@ export class DataManager<T extends BaseEntity> {
       fieldsToCheck.forEach(field => {
         if (field in entity) {
           // Special case for veterinarian field which might be a nested object
-          if (field === 'veterinarian' && typeof entity[field] === 'object') {
-            // Create flattened veterinarian fields that match the schema
-            if (entity[field]) {
-              try {
-                // Try to extract and format veterinarian data if the schema supports it
-                if (entity[field].name) entity['vet_name'] = entity[field].name;
-                if (entity[field].phone) entity['vet_phone'] = entity[field].phone;
-                if (entity[field].clinic) entity['vet_clinic'] = entity[field].clinic;
-              } catch (e) {
-                console.log(`Error processing veterinarian data:`, e);
-              }
-            }
-            // Remove the nested object
-            delete entity[field];
-            console.log(`Transformed 'veterinarian' field to flat fields for Supabase compatibility`);
-          }
-          // Special handling for array fields that might be stored differently
-          else if ((field === 'medical_conditions' || field === 'allergies') && Array.isArray(entity[field])) {
-            // Handle arrays properly for PostgreSQL compatibility
-            try {
-              // Check if array is empty
-              if (entity[field].length === 0) {
-                // Format as PostgreSQL empty array - Use '{}' syntax instead of '[]'
-                entity[field] = '{}';
-                console.log(`Formatted empty ${field} array as '{}' for PostgreSQL compatibility`);
-              } else {
-                // For non-empty arrays, convert to proper PostgreSQL array literal format
-                // Creates a string like '{value1,value2,value3}' instead of JSON '[value1,value2,value3]'
-                const arrayItems = entity[field].map((item: any) => {
-                  // Escape any quotes or special characters in array items
-                  if (typeof item === 'string') {
-                    return `"${item.replace(/"/g, '\\"')}"`;
-                  }
-                  return item;
-                });
-                entity[field] = `{${arrayItems.join(',')}}`;
-                console.log(`Formatted ${field} array as PostgreSQL array literal: ${entity[field]}`);
-              }
-            } catch (e) {
-              console.log(`Error formatting ${field} as PostgreSQL array:`, e);
-              // Default to empty array if conversion fails
-              entity[field] = '{}';
-            }
-          }
-          // Standard field that might not exist in schema - remove it to prevent errors
-          else {
-            delete entity[field];
-            console.log(`Removed '${field}' field from ${this.tableName} entity for Supabase compatibility`);
-          }
+          console.log(`Removing field ${field} that might not exist in schema`);
+          delete entity[field];
         }
       });
       
-      // Also check and remove camelCase versions that might have slipped through conversion
+      // Remove fields that might cause issues with the schema (camelCase version)
       camelCaseFieldsToCheck.forEach(field => {
         if (field in entity) {
+          console.log(`Removing camelCase field ${field} that should be in snake_case`);
           delete entity[field];
-          console.log(`Removed camelCase field '${field}' from ${this.tableName} entity for Supabase compatibility`);
         }
       });
+    } else if (this.tableName === 'food_items') {
+      // Handle food items specific sanitization for Supabase
+      console.log('Sanitizing food item for Supabase...');
+
+      // We need to flatten the nested structures that don't exist in Supabase
+      // Check if inventory object exists and extract needed fields
+      if (entity.inventory) {
+        // Extract fields from inventory and add them directly to the entity
+        entity.total_amount = entity.inventory.totalAmount ?? entity.inventory.total_amount;
+        entity.current_amount = entity.inventory.currentAmount ?? entity.inventory.current_amount;
+        entity.unit = entity.inventory.unit;
+        entity.daily_feeding_amount = entity.inventory.dailyFeedingAmount ?? entity.inventory.daily_feeding_amount;
+        entity.daily_feeding_unit = entity.inventory.dailyFeedingUnit ?? entity.inventory.daily_feeding_unit;
+        entity.days_remaining = entity.inventory.daysRemaining ?? entity.inventory.days_remaining;
+        entity.low_stock_threshold = entity.inventory.lowStockThreshold ?? entity.inventory.low_stock_threshold;
+        entity.reorder_alert = entity.inventory.reorderAlert ?? entity.inventory.reorder_alert;
+        
+        // Remove the nested inventory object
+        delete entity.inventory;
+        console.log('Extracted inventory fields for Supabase:', {
+          total_amount: entity.total_amount,
+          current_amount: entity.current_amount,
+          unit: entity.unit,
+          daily_feeding_amount: entity.daily_feeding_amount,
+          daily_feeding_unit: entity.daily_feeding_unit
+        });
+      }
+      
+      // Check for directly set flattened fields if they don't exist yet
+      if (entity.total_amount === undefined && (entity as any).totalAmount) {
+        entity.total_amount = (entity as any).totalAmount;
+      }
+      
+      if (entity.current_amount === undefined && (entity as any).currentAmount) {
+        entity.current_amount = (entity as any).currentAmount;
+      }
+      
+      if (entity.unit === undefined && (entity as any).unitType) {
+        entity.unit = (entity as any).unitType;
+      }
+      
+      if (entity.daily_feeding_amount === undefined && (entity as any).dailyFeedingAmount) {
+        entity.daily_feeding_amount = (entity as any).dailyFeedingAmount;
+      }
+      
+      if (entity.daily_feeding_unit === undefined && (entity as any).dailyFeedingUnit) {
+        entity.daily_feeding_unit = (entity as any).dailyFeedingUnit;
+      }
+      
+      // Make sure numeric values are actually numeric (not strings)
+      if (entity.total_amount !== undefined) entity.total_amount = Number(entity.total_amount);
+      if (entity.current_amount !== undefined) entity.current_amount = Number(entity.current_amount);
+      if (entity.daily_feeding_amount !== undefined) entity.daily_feeding_amount = Number(entity.daily_feeding_amount);
+      
+      // Make sure string values are strings
+      if (entity.unit !== undefined) entity.unit = String(entity.unit);
+      if (entity.daily_feeding_unit !== undefined) entity.daily_feeding_unit = String(entity.daily_feeding_unit);
+      
+      // Check if purchaseDetails object exists and extract needed fields
+      if (entity.purchase_details || entity.purchaseDetails) {
+        const details = entity.purchase_details || entity.purchaseDetails;
+        // Extract fields from purchaseDetails and add them directly to the entity
+        entity.purchase_date = details.date || details.purchase_date;
+        entity.expiry_date = details.expiryDate || details.expiry_date;
+        
+        // Remove the nested purchaseDetails object
+        delete entity.purchase_details;
+        delete entity.purchaseDetails;
+      }
+      
+      // Remove other nested objects that don't exist in Supabase schema
+      if (entity.nutritional_info || entity.nutritionalInfo) {
+        delete entity.nutritional_info;
+        delete entity.nutritionalInfo;
+      }
+      
+      if (entity.serving_size || entity.servingSize) {
+        delete entity.serving_size;
+        delete entity.servingSize;
+      }
+      
+      // Handle UI-specific fields
+      delete entity.amount;
+      delete entity.lowStock;
+      delete entity.nextPurchase;
+      
+      // Handle rating which is UI-only (not in database schema)
+      delete entity.rating;
+      
+      // Convert pet preference to is_preferred
+      if (entity.pet_preference === 'favorite' || entity.petPreference === 'favorite') {
+        entity.is_preferred = true;
+      }
+      delete entity.pet_preference;
+      delete entity.petPreference;
+      
+      // Remove veterinarianApproved field if not in schema
+      delete entity.veterinarian_approved;
+      delete entity.veterinarianApproved;
+      
+      console.log('Food item sanitized for Supabase:', Object.keys(entity));
     }
     
     // Special handling for tasks table
@@ -353,6 +431,98 @@ export class DataManager<T extends BaseEntity> {
         }
       });
     }
+    
+    // Special handling for health_records table
+    if (this.tableName === 'health_records') {
+      console.log('Sanitizing health record for Supabase:', entity);
+      
+      // Ensure pet_id is properly set from petId if it exists
+      if (!entity['pet_id'] && (entity['petId'] || (entity as any).petId)) {
+        entity['pet_id'] = entity['petId'] || (entity as any).petId;
+        console.log(`Added missing pet_id field from petId for health_records table`);
+      }
+      
+      // Handle follow_up_needed field explicitly
+      if (entity['followUpNeeded'] !== undefined) {
+        entity['follow_up_needed'] = Boolean(entity['followUpNeeded']);
+        delete entity['followUpNeeded'];
+        console.log(`Explicitly set follow_up_needed to ${entity['follow_up_needed']}`);
+      }
+      
+      // Handle follow_up_date field 
+      if (entity['followUpDate'] !== undefined) {
+        if (entity['followUpDate'] instanceof Date) {
+          entity['follow_up_date'] = formatDateForSupabase(entity['followUpDate']);
+        } else if (entity['followUpDate'] === null) {
+          entity['follow_up_date'] = null;
+        }
+        delete entity['followUpDate'];
+        console.log(`Handled follow_up_date field: ${entity['follow_up_date']}`);
+      }
+      
+      // Handle provider fields if they exist in a nested structure
+      if (entity['provider']) {
+        entity['provider_name'] = entity['provider'].name || '';
+        entity['provider_clinic'] = entity['provider'].clinic || '';
+        // Also set camelCase versions for direct database compatibility
+        entity['providerName'] = entity['provider'].name || '';
+        entity['providerClinic'] = entity['provider'].clinic || '';
+        console.log(`Extracted provider information to provider_name=${entity['provider_name']} and provider_clinic=${entity['provider_clinic']}`);
+        // Delete the provider object when sending to Supabase as it will cause schema errors
+        delete entity['provider'];
+        console.log('Removed nested provider object for Supabase compatibility');
+      } 
+      
+      // Check if direct fields are provided
+      if (entity['veterinarian'] || entity['clinic']) {
+        entity['provider_name'] = entity['veterinarian'] || entity['provider_name'] || '';
+        entity['provider_clinic'] = entity['clinic'] || entity['provider_clinic'] || '';
+        // Also set camelCase versions
+        entity['providerName'] = entity['veterinarian'] || entity['providerName'] || '';
+        entity['providerClinic'] = entity['clinic'] || entity['providerClinic'] || '';
+        console.log(`Used direct fields for provider_name=${entity['provider_name']} and provider_clinic=${entity['provider_clinic']}`);
+        
+        // CRITICAL: Remove the direct fields as they don't exist in the Supabase schema
+        delete entity['veterinarian'];
+        delete entity['clinic'];
+        console.log('Removed direct fields veterinarian and clinic that do not exist in Supabase schema');
+      }
+      
+      // Check if snake_case fields exist directly
+      if (entity['provider_name'] && !entity['providerName']) {
+        entity['providerName'] = entity['provider_name'];
+      }
+      if (entity['provider_clinic'] && !entity['providerClinic']) {
+        entity['providerClinic'] = entity['provider_clinic'];
+      }
+      
+      // Check if camelCase fields exist directly
+      if (entity['providerName'] && !entity['provider_name']) {
+        entity['provider_name'] = entity['providerName'];
+      }
+      if (entity['providerClinic'] && !entity['provider_clinic']) {
+        entity['provider_clinic'] = entity['providerClinic'];
+      }
+      
+      // Handle severity field if it exists
+      if (entity['severity'] !== undefined) {
+        entity['severity'] = entity['severity'];
+        console.log(`Preserved severity field: ${entity['severity']}`);
+      }
+      
+      // Handle weight field if it exists
+      if (entity['weight'] !== undefined) {
+        entity['weight'] = entity['weight'];
+        console.log(`Preserved weight field: ${entity['weight']}`);
+      }
+      
+      // Remove any nested fields that don't exist in the Supabase schema
+      if (entity['labResults']) {
+        delete entity['labResults'];
+      }
+      
+      console.log('Health record sanitized for Supabase:', Object.keys(entity));
+    }
         
     // Add sanitization for other tables as needed
     // if (this.tableName === 'other_table') { ... }
@@ -405,6 +575,50 @@ export class DataManager<T extends BaseEntity> {
           console.log(`Converting nested field reminderSettings → reminder_settings in tasks`);
         }
         else {
+      result[snakeKey] = this.deepCamelToSnake(value);
+        }
+      }
+      // Special handling for meals table
+      else if (this.tableName === 'meals') {
+        // Critical fields that need to be properly converted
+        if (key === 'petId') {
+          result['pet_id'] = value;
+          console.log(`Converting critical field petId → pet_id in meals`);
+        }
+        else {
+          result[snakeKey] = this.deepCamelToSnake(value);
+        }
+      }
+      // Special handling for health_records table
+      else if (this.tableName === 'health_records') {
+        // Critical fields that need to be properly converted
+        if (key === 'petId') {
+          result['pet_id'] = value;
+          console.log(`Converting critical field petId → pet_id in health_records`);
+        }
+        else if (key === 'followUpNeeded') {
+          result['follow_up_needed'] = Boolean(value);
+          console.log(`Converting critical field followUpNeeded → follow_up_needed (${Boolean(value)}) in health_records`);
+        }
+        else if (key === 'followUpDate') {
+          if (value instanceof Date) {
+            result['follow_up_date'] = formatDateForSupabase(value);
+          } else {
+            result['follow_up_date'] = value;
+          }
+          console.log(`Converting critical field followUpDate → follow_up_date in health_records`);
+        }
+        else if (key === 'provider' && typeof value === 'object') {
+          // Extract provider fields instead of nesting them
+          if (value?.name) {
+            result['provider_name'] = value.name;
+          }
+          if (value?.clinic) {
+            result['provider_clinic'] = value.clinic;
+          }
+          console.log(`Extracting provider fields in health_records`);
+        }
+        else {
           result[snakeKey] = this.deepCamelToSnake(value);
         }
       }
@@ -446,7 +660,7 @@ export class DataManager<T extends BaseEntity> {
           target = target[parts[i]];
         }
         const lastPart = parts[parts.length - 1];
-        target[lastPart] = formatDateForSupabase(original);
+          target[lastPart] = formatDateForSupabase(original);
       }
       return;
     }
@@ -509,6 +723,141 @@ export class DataManager<T extends BaseEntity> {
     // Handle user_id field if it exists
     if (entity['user_id'] && !camelCaseEntity.userId) {
       camelCaseEntity.userId = entity['user_id'];
+    }
+    
+    // Special handling for food items - reconstruct nested objects
+    if (this.tableName === 'food_items') {
+      // Reconstruct inventory object for UI compatibility
+      if (!camelCaseEntity.inventory) {
+        console.log('Reconstructing inventory object from flattened fields:', {
+          total_amount: entity['total_amount'],
+          unit: entity['unit'],
+          daily_feeding_amount: entity['daily_feeding_amount'],
+          daily_feeding_unit: entity['daily_feeding_unit']
+        });
+        
+        // Ensure all values are properly typed
+        const totalAmount = entity['total_amount'] ? Number(entity['total_amount']) : 0;
+        const currentAmount = entity['current_amount'] ? Number(entity['current_amount']) : totalAmount;
+        const dailyFeedingAmount = entity['daily_feeding_amount'] ? Number(entity['daily_feeding_amount']) : 0;
+        
+        (camelCaseEntity as any).inventory = {
+          currentAmount: currentAmount,
+          totalAmount: totalAmount,
+          unit: entity['unit'] || 'kg',
+          dailyFeedingAmount: dailyFeedingAmount,
+          dailyFeedingUnit: entity['daily_feeding_unit'] || 'g',
+          daysRemaining: entity['days_remaining'] || 0,
+          lowStockThreshold: entity['low_stock_threshold'] || 7,
+          reorderAlert: entity['reorder_alert'] || false
+        };
+        
+        // Also make sure the flattened fields are available in the camelCase entity
+        (camelCaseEntity as any).totalAmount = totalAmount;
+        (camelCaseEntity as any).currentAmount = currentAmount;
+        (camelCaseEntity as any).unit = entity['unit'] || 'kg';
+        (camelCaseEntity as any).dailyFeedingAmount = dailyFeedingAmount;
+        (camelCaseEntity as any).dailyFeedingUnit = entity['daily_feeding_unit'] || 'g';
+        
+        console.log('Reconstructed inventory object for UI compatibility');
+      }
+      
+      // Reconstruct purchaseDetails object for UI compatibility
+      if (!camelCaseEntity.purchaseDetails) {
+        (camelCaseEntity as any).purchaseDetails = {
+          date: entity['purchase_date'] ? new Date(entity['purchase_date']) : new Date(),
+          expiryDate: entity['expiry_date'] ? new Date(entity['expiry_date']) : undefined,
+          price: 0,
+          supplier: ''
+        };
+        console.log('Reconstructed purchaseDetails object for UI compatibility');
+      }
+      
+      // Create minimal placeholder objects for other required nested objects
+      if (!camelCaseEntity.nutritionalInfo) {
+        (camelCaseEntity as any).nutritionalInfo = {
+          calories: 0,
+          protein: 0,
+          fat: 0,
+          fiber: 0,
+          ingredients: [],
+          allergens: []
+        };
+      }
+      
+      if (!camelCaseEntity.servingSize) {
+        (camelCaseEntity as any).servingSize = {
+          amount: 100,
+          unit: 'g',
+          caloriesPerServing: 0
+        };
+      }
+      
+      // Sync is_preferred to petPreference for UI consistency
+      if (entity['is_preferred'] !== undefined) {
+        (camelCaseEntity as any).is_preferred = entity['is_preferred'];
+        if (entity['is_preferred'] === true) {
+          (camelCaseEntity as any).petPreference = 'favorite';
+        } else {
+          (camelCaseEntity as any).petPreference = 'neutral';
+        }
+        console.log('Synced is_preferred to petPreference for food item');
+      }
+      
+      // Set a default rating based on is_preferred
+      if (camelCaseEntity.rating === undefined) {
+        (camelCaseEntity as any).rating = (entity['is_preferred'] === true) ? 5 : 3;
+      }
+      
+      // Set a default for veterinarianApproved
+      if (camelCaseEntity.veterinarianApproved === undefined) {
+        (camelCaseEntity as any).veterinarianApproved = false;
+      }
+      
+      // Map special_notes to specialNotes if needed
+      if (entity['special_notes'] && !camelCaseEntity.specialNotes) {
+        (camelCaseEntity as any).specialNotes = entity['special_notes'];
+      }
+    }
+    
+    // Handle health_records table
+    else if (this.tableName === 'health_records') {
+      // Make sure followUpNeeded is a boolean
+      if (entity['follow_up_needed'] !== undefined) {
+        (camelCaseEntity as any).followUpNeeded = Boolean(entity['follow_up_needed']);
+      }
+      
+      // Make sure followUpDate is a Date if it exists
+      if (entity['follow_up_date']) {
+        try {
+          (camelCaseEntity as any).followUpDate = new Date(entity['follow_up_date']);
+        } catch (error) {
+          console.error('Error converting follow_up_date to Date:', error);
+          (camelCaseEntity as any).followUpDate = null;
+        }
+      }
+      
+      // Reconstruct provider object
+      if (entity['provider_name'] || entity['provider_clinic']) {
+        (camelCaseEntity as any).provider = {
+          name: entity['provider_name'] || '',
+          clinic: entity['provider_clinic'] || '',
+          specialty: '',
+          phone: '',
+          email: ''
+        };
+        
+        // Also set direct fields for components that might be using them
+        (camelCaseEntity as any).veterinarian = entity['provider_name'] || '';
+        (camelCaseEntity as any).clinic = entity['provider_clinic'] || '';
+        
+        console.log(`Reconstructed provider object with name=${entity['provider_name']} and clinic=${entity['provider_clinic']}`);
+      }
+      
+      console.log('Converted health record from Supabase format with follow up data:', {
+        followUpNeeded: (camelCaseEntity as any).followUpNeeded,
+        followUpDate: (camelCaseEntity as any).followUpDate
+      });
     }
     
     return camelCaseEntity;
@@ -668,6 +1017,52 @@ export class DataManager<T extends BaseEntity> {
       if (this.syncEnabled) {
         try {
           const supabaseEntity = this.toSupabaseFormat(fullEntity);
+          
+          // Get current user ID from session if entity doesn't have it
+          if (!supabaseEntity.user_id || !fullEntity.userId) {
+            try {
+              // Try to get the current user ID from the Supabase session
+              const { data } = await supabase.auth.getSession();
+              if (data && data.session && data.session.user) {
+                supabaseEntity.user_id = data.session.user.id;
+                console.log(`Added missing user_id from session: ${supabaseEntity.user_id}`);
+              } else {
+                console.log('No session available to get user_id');
+              }
+            } catch (sessionError) {
+              console.error('Error getting user session to add user_id:', sessionError);
+            }
+          }
+          
+          // Special logging for health records table
+          if (this.tableName === 'health_records') {
+            console.log(`[HEALTH RECORD CREATE] Final entity before insert:`, JSON.stringify({
+              id: supabaseEntity.id,
+              pet_id: supabaseEntity.pet_id,
+              user_id: supabaseEntity.user_id,
+              provider_name: supabaseEntity.provider_name,
+              provider_clinic: supabaseEntity.provider_clinic,
+              severity: supabaseEntity.severity,
+              weight: supabaseEntity.weight
+            }, null, 2));
+          }
+          
+          // Special logging for meals table
+          if (this.tableName === 'meals') {
+            console.log(`[MEAL CREATE] Final entity before insert:`, JSON.stringify({
+              id: supabaseEntity.id,
+              pet_id: supabaseEntity.pet_id,
+              user_id: supabaseEntity.user_id,
+              type: supabaseEntity.type,
+              date: supabaseEntity.date
+            }, null, 2));
+            
+            // Final safeguard - ensure pet_id is set
+            if (!supabaseEntity.pet_id && (fullEntity as any).petId) {
+              supabaseEntity.pet_id = (fullEntity as any).petId;
+              console.log(`[MEAL CREATE] Added missing pet_id as final safeguard: ${supabaseEntity.pet_id}`);
+            }
+          }
           
           console.log(`DataManager: Creating entity in ${this.tableName}:`, 
             JSON.stringify({
@@ -1073,6 +1468,57 @@ export class DataManager<T extends BaseEntity> {
     } catch (error) {
       console.error('Error formatting array for Supabase:', error);
       return '{}';
+    }
+  }
+
+  /**
+   * Debug function to directly query Supabase and inspect data
+   * This helps troubleshoot issues with data not appearing correctly
+   */
+  async debugSupabaseTable(): Promise<any> {
+    if (!this.syncEnabled) {
+      return { error: 'Sync is not enabled for this data manager' };
+    }
+    
+    try {
+      // Check if the table exists
+      const exists = await this.tableExists();
+      if (!exists) {
+        return { error: `Table ${this.tableName} does not exist in Supabase` };
+      }
+      
+      // Query the table directly
+      const { data, error } = await supabase
+        .from(this.tableName)
+        .select('*')
+        .limit(5);
+      
+      if (error) {
+        console.error(`Error querying ${this.tableName}:`, error);
+        return { error: `Failed to query table: ${error.message}` };
+      }
+      
+      // For food_items table, log specific columns we're interested in
+      if (this.tableName === 'food_items' && data && data.length > 0) {
+        const simplifiedData = data.map(item => ({
+          id: item.id,
+          name: item.name,
+          total_amount: item.total_amount,
+          unit: item.unit,
+          daily_feeding_amount: item.daily_feeding_amount,
+          daily_feeding_unit: item.daily_feeding_unit,
+          days_remaining: item.days_remaining
+        }));
+        
+        console.log(`Direct Supabase query results for ${this.tableName}:`, simplifiedData);
+        return { data: simplifiedData };
+      }
+      
+      console.log(`Direct Supabase query results for ${this.tableName}:`, data);
+      return { data };
+    } catch (error) {
+      console.error(`Error in debugSupabaseTable for ${this.tableName}:`, error);
+      return { error: `Exception: ${error}` };
     }
   }
 } 

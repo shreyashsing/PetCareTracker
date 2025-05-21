@@ -40,6 +40,7 @@ interface SimpleMeal {
   calories: number;
   completed: boolean;
   notes?: string;
+  foodName?: string; // Add foodName field
 }
 
 type TabType = 'today' | 'history' | 'inventory';
@@ -83,6 +84,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       calories: 300,
       completed: false,
       notes: 'This is a sample meal. Tap the + button to add a real meal.',
+      foodName: undefined,
     };
     
     setTodayMeals([mockMeal]);
@@ -100,6 +102,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         calories: 0,
         completed: false,
         notes: undefined,
+        foodName: undefined,
       };
     }
 
@@ -120,11 +123,15 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     
     // Handle amount display with proper null checks
     let amountDisplay = 'Not specified';
+    let foodName = undefined;
+    
     if (meal.amount) {
       amountDisplay = String(meal.amount);
     } else if (meal.foods && Array.isArray(meal.foods) && meal.foods.length > 0 && meal.foods[0]) {
       const firstFood = meal.foods[0];
       amountDisplay = `${firstFood.amount || 0} ${firstFood.unit || 'cups'}`;
+      // Get food name from the first food item
+      foodName = firstFood.foodItemId || undefined;
     }
     
     return {
@@ -135,6 +142,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       calories: meal.totalCalories || meal.calories || 0,
       completed: meal.completed || false,
       notes: meal.notes || undefined,
+      foodName,
     };
   }, []);
 
@@ -880,6 +888,11 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         </View>
         
         <View style={styles.mealDetailsColumn}>
+          {meal.foodName && (
+            <Text style={[styles.mealFoodName, {color: colors.text}]}>
+              {meal.foodName}
+            </Text>
+          )}
           <Text style={[styles.mealAmount, {color: colors.text}]}>{meal.amount}</Text>
           <Text style={[styles.mealCalories, {color: colors.text + '80'}]}>
             {meal.calories} calories
@@ -946,6 +959,11 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
           <Text style={[styles.recentMealTitle, {color: colors.text}]}>{meal.title}</Text>
           <Text style={[styles.recentMealTime, {color: colors.text + '80'}]}>{meal.time}</Text>
         </View>
+        {meal.foodName && (
+          <Text style={[styles.recentMealFoodName, {color: colors.text + '90'}]}>
+            {meal.foodName}
+          </Text>
+        )}
         <Text style={[styles.recentMealDetail, {color: colors.text + '60'}]}>
           {meal.amount} • {meal.calories} calories
         </Text>
@@ -1518,6 +1536,30 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   >
                     <Ionicons name="add" size={22} color={colors.primary} />
                   </TouchableOpacity>
+                  
+                  {/* Debug button for Supabase verification */}
+                  <TouchableOpacity 
+                    style={[styles.iconButton, {backgroundColor: colors.card, marginLeft: 8}]}
+                    onPress={async () => {
+                      try {
+                        // Call the debug method to check Supabase directly
+                        const result = await unifiedDatabaseManager.foodItems.debugSupabaseTable();
+                        toast({
+                          title: 'Supabase Data Check',
+                          description: `Found ${result.data?.length || 0} items. Check console for details.`
+                        });
+                      } catch (error) {
+                        console.error('Debug button error:', error);
+                        toast({
+                          title: 'Debug Error',
+                          description: 'Failed to check Supabase data',
+                          variant: 'destructive'
+                        });
+                      }
+                    }}
+                  >
+                    <Ionicons name="bug" size={22} color={colors.warning} />
+                  </TouchableOpacity>
                 </View>
               </View>
               
@@ -1558,14 +1600,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                         <View style={styles.inventoryItemGridColumn}>
                           <Text style={[styles.inventoryItemLabel, {color: colors.text + '80'}]}>Current Amount</Text>
                           <Text style={[styles.inventoryItemValue, {color: colors.text}]}>
-                            {item.inventory.currentAmount} {item.inventory.unit}
+                            {item.inventory?.currentAmount ?? item.current_amount ?? 0} {item.inventory?.unit ?? item.unit ?? 'kg'}
                           </Text>
                         </View>
                         
                         <View style={styles.inventoryItemGridColumn}>
                           <Text style={[styles.inventoryItemLabel, {color: colors.text + '80'}]}>Daily Feeding</Text>
                           <Text style={[styles.inventoryItemValue, {color: colors.text}]}>
-                            {item.inventory.dailyFeedingAmount} {item.inventory.dailyFeedingUnit}
+                            {item.inventory?.dailyFeedingAmount ?? item.daily_feeding_amount ?? 0} {item.inventory?.dailyFeedingUnit ?? item.daily_feeding_unit ?? 'g'}
                           </Text>
                         </View>
                         
@@ -1574,13 +1616,13 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                           <Text style={[
                             styles.inventoryItemValue, 
                             {
-                              color: item.inventory.daysRemaining <= 7 
+                              color: (item.inventory?.daysRemaining ?? item.days_remaining ?? 0) <= 7 
                                 ? colors.warning 
                                 : colors.success,
                               fontWeight: '600'
                             }
                           ]}>
-                            {item.inventory.daysRemaining}
+                            {item.inventory?.daysRemaining ?? item.days_remaining ?? 0}
                           </Text>
                         </View>
                       </View>
@@ -1608,7 +1650,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                       </TouchableOpacity>
                     </View>
                     
-                    {item.inventory.daysRemaining <= 7 && (
+                    {(item.inventory?.daysRemaining ?? item.days_remaining ?? 0) <= 7 && (
                       <View style={[styles.lowStockAlert, {backgroundColor: colors.warning + '15'}]}>
                         <Ionicons name="alert-circle" size={16} color={colors.warning} />
                         <Text style={[styles.lowStockText, {color: colors.warning, flex: 1}]}>
@@ -1779,42 +1821,48 @@ const styles = StyleSheet.create({
   mealDetailsColumn: {
     flex: 1,
     padding: 12,
-    justifyContent: 'center',
+  },
+  mealFoodName: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   mealAmount: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   mealCalories: {
     fontSize: 14,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   mealNotes: {
-    fontSize: 12,
+    fontSize: 13,
   },
   mealActions: {
     padding: 8,
     justifyContent: 'center',
-    alignItems: 'center',
   },
   mealActionButton: {
     width: 40,
     height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginVertical: 4,
-    borderRadius: 8,
+  },
+  recentMealsContainer: {
+    marginBottom: 20,
   },
   recentMealRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    borderRadius: 12,
-    marginBottom: 10,
     padding: 12,
+    marginBottom: 8,
+    borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 1,
   },
@@ -1824,17 +1872,23 @@ const styles = StyleSheet.create({
   recentMealHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 4,
   },
   recentMealTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
   },
   recentMealTime: {
-    fontSize: 12,
+    fontSize: 13,
+  },
+  recentMealFoodName: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 2,
   },
   recentMealDetail: {
-    fontSize: 12,
+    fontSize: 13,
   },
   completedBadge: {
     flexDirection: 'row',
@@ -2312,6 +2366,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
   },
+  // mealFoodName and recentMealFoodName are defined elsewhere
 });
 
 export default React.memo(Feeding); 

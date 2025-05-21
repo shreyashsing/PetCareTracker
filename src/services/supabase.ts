@@ -737,6 +737,7 @@ export interface FoodItemTable {
 export interface HealthRecordTable {
   id: string;
   pet_id: string;
+  user_id?: string;
   date: string;
   type: string;
   title: string;
@@ -746,11 +747,12 @@ export interface HealthRecordTable {
   treatment?: string;
   provider_name: string;
   provider_clinic: string;
-  cost: number;
   insurance_covered: boolean;
   follow_up_needed: boolean;
   follow_up_date?: string;
   status: string;
+  severity?: string;
+  weight?: number;
   created_at: string;
 }
 

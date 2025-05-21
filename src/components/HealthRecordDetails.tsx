@@ -334,29 +334,6 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
                 ))}
               </View>
             )}
-            
-            {record.cost > 0 && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Ionicons name="cash-outline" size={18} color={colors.primary} />
-                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Cost Information</Text>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Cost:</Text>
-                  <Text style={[styles.infoValue, { color: colors.text }]}>
-                    ${record.cost.toFixed(2)}
-                  </Text>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Insurance Covered:</Text>
-                  <Text style={[styles.infoValue, { color: colors.text }]}>
-                    {record.insuranceCovered ? 'Yes' : 'No'}
-                  </Text>
-                </View>
-              </View>
-            )}
           </ScrollView>
           
           <View style={[styles.footer, { borderTopColor: colors.border }]}>

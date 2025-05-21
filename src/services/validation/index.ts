@@ -93,10 +93,8 @@ export const healthRecordSchema = z.object({
   description: z.string().optional(),
   veterinarian: z.string().optional(),
   location: z.string().optional(),
-  attachments: z.array(z.string()).default([]),
   reminder: z.date().optional(),
   notes: z.string().optional(),
-  cost: z.number().nonnegative().optional(),
 });
 
 // Medication validation schema

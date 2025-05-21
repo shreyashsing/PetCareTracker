@@ -17,6 +17,8 @@ import {unifiedDatabaseManager} from "../services/db";
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 import { useToast } from '../hooks/use-toast';
+import { Meal } from '../types/components';
+import { useAuth } from '../hooks/useAuth';
 
 type AddMealScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMeal'>;
 
@@ -36,6 +38,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors  } = useAppColors();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [mealId, setMealId] = useState<string | null>(null);
@@ -72,7 +75,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
               amount: meal.foods?.[0]?.amount?.toString() || '',
               date: new Date(meal.date),
               time: new Date(meal.time),
-              notes: meal.notes || '',
+              notes: meal.specialInstructions || '',
               isCompleted: meal.completed,
             });
           }
@@ -133,60 +136,55 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   };
   
   const saveMeal = async () => {
-    // Today's date at midnight (for date comparison)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Time selected by user
-    const selectedTime = new Date(formState.time);
-    
-    // Combined date object with today's date and user's selected time
-    const combinedDateTime = new Date(today);
-    combinedDateTime.setHours(
-      selectedTime.getHours(),
-      selectedTime.getMinutes(),
-      0,
-      0
-    );
-
-    // Calculate calories
-    const amount = parseFloat(formState.amount);
-    const estimatedCalories = amount * 100;
-    
-    // Generate meal ID if new meal
-    const mealUuid = isEditMode ? mealId as string : generateUUID();
-    
-    const mealData = {
-      id: mealUuid,
-      petId: activePetId as string,
-      date: today, // Always use today for the date
-      time: combinedDateTime, // Combined date with user's time
-      type: formState.type,
-      foods: [
-        {
-          foodItemId: formState.foodName || "Default Food",
-          amount: parseFloat(formState.amount) || 1,
-          unit: 'cups',
-          calories: estimatedCalories / 2,
-        }
-      ],
-      totalCalories: estimatedCalories,
-      completed: formState.isCompleted,
-      skipped: false,
-      notes: formState.notes,
-      reminderSettings: {
-        enabled: true,
-        reminderTime: 15,
-      },
-      recurring: false,
-      
-      // UI display properties
-      amount: formState.amount + ' cups',
-      calories: estimatedCalories,
-    };
-    
     try {
-      if (isEditMode) {
+      // Debug: Log active pet ID to ensure it's not null
+      console.log(`Creating meal with activePetId: ${activePetId}`);
+      if (!activePetId) {
+        console.error('No active pet ID available when creating meal');
+        return false;
+      }
+      
+      // Also log current user info
+      console.log(`Current user: ${user?.id || 'Not logged in'}`);
+      
+      // Combine date and time into a single date object
+      const combinedDateTime = new Date(formState.date);
+      combinedDateTime.setHours(
+        formState.time.getHours(),
+        formState.time.getMinutes(),
+        0,
+        0
+      );
+      
+      // Create a proper food item
+      const foodItem = {
+        foodItemId: formState.foodName, // This would ideally be an ID reference to a food item
+        amount: parseFloat(formState.amount) || 0,
+        unit: 'cups', // Default unit
+        calories: (parseFloat(formState.amount) || 0) * 50 // Simplified calorie calculation
+      };
+      
+      // Prepare the meal data
+      const mealData: Meal = {
+        id: mealId || generateUUID(),
+        petId: activePetId as string,
+        userId: user?.id,
+        date: formState.date,
+        time: formState.time,
+        type: formState.type,
+        foods: [foodItem],
+        totalCalories: (parseFloat(formState.amount) || 0) * 50, // Store calories in DB-recognized field
+        specialInstructions: formState.notes + (formState.amount ? `\nAmount: ${formState.amount} cups` : ''), // Add amount to notes
+        completed: formState.isCompleted,
+        skipped: false,
+        recurring: false,
+        reminderSettings: {
+          enabled: false,
+          reminderTime: 15
+        }
+      };
+      
+      if (isEditMode && mealId) {
         // If editing, first cancel existing notifications
         await notificationService.cancelMealNotifications(mealId as string);
         

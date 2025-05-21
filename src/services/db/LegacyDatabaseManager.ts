@@ -151,8 +151,6 @@ export class LegacyDatabaseManager {
           name: "Dr. Sarah Johnson",
           clinic: "Pawsome Veterinary Clinic"
         },
-        attachments: [],
-        cost: 150,
         insuranceCovered: true,
         followUpNeeded: true,
         status: "completed"
@@ -168,8 +166,6 @@ export class LegacyDatabaseManager {
           name: "Dr. Sarah Johnson",
           clinic: "Pawsome Veterinary Clinic"
         },
-        attachments: [],
-        cost: 75,
         insuranceCovered: true,
         followUpNeeded: false,
         status: "completed"
@@ -185,8 +181,6 @@ export class LegacyDatabaseManager {
           name: "Dr. Michael Chen",
           clinic: "Pawsome Veterinary Clinic"
         },
-        attachments: [],
-        cost: 200,
         insuranceCovered: true,
         followUpNeeded: false,
         status: "completed"

@@ -32,12 +32,13 @@ interface FormState {
   temperature: string;
   notes: string;
   followUpDate?: Date;
+  followUpNeeded: boolean;
   severity: SeverityType;
   isCompleted: boolean;
-  attachments: string[];
   // Vaccination specific fields
   vaccineName: string;
   nextDueDate?: Date;
+  nextDueDateNeeded: boolean;
 }
 
 const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, route }) => {
@@ -59,12 +60,13 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
     temperature: '',
     notes: '',
     followUpDate: undefined,
+    followUpNeeded: false,
     severity: 'low',
     isCompleted: true,
-    attachments: [],
     // Vaccination specific fields
     vaccineName: '',
     nextDueDate: undefined,
+    nextDueDateNeeded: false,
   });
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -87,18 +89,27 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         type: record.type as RecordType,
         title: record.title || '',
         date: new Date(record.date),
-        veterinarian: record.provider?.name || '',
-        clinic: record.provider?.clinic || '',
-        weight: '',
+        veterinarian: record.veterinarian || record.provider?.name || '',
+        clinic: record.clinic || record.provider?.clinic || '',
+        weight: record.weight ? record.weight.toString() : '',
         temperature: '',
         notes: record.description || '',
         followUpDate: record.followUpDate ? new Date(record.followUpDate) : undefined,
-        severity: 'low', // Default
+        followUpNeeded: record.followUpNeeded,
+        severity: (record.severity as SeverityType) || 'low',
         isCompleted: record.status === 'completed',
-        attachments: [],
         vaccineName: record.type === 'vaccination' ? record.title : '',
         nextDueDate: record.followUpDate && record.type === 'vaccination' ? new Date(record.followUpDate) : undefined,
+        nextDueDateNeeded: record.followUpNeeded && record.type === 'vaccination',
       };
+      
+      console.log('Provider info in edit mode:', {
+        fromProvider: record.provider,
+        directVet: record.veterinarian,
+        directClinic: record.clinic,
+        formVet: newFormState.veterinarian,
+        formClinic: newFormState.clinic
+      });
       
       // Extract lab results if available (for checkups)
       if (record.labResults && record.labResults.length > 0) {
@@ -241,6 +252,7 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         id: isEditMode && recordId ? recordId : generateUUID(),
         petId: effectivePetId,
         date: formState.date,
+        // Set the provider object for local storage
         provider: {
           name: formState.veterinarian || 'Unknown',
           specialty: '',
@@ -248,12 +260,32 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           phone: '',
           email: ''
         },
-        cost: 0,
+        // Set direct fields for UI display (these won't be stored in Supabase)
+        veterinarian: formState.veterinarian || 'Unknown',
+        clinic: formState.clinic || 'Unknown',
+        // IMPORTANT: These snake_case versions are what actually get stored in Supabase
+        provider_name: formState.veterinarian || 'Unknown',
+        provider_clinic: formState.clinic || 'Unknown',
+        // These camelCase versions will get removed before storing in Supabase
+        providerName: formState.veterinarian || 'Unknown',
+        providerClinic: formState.clinic || 'Unknown',
         insuranceCovered: false,
-        followUpNeeded: false,
-        attachments: [],
-        status: formState.isCompleted ? 'completed' : 'scheduled' as const
+        followUpNeeded: isVaccination ? formState.nextDueDateNeeded : formState.followUpNeeded,
+        status: formState.isCompleted ? 'completed' : 'scheduled' as const,
+        severity: formState.severity, // Add severity field
+        // Store weight directly as a field for proper saving
+        weight: formState.weight ? parseFloat(formState.weight) : undefined 
       };
+      
+      console.log('Provider information being saved:', {
+        directVet: formState.veterinarian,
+        directClinic: formState.clinic,
+        provider: baseRecord.provider,
+        providerName: baseRecord.providerName,
+        providerClinic: baseRecord.providerClinic,
+        provider_name: baseRecord.provider_name,
+        provider_clinic: baseRecord.provider_clinic
+      });
       
       // Handle different record types
       if (formState.type === 'vaccination') {
@@ -266,8 +298,8 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           symptoms: [],
           diagnosis: '',
           treatment: '',
-          followUpNeeded: !!formState.nextDueDate,
-          followUpDate: formState.nextDueDate,
+          followUpNeeded: formState.nextDueDateNeeded,
+          followUpDate: formState.nextDueDateNeeded ? formState.nextDueDate : undefined,
         } as HealthRecord;
         
         if (isEditMode && recordId) {
@@ -288,8 +320,8 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           symptoms: [],
           diagnosis: '',
           treatment: '',
-          followUpNeeded: !!formState.followUpDate,
-          followUpDate: formState.followUpDate,
+          followUpNeeded: formState.followUpNeeded,
+          followUpDate: formState.followUpNeeded ? formState.followUpDate : undefined,
         } as HealthRecord;
         
         // Add weight and temperature to lab results for checkups
@@ -399,14 +431,26 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
                 containerStyle={styles.inputContainer}
               />
               
-              <DatePicker
-                label="Next Due Date"
-                value={formState.nextDueDate || new Date()}
-                onChange={(date) => handleChange('nextDueDate', date)}
-                mode="date"
-                error={errors.nextDueDate}
-                containerStyle={styles.inputContainer}
-              />
+              <View style={styles.switchContainer}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>
+                  Next Due Date Required
+                </Text>
+                <Switch
+                  value={formState.nextDueDateNeeded}
+                  onValueChange={(value) => handleChange('nextDueDateNeeded', value)}
+                />
+              </View>
+              
+              {formState.nextDueDateNeeded && (
+                <DatePicker
+                  label="Next Due Date"
+                  value={formState.nextDueDate || new Date()}
+                  onChange={(date) => handleChange('nextDueDate', date)}
+                  mode="date"
+                  error={errors.nextDueDate}
+                  containerStyle={styles.inputContainer}
+                />
+              )}
               
               <Input
                 label="Veterinarian"
@@ -499,14 +543,26 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
                 </>
               )}
               
-              <DatePicker
-                label="Follow-up Date"
-                value={formState.followUpDate || new Date()}
-                onChange={(date) => handleChange('followUpDate', date)}
-                mode="date"
-                error={errors.followUpDate}
-                containerStyle={styles.inputContainer}
-              />
+              <View style={styles.switchContainer}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>
+                  Follow-up Required
+                </Text>
+                <Switch
+                  value={formState.followUpNeeded}
+                  onValueChange={(value) => handleChange('followUpNeeded', value)}
+                />
+              </View>
+              
+              {formState.followUpNeeded && (
+                <DatePicker
+                  label="Follow-up Date"
+                  value={formState.followUpDate || new Date()}
+                  onChange={(date) => handleChange('followUpDate', date)}
+                  mode="date"
+                  error={errors.followUpDate}
+                  containerStyle={styles.inputContainer}
+                />
+              )}
               
               <Select
                 label="Severity"

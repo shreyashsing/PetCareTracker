@@ -43,3 +43,7 @@ yarn-error.*
 
 # Local Netlify folder
 .netlify
+
+# Firebase configuration files containing API keys
+android/app/google-services.json
+ios/GoogleService-Info.plist

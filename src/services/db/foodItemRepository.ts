@@ -41,6 +41,7 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
       const { inventory } = item;
       return (
         item.petId === petId && 
+        !!inventory &&
         inventory.currentAmount <= inventory.lowStockThreshold
       );
     });
@@ -75,7 +76,7 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
       if (item.petId !== petId) return false;
       
       // Check if there's an expiry date
-      if (!item.purchaseDetails.expiryDate) return false;
+      if (!item.purchaseDetails?.expiryDate) return false;
       
       // Check if the expiry date is within the threshold
       const expiryDate = new Date(item.purchaseDetails.expiryDate);
@@ -93,7 +94,7 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
     const items = await this.getByPetId(petId);
     
     return items.sort((a, b) => {
-      const comparison = a.rating - b.rating;
+      const comparison = (a.rating || 0) - (b.rating || 0);
       return ascending ? comparison : -comparison;
     });
   }
@@ -108,7 +109,7 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
     // First get the current food item
     const foodItem = await this.getById(id);
     
-    if (!foodItem) {
+    if (!foodItem || !foodItem.inventory) {
       return null;
     }
     
@@ -119,6 +120,11 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
     const updatedInventory = {
       ...foodItem.inventory,
       currentAmount: newAmount,
+      totalAmount: foodItem.inventory.totalAmount,
+      unit: foodItem.inventory.unit,
+      dailyFeedingAmount: foodItem.inventory.dailyFeedingAmount,
+      dailyFeedingUnit: foodItem.inventory.dailyFeedingUnit,
+      lowStockThreshold: foodItem.inventory.lowStockThreshold,
       daysRemaining,
       reorderAlert: daysRemaining <= foodItem.inventory.lowStockThreshold
     };
@@ -159,7 +165,7 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
       if (item.petId !== petId) return false;
       
       // Check if the item has allergens
-      if (!item.nutritionalInfo.allergens || item.nutritionalInfo.allergens.length === 0) {
+      if (!item.nutritionalInfo?.allergens || item.nutritionalInfo.allergens.length === 0) {
         return false;
       }
       

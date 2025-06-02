@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { 
   Form, 
   Input, 
@@ -37,7 +37,7 @@ import { uploadImageToSupabase, setImagePickerActive, deleteImageFromSupabase, u
 const { width } = Dimensions.get('window');
 
 // Use the correct type from NativeStackScreenProps
-type AddPetScreenProps = NativeStackScreenProps<RootStackParamList, 'AddPet'>;
+type AddPetScreenProps = NativeStackScreenProps<MainStackParamList, 'AddPet'>;
 
 type PetType = 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
 
@@ -45,6 +45,7 @@ interface FormState {
   name: string;
   type: PetType;
   breed: string;
+  size?: 'tiny' | 'small' | 'medium' | 'large' | 'giant';
   birthDate: Date | undefined;
   gender: 'male' | 'female' | 'unknown';
   weight: string;
@@ -88,6 +89,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
     name: '',
     type: 'dog',
     breed: '',
+    size: 'medium',
     birthDate: undefined,
     gender: 'unknown',
     weight: '',
@@ -127,6 +129,14 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
     { label: 'Male', value: 'male' },
     { label: 'Female', value: 'female' },
     { label: 'Unknown', value: 'unknown' },
+  ];
+
+  const sizeOptions = [
+    { label: 'Tiny (Under 5 lbs)', value: 'tiny' },
+    { label: 'Small (5-25 lbs)', value: 'small' },
+    { label: 'Medium (25-60 lbs)', value: 'medium' },
+    { label: 'Large (60-90 lbs)', value: 'large' },
+    { label: 'Giant (Over 90 lbs)', value: 'giant' },
   ];
 
   const weightUnitOptions = [
@@ -329,6 +339,7 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         name: formState.name,
         type: formState.type,
         breed: formState.breed,
+        size: formState.size,
         birthDate: formState.birthDate || new Date(),
         gender: formState.gender,
         weight: parseFloat(formState.weight) || 0, // Use || 0 to ensure it's a number
@@ -370,11 +381,8 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               onPress: () => {
                 // Delay navigation slightly to ensure async storage is updated
                 setTimeout(() => {
-                  // Reset navigation to home screen to avoid stacking
-                  navigation.reset({
-                    index: 0,
-                    routes: [{ name: 'Main' }]
-                  });
+                  // Navigate back to home screen
+                  navigation.navigate('Home');
                 }, 100);
               }
             }
@@ -399,12 +407,9 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               {
                 text: 'OK',
                 onPress: () => {
-                  // Reset navigation stack to ensure we go back to home
+                  // Navigate back to home screen
                   setTimeout(() => {
-                    navigation.reset({
-                      index: 0,
-                      routes: [{ name: 'Main' }]
-                    });
+                    navigation.navigate('Home');
                   }, 100);
                 }
               }
@@ -516,6 +521,16 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               containerStyle={styles.inputContainer}
             />
             
+            <Select
+              label="Breed Size"
+              options={sizeOptions}
+              selectedValue={formState.size || 'medium'}
+              onValueChange={(value) => handleChange('size', value)}
+              error={errors.size}
+              touched={touched.size}
+              containerStyle={styles.inputContainer}
+            />
+            
             <DatePicker
               label="Birth Date"
               value={formState.birthDate || new Date()}
@@ -523,7 +538,6 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               mode="date"
               error={errors.birthDate}
               containerStyle={styles.inputContainer}
-              allowMonthYearSelection={true}
             />
             
             <DatePicker
@@ -533,7 +547,6 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               mode="date"
               error={errors.adoptionDate}
               containerStyle={styles.inputContainer}
-              allowMonthYearSelection={true}
             />
             
             <Select

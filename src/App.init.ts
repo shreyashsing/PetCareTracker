@@ -9,16 +9,26 @@ import './patches/fixDatePickerNative';
 import { initMemoryLeakDetection } from './utils/memoryLeakDetection';
 import { Platform } from 'react-native';
 import { securityService } from './services/security';
-import { createDemoUserIfNeeded } from './utils/demoUsers';
 import { setupErrorHandling } from './utils/errorHandler';
 import { unifiedDatabaseManager } from "./services/db";
 import { notificationService } from './services/notifications';
 import { initializeStorage } from './utils/setupStorage';
+import { 
+  ProductionLogger, 
+  PerformanceMonitor, 
+  applyProductionOptimizations, 
+  getProductionTimeout,
+  shouldPerformInProduction 
+} from './utils/productionConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Initialize memory leak detection in development mode
-if (__DEV__) {
+// Apply production optimizations immediately
+applyProductionOptimizations();
+
+// Initialize memory leak detection in development mode only
+if (shouldPerformInProduction('memory_debug')) {
   const stopMemoryLeakDetection = initMemoryLeakDetection(60000); // Check every minute
-  console.log('Memory leak detection initialized in development mode');
+  ProductionLogger.debug('Memory leak detection initialized', 'Init');
   
   // For debugging in development, expose some globals
   if (global) {
@@ -27,20 +37,9 @@ if (__DEV__) {
   }
 }
 
-// Optimize image handling based on platform
-if (Platform.OS === 'android') {
-  // Android-specific optimizations
-  console.log('Applying Android-specific image optimizations');
-  
-  // Increase the size of the image cache on Android
-  // @ts-ignore - Accessing private API
-  if (global.Image && global.Image.cacheSize) {
-    // @ts-ignore - Accessing private API
-    global.Image.cacheSize = 1024 * 1024 * 50; // 50MB
-  }
-} else if (Platform.OS === 'ios') {
-  // iOS-specific optimizations
-  console.log('Applying iOS-specific image optimizations');
+// Log platform information (development only)
+if (shouldPerformInProduction('verbose_logging')) {
+  ProductionLogger.info(`Running on ${Platform.OS} (${Platform.Version})`, 'Platform');
 }
 
 // Track initialization
@@ -63,7 +62,7 @@ const timeout = (ms: number) => new Promise((_, reject) =>
  * This prevents the app from getting stuck during initialization
  */
 function forceInitializationComplete() {
-  console.log('[App.init] Forcing initialization complete flag');
+  ProductionLogger.warn('Forcing initialization complete due to timeout', 'Init');
   isInitializationComplete = true;
 }
 
@@ -78,8 +77,119 @@ export function checkInitializationComplete() {
  * Mark initialization as complete
  */
 export function markInitializationComplete() {
-  console.log('[App.init] Marking initialization complete');
+  ProductionLogger.info('Marking initialization complete', 'Init');
   isInitializationComplete = true;
+}
+
+/**
+ * Initialize core services in parallel for better performance
+ */
+async function initializeCoreServices(): Promise<void> {
+  const services = [
+    {
+      name: 'Security',
+      fn: () => securityService.initialize(),
+      timeout: getProductionTimeout('SECURITY_INIT'),
+      critical: false
+    },
+    {
+      name: 'Database',
+      fn: () => unifiedDatabaseManager.initialize(),
+      timeout: getProductionTimeout('DATABASE_INIT'),
+      critical: true
+    },
+    {
+      name: 'Notifications',
+      fn: () => notificationService.initialize(),
+      timeout: getProductionTimeout('NOTIFICATION_INIT'),
+      critical: false
+    }
+  ];
+
+  ProductionLogger.info('Initializing core services in parallel', 'Init');
+
+  // Initialize services in parallel with individual timeouts and performance monitoring
+  const results = await Promise.allSettled(
+    services.map(async (service) => {
+      const measurementName = `${service.name}_Init`;
+      
+      try {
+        await PerformanceMonitor.measureAsync(measurementName, async () => {
+          await Promise.race([
+            service.fn(),
+            timeout(service.timeout)
+          ]);
+        });
+        
+        ProductionLogger.info(`✅ ${service.name} service initialized`, 'Init');
+        return { service: service.name, success: true };
+      } catch (error: any) {
+        const isTimeout = error.message.includes('timeout');
+        const message = `${service.name} service ${isTimeout ? 'timed out' : 'failed'}`;
+        
+        if (service.critical) {
+          ProductionLogger.error(`❌ Critical: ${message}`, 'Init');
+        } else {
+          ProductionLogger.warn(`⚠️ ${message}`, 'Init');
+        }
+        
+        return { service: service.name, success: false, critical: service.critical };
+      }
+    })
+  );
+
+  // Check if any critical services failed
+  const failedCritical = results
+    .filter(result => result.status === 'fulfilled')
+    .map(result => (result.value as any))
+    .filter(result => !result.success && result.critical);
+
+  if (failedCritical.length > 0) {
+    throw new Error(`Critical services failed: ${failedCritical.map(f => f.service).join(', ')}`);
+  }
+}
+
+/**
+ * Initialize background tasks that don't block app startup
+ */
+async function initializeBackgroundTasks(): Promise<void> {
+  const backgroundTasks = [];
+
+  ProductionLogger.info('Starting background tasks', 'Background');
+
+  // Expired medications check
+  backgroundTasks.push(
+    PerformanceMonitor.measureAsync('ExpiredMeds_Check', async () => {
+      const expiredMedications = await Promise.race([
+        unifiedDatabaseManager.medications.checkAndUpdateExpiredMedications(),
+        timeout(getProductionTimeout('BACKGROUND_TASK'))
+      ]) as any[];
+      
+      if (expiredMedications && Array.isArray(expiredMedications) && expiredMedications.length > 0) {
+        ProductionLogger.info(`Marked ${expiredMedications.length} expired medications as completed`, 'Background');
+      }
+      
+      return expiredMedications;
+    }).catch((error: any) => {
+      ProductionLogger.warn(`Expired medications check failed: ${error.message}`, 'Background');
+    })
+  );
+
+  // Notification rescheduling
+  backgroundTasks.push(
+    PerformanceMonitor.measureAsync('Notifications_Reschedule', async () => {
+      await Promise.race([
+        notificationService.rescheduleAllNotifications(),
+        timeout(getProductionTimeout('BACKGROUND_TASK'))
+      ]);
+    }).catch((error: any) => {
+      ProductionLogger.warn(`Notification rescheduling failed: ${error.message}`, 'Background');
+    })
+  );
+
+  // Execute all background tasks in parallel
+  await Promise.allSettled(backgroundTasks);
+  ProductionLogger.info('Background tasks completed', 'Background');
 }
 
 /**
@@ -88,72 +198,27 @@ export function markInitializationComplete() {
  */
 async function initialize(): Promise<boolean> {
   if (appInitialized) {
-    console.log('App already initialized, skipping initialization');
+    ProductionLogger.info('App already initialized, skipping', 'Init');
     return true;
   }
   
-  console.log('Initializing app...');
+  ProductionLogger.info('🚀 Starting app initialization', 'Init');
   
   try {
     // Set up error handling first
     setupErrorHandling();
     
-    // Initialize security service with timeout
-    try {
-      await Promise.race([
-        securityService.initialize(),
-        timeout(3000) // 3 second timeout (reduced from 5)
-      ]).catch(error => {
-        console.warn('Security service initialization timed out or failed:', error.message);
-        console.warn('Continuing with initialization to prevent app from getting stuck');
-      });
-    } catch (error) {
-      console.error('Error initializing security service:', error);
-    }
+    // Initialize core services in parallel
+    await PerformanceMonitor.measureAsync('CoreServices_Init', () => initializeCoreServices());
     
-    // Initialize database with timeout
-    try {
-      await Promise.race([
-        unifiedDatabaseManager.initialize(),
-        timeout(5000) // 5 second timeout (reduced from 10)
-      ]).catch(error => {
-        console.warn('Database initialization timed out or failed:', error.message);
-        console.warn('Continuing with initialization to prevent app from getting stuck');
-      });
-    } catch (error) {
-      console.error('Error initializing database:', error);
-    }
-    
-    // Initialize notifications system with timeout
-    try {
-      await Promise.race([
-        notificationService.initialize(),
-        timeout(3000) // 3 second timeout (reduced from 5)
-      ]).catch(error => {
-        console.warn('Notification service initialization timed out or failed:', error.message);
-        console.warn('Continuing with initialization to prevent app from getting stuck');
-      });
-    } catch (error) {
-      console.error('Error initializing notification service:', error);
-    }
-    
-    // Create demo user if needed for development/testing
-    if (__DEV__) {
-      try {
-        await Promise.race([
-          createDemoUserIfNeeded(),
-          timeout(5000) // 5 second timeout (increased from 2)
-        ]).catch(error => {
-          console.warn('Demo user creation timed out or failed:', error.message);
-        });
-      } catch (error) {
-        console.error('Error creating demo user:', error);
-      }
-    }
+    // Initialize background tasks (don't await - let them run async)
+    initializeBackgroundTasks().catch(error => {
+      ProductionLogger.warn(`Background tasks failed: ${error.message}`, 'Background');
+    });
     
     // App initialization complete
     appInitialized = true;
-    console.log('App initialization complete');
+    ProductionLogger.info('✅ App initialization complete', 'Init');
     
     // Clear the initialization timer if it's still active
     if (initializationTimer) {
@@ -162,25 +227,29 @@ async function initialize(): Promise<boolean> {
     }
     
     return true;
-  } catch (error) {
-    console.error('App initialization failed:', error);
+  } catch (error: any) {
+    ProductionLogger.error(`❌ App initialization failed: ${error.message}`, 'Init');
     // Set initialized to true anyway to prevent the app from getting stuck
     appInitialized = true;
     return false;
   }
 }
 
+// Production-optimized timeout values
+const INIT_TIMEOUT = getProductionTimeout('APP_INITIALIZATION');
+const FORCE_TIMEOUT = INIT_TIMEOUT - 2000; // 2 seconds before main timeout
+
 // Initialize app immediately with a timeout to prevent getting stuck
 Promise.race([
-  initialize(),
-  timeout(10000) // 10 second overall timeout (reduced from 20)
+  PerformanceMonitor.measureAsync('Total_App_Init', () => initialize()),
+  timeout(INIT_TIMEOUT)
 ]).catch(error => {
-  console.error('App initialization timed out:', error);
+  ProductionLogger.error(`App initialization timed out: ${error.message}`, 'Init');
   appInitialized = true; // Mark as initialized to allow the app to continue
 });
 
-// Set a backup timer to force initialization to complete after 12 seconds
-initializationTimer = setTimeout(forceInitializationComplete, 12000);
+// Set a backup timer to force initialization to complete
+initializationTimer = setTimeout(forceInitializationComplete, FORCE_TIMEOUT);
 
 // Export initialization status and functions
 export { appInitialized, initialize, forceInitializationComplete };
@@ -192,35 +261,34 @@ export { appInitialized, initialize, forceInitializationComplete };
 export function handleAuthError(error: any): void {
   if (!error) return;
   
-  console.warn('Authentication error handled:', error.message || error);
+  // Only log in development or for critical errors
+  if (shouldPerformInProduction('verbose_logging') || error.message?.includes('critical')) {
+    ProductionLogger.warn(`Authentication error: ${error.message || error}`, 'Auth');
+  }
   
   // If the error is related to missing session, we can ignore it
-  // The app will continue as if the user is not authenticated
   if (error.message && error.message.includes('Auth session missing')) {
-    console.log('Auth session missing error handled gracefully');
+    ProductionLogger.debug('Auth session missing - handled gracefully', 'Auth');
     return;
   }
   
   // For other errors, log them but don't crash the app
-  console.error('Unhandled authentication error:', error);
+  ProductionLogger.error(`Unhandled authentication error: ${error.message || error}`, 'Auth');
 }
-
-// Log the initialization
-console.log('PetCareTracker app initialized with all patches applied'); 
 
 /**
  * Initialize storage buckets and other essentials
  */
 async function initializeAppEssentials() {
   try {
-    console.log('[App.init] Starting essential app initialization');
+    ProductionLogger.debug('Starting essential app initialization', 'Storage');
     
     // Initialize storage buckets for pet images
-    await initializeStorage();
+    await PerformanceMonitor.measureAsync('Storage_Init', () => initializeStorage());
 
-    console.log('[App.init] Essential initialization complete');
-  } catch (error) {
-    console.error('[App.init] Error during essential initialization:', error);
+    ProductionLogger.debug('Essential initialization complete', 'Storage');
+  } catch (error: any) {
+    ProductionLogger.error(`Essential initialization failed: ${error.message}`, 'Storage');
     // Continue despite errors - the app should still work with degraded functionality
   }
 }
@@ -228,10 +296,7 @@ async function initializeAppEssentials() {
 // Start storage initialization in the background
 // Don't await it - let it happen in parallel with app startup
 initializeAppEssentials().then(() => {
-  console.log('[App.init] Background initialization complete');
+  ProductionLogger.debug('Background initialization complete', 'Storage');
 }).catch(error => {
-  console.error('[App.init] Background initialization failed:', error);
-});
-
-// Apply other app-wide patches and configurations here
-console.log(`[App.init] Running on ${Platform.OS} (${Platform.Version})`); 
+  ProductionLogger.error(`Background initialization failed: ${error.message}`, 'Storage');
+}); 

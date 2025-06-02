@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -9,7 +9,8 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { useFocusEffect } from '@react-navigation/native';
+import { MainStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { TopNavBar } from '../components';
@@ -18,7 +19,7 @@ import { formatDate, calculateAge } from '../utils/helpers';
 import { Pet } from '../types/components';
 import { LinearGradient } from 'expo-linear-gradient';
 
-type PetProfileProps = NativeStackScreenProps<RootStackParamList, 'PetProfile'>;
+type PetProfileProps = NativeStackScreenProps<MainStackParamList, 'PetProfile'>;
 
 const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
   const { petId } = route.params;
@@ -26,8 +27,7 @@ const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
   const [pet, setPet] = useState<Pet | null>(null);
   const [loading, setLoading] = useState(true);
   
-  useEffect(() => {
-    const loadPetData = async () => {
+  const loadPetData = useCallback(async () => {
       try {
         setLoading(true);
         const petData = await unifiedDatabaseManager.pets.getById(petId);
@@ -39,10 +39,18 @@ const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
       } finally {
         setLoading(false);
       }
-    };
-    
-    loadPetData();
   }, [petId]);
+    
+  useEffect(() => {
+    loadPetData();
+  }, [loadPetData]);
+
+  // Refresh data when the screen comes back into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadPetData();
+    }, [loadPetData])
+  );
   
   if (loading) {
     return (
@@ -134,7 +142,7 @@ const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
                 <Ionicons name="scale-outline" size={20} color={colors.primary} style={styles.infoIcon} />
                 <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Weight</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {pet.weight} {pet.weightUnit}
+                  {pet.weight || 'Not Set'} {pet.weightUnit || ''}
                 </Text>
               </View>
               
@@ -142,7 +150,7 @@ const PetProfile: React.FC<PetProfileProps> = ({ route, navigation }) => {
                 <Ionicons name="male-female-outline" size={20} color={colors.primary} style={styles.infoIcon} />
                 <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Gender</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {pet.gender.charAt(0).toUpperCase() + pet.gender.slice(1)}
+                  {pet.gender ? pet.gender.charAt(0).toUpperCase() + pet.gender.slice(1) : 'Not Set'}
                 </Text>
               </View>
             </View>

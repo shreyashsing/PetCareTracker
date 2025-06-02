@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { 
@@ -16,8 +16,9 @@ import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { HealthRecord } from '../types/components';
 import { generateUUID } from '../utils/helpers';
+import { notificationService } from '../services/notifications';
 
-type AddHealthRecordScreenProps = NativeStackScreenProps<RootStackParamList, 'AddHealthRecord'>;
+type AddHealthRecordScreenProps = NativeStackScreenProps<MainStackParamList, 'AddHealthRecord'>;
 
 type RecordType = 'vaccination' | 'checkup' | 'surgery' | 'dental' | 'other';
 type SeverityType = 'low' | 'medium' | 'high';
@@ -111,17 +112,9 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         formClinic: newFormState.clinic
       });
       
-      // Extract lab results if available (for checkups)
-      if (record.labResults && record.labResults.length > 0) {
-        const weightResult = record.labResults.find((r: any) => r.name === 'Weight');
-        if (weightResult) {
-          newFormState.weight = weightResult.value;
-        }
-        
-        const tempResult = record.labResults.find((r: any) => r.name === 'Temperature');
-        if (tempResult) {
-          newFormState.temperature = tempResult.value;
-        }
+      // Extract weight if available (for checkups)
+      if (record.weight) {
+        newFormState.weight = record.weight.toString();
       }
       
       setFormState(newFormState);
@@ -211,15 +204,23 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
   };
   
   const handleChange = (name: keyof FormState, value: any) => {
-    setFormState(prev => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormState((prev) => {
+      const newState = { ...prev, [name]: value };
+      
+      // Auto-set follow-up date when follow-up is enabled
+      if (name === 'followUpNeeded' && value === true && !prev.followUpDate) {
+        newState.followUpDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+      }
+      
+      // Auto-set next due date when vaccination follow-up is enabled
+      if (name === 'nextDueDateNeeded' && value === true && !prev.nextDueDate) {
+        newState.nextDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+      }
+      
+      return newState;
+    });
     
-    setTouched(prev => ({
-      ...prev,
-      [name]: true,
-    }));
+    setTouched((prev) => ({ ...prev, [name]: true }));
   };
   
   const handleSubmit = async () => {
@@ -245,7 +246,9 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
     
     try {
       console.log('Using effective pet ID:', effectivePetId);
-      console.log('Form state type:', formState.type);
+      
+      // Define isVaccination early to use in baseRecord
+      const isVaccination = formState.type === 'vaccination';
       
       // Create base health record with common fields
       const baseRecord: Partial<HealthRecord> = {
@@ -277,16 +280,6 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         weight: formState.weight ? parseFloat(formState.weight) : undefined 
       };
       
-      console.log('Provider information being saved:', {
-        directVet: formState.veterinarian,
-        directClinic: formState.clinic,
-        provider: baseRecord.provider,
-        providerName: baseRecord.providerName,
-        providerClinic: baseRecord.providerClinic,
-        provider_name: baseRecord.provider_name,
-        provider_clinic: baseRecord.provider_clinic
-      });
-      
       // Handle different record types
       if (formState.type === 'vaccination') {
         // Vaccination record
@@ -299,14 +292,14 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           diagnosis: '',
           treatment: '',
           followUpNeeded: formState.nextDueDateNeeded,
-          followUpDate: formState.nextDueDateNeeded ? formState.nextDueDate : undefined,
+          followUpDate: formState.nextDueDateNeeded 
+            ? (formState.nextDueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)) // Default to 30 days from now if no date set
+            : undefined,
         } as HealthRecord;
         
         if (isEditMode && recordId) {
-          console.log('Updating vaccination record:', JSON.stringify(vaccinationRecord, null, 2));
           await unifiedDatabaseManager.healthRecords.update(recordId, vaccinationRecord);
         } else {
-          console.log('Creating new vaccination record:', JSON.stringify(vaccinationRecord, null, 2));
           await unifiedDatabaseManager.healthRecords.create(vaccinationRecord);
         }
         
@@ -321,49 +314,55 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           diagnosis: '',
           treatment: '',
           followUpNeeded: formState.followUpNeeded,
-          followUpDate: formState.followUpNeeded ? formState.followUpDate : undefined,
+          followUpDate: formState.followUpNeeded 
+            ? (formState.followUpDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)) // Default to 7 days from now if no date set
+            : undefined,
         } as HealthRecord;
         
         // Add weight and temperature to lab results for checkups
-        if (formState.type === 'checkup') {
-          newRecord.labResults = [];
-          
-          if (formState.weight) {
-            newRecord.labResults.push({
-            name: 'Weight',
-            value: formState.weight,
-            unit: 'kg',
-            normalRange: ''
-            });
-          }
-        
-        if (formState.temperature) {
-          newRecord.labResults.push({
-            name: 'Temperature',
-            value: formState.temperature,
-            unit: '°C',
-            normalRange: '37.5-39.2'
-          });
+        // For checkups, store weight directly in the weight field
+        if (formState.type === 'checkup' && formState.weight) {
+          newRecord.weight = parseFloat(formState.weight);
         }
-      }
-      
+        
         if (isEditMode && recordId) {
-          console.log('Updating non-vaccination record:', JSON.stringify(newRecord, null, 2));
           await unifiedDatabaseManager.healthRecords.update(recordId, newRecord as HealthRecord);
         } else {
-          console.log('Creating new non-vaccination record:', JSON.stringify(newRecord, null, 2));
-      await unifiedDatabaseManager.healthRecords.create(newRecord as HealthRecord);
+          await unifiedDatabaseManager.healthRecords.create(newRecord as HealthRecord);
         }
       }
       
       console.log('Health record saved successfully!');
+      
+      // Schedule follow-up notifications if needed
+      try {
+        // Get the created/updated record to pass to notification service
+        const savedRecord = {
+          id: isEditMode ? recordId! : generateUUID(), // For new records, we'd need the actual ID from the database
+          petId: effectivePetId,
+          type: formState.type,
+          title: formState.type === 'vaccination' ? formState.vaccineName : formState.title,
+          followUpNeeded: formState.type === 'vaccination' ? formState.nextDueDateNeeded : formState.followUpNeeded,
+          followUpDate: formState.type === 'vaccination' ? formState.nextDueDate : formState.followUpDate,
+        };
+        
+        // Only schedule notifications if follow-up is needed and date is set
+        if (savedRecord.followUpNeeded && savedRecord.followUpDate) {
+          await notificationService.scheduleHealthRecordNotifications(savedRecord);
+          console.log('✅ Health record follow-up notifications scheduled successfully');
+        }
+      } catch (notificationError) {
+        console.error('Error scheduling health record notifications:', notificationError);
+        // Don't fail the entire operation for notification errors
+      }
+      
       alert(isEditMode ? 'Health record updated successfully!' : 'Health record added successfully!');
       
       // Navigate back with refresh parameter
       if (navigation.canGoBack()) {
         navigation.goBack();
       } else {
-        navigation.navigate('Main', { screen: 'Health', params: { refresh: Date.now().toString() } } as any);
+        navigation.navigate('Health');
       }
     } catch (error) {
       console.error('Error saving health record:', error);
@@ -381,9 +380,6 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
       </View>
     );
   }
-  
-  // Once we have pet info (either from hook or AsyncStorage)
-  const isVaccination = formState.type === 'vaccination';
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -418,7 +414,7 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
             containerStyle={styles.inputContainer}
           />
           
-          {isVaccination ? (
+          {formState.type === 'vaccination' ? (
             // Vaccination specific fields
             <>
               <Input

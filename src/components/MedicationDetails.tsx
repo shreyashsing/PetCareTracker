@@ -5,6 +5,7 @@ import { useAppColors } from '../hooks/useAppColors';
 import { Medication } from '../types/components';
 import {unifiedDatabaseManager} from "../services/db";
 import { formatDate } from '../utils/helpers';
+import { notificationService } from '../services/notifications';
 
 interface MedicationDetailsProps {
   medication: Medication | null;
@@ -43,6 +44,8 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
           onPress: async () => {
             try {
               await unifiedDatabaseManager.medications.delete(medication.id);
+              // Cancel any scheduled notifications
+              await notificationService.cancelMedicationNotifications(medication.id);
               onRefresh();
               onClose();
               Alert.alert('Success', 'Medication deleted successfully');
@@ -55,12 +58,117 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
       ]
     );
   };
-  
-  // Determine medication status color
-  const getStatusColor = () => {
-    // This is a simplified version - in a real app we'd check if medication is active, scheduled, etc.
-    return '#4F46E5'; // Default to blue
+
+  const handleMarkCompleted = () => {
+    Alert.alert(
+      'Mark as Completed',
+      'Mark this medication as completed? This will stop all future reminders.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark Completed',
+          onPress: async () => {
+            try {
+              await unifiedDatabaseManager.medications.updateStatus(medication.id, 'completed');
+              await notificationService.cancelMedicationNotifications(medication.id);
+              onRefresh();
+              onClose();
+              Alert.alert('Success', 'Medication marked as completed');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to update medication status');
+              console.error('Error updating medication status:', error);
+            }
+          }
+        }
+      ]
+    );
   };
+
+  const handleDiscontinue = () => {
+    Alert.alert(
+      'Discontinue Medication',
+      'Discontinue this medication? This will stop all future reminders and mark it as discontinued.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discontinue',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await unifiedDatabaseManager.medications.updateStatus(medication.id, 'discontinued');
+              await notificationService.cancelMedicationNotifications(medication.id);
+              onRefresh();
+              onClose();
+              Alert.alert('Success', 'Medication discontinued');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to update medication status');
+              console.error('Error updating medication status:', error);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleReactivate = () => {
+    Alert.alert(
+      'Reactivate Medication',
+      'Reactivate this medication and resume notifications?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reactivate',
+          onPress: async () => {
+            try {
+              await unifiedDatabaseManager.medications.updateStatus(medication.id, 'active');
+              // Reschedule notifications if reminders are enabled
+              if (medication.reminderSettings?.enabled) {
+                await notificationService.scheduleMedicationNotifications(medication);
+              }
+              onRefresh();
+              onClose();
+              Alert.alert('Success', 'Medication reactivated');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to reactivate medication');
+              console.error('Error reactivating medication:', error);
+            }
+          }
+        }
+      ]
+    );
+  };
+  
+  // Determine medication status color and text
+  const getStatusInfo = () => {
+    switch (medication.status) {
+      case 'active':
+        return { 
+          color: colors.success || '#4CAF50', 
+          text: 'Active',
+          icon: 'checkmark-circle-outline' as const
+        };
+      case 'completed':
+        return { 
+          color: colors.primary || '#4F46E5', 
+          text: 'Completed',
+          icon: 'checkmark-done-outline' as const
+        };
+      case 'discontinued':
+        return { 
+          color: colors.warning || '#FF9800', 
+          text: 'Discontinued',
+          icon: 'stop-circle-outline' as const
+        };
+      default:
+        return { 
+          color: colors.text || '#4F46E5', 
+          text: 'Unknown',
+          icon: 'help-circle-outline' as const
+        };
+    }
+  };
+
+  const statusInfo = getStatusInfo();
   
   return (
     <Modal
@@ -75,9 +183,9 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
             <View style={styles.headerTitleContainer}>
               <View style={[
                 styles.medicationIconContainer, 
-                { backgroundColor: colors.primary + '15' }
+                { backgroundColor: statusInfo.color + '15' }
               ]}>
-                <Ionicons name="medical" size={22} color={colors.primary} />
+                <Ionicons name={statusInfo.icon} size={22} color={statusInfo.color} />
               </View>
               <Text style={[styles.headerTitle, { color: colors.text }]}>
                 {medication.name}
@@ -98,13 +206,12 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
               
               <View style={styles.infoRow}>
                 <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Status:</Text>
-                <Text style={[
-                  styles.infoValue, 
-                  styles.statusText,
-                  { color: getStatusColor() }
-                ]}>
-                  Active
-                </Text>
+                <View style={[styles.statusBadge, { backgroundColor: statusInfo.color + '15' }]}>
+                  <Ionicons name={statusInfo.icon} size={16} color={statusInfo.color} />
+                  <Text style={[styles.statusText, { color: statusInfo.color }]}>
+                    {statusInfo.text}
+                  </Text>
+                </View>
               </View>
               
               <View style={styles.infoRow}>
@@ -129,6 +236,38 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
               </View>
             </View>
             
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Duration</Text>
+              </View>
+              
+              <View style={styles.infoRow}>
+                <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Start Date:</Text>
+                <Text style={[styles.infoValue, { color: colors.text }]}>
+                  {formatDate(new Date(medication.duration.startDate))}
+                </Text>
+              </View>
+              
+              {medication.duration.endDate && !medication.duration.indefinite && (
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>End Date:</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
+                    {formatDate(new Date(medication.duration.endDate))}
+                  </Text>
+                </View>
+              )}
+              
+              {medication.duration.indefinite && (
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: colors.text + '80' }]}>Duration:</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
+                    Ongoing treatment
+                  </Text>
+                </View>
+              )}
+            </View>
+
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Ionicons name="albums-outline" size={18} color={colors.primary} />
@@ -156,132 +295,19 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
                 
                 {/* Default instructions based on medication type */}
                 <View style={styles.instructionItem}>
-                  <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
+                  <Ionicons name="time-outline" size={18} color={colors.primary} />
                   <Text style={[styles.instructionText, { color: colors.text }]}>
-                    {medication.type === 'pill' && 'Take with water'}
-                    {medication.type === 'liquid' && 'Shake well before use'}
-                    {medication.type === 'injection' && 'Store in refrigerator'}
-                    {medication.type === 'topical' && 'Apply to clean, dry skin'}
-                    {medication.type === 'chewable' && 'Take with or after food'}
-                    {medication.type === 'other' && 'Follow veterinarian instructions'}
+                    Take {medication.frequency.times} time{medication.frequency.times > 1 ? 's' : ''} per {medication.frequency.period}
                   </Text>
                 </View>
                 
-                <View style={styles.instructionItem}>
-                  <Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} />
-                  <Text style={[styles.instructionText, { color: colors.text }]}>
-                    Store in a cool, dry place
-                  </Text>
-                </View>
-                
-                <View style={styles.instructionItem}>
-                  <Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} />
-                  <Text style={[styles.instructionText, { color: colors.text }]}>
-                    Keep out of reach of children and pets
-                  </Text>
-                </View>
-              </View>
-            </View>
-            
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Ionicons name="alert-circle-outline" size={18} color={colors.primary} />
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>Side Effects</Text>
-              </View>
-              
-              <View style={styles.sideEffectsContainer}>
-                {medication.sideEffects && medication.sideEffects.length > 0 ? (
-                  medication.sideEffects.map((effect, index) => (
-                    <View 
-                      key={index} 
-                      style={[
-                        styles.sideEffectTag, 
-                        { 
-                          backgroundColor: index % 3 === 0
-                            ? colors.error + '15'
-                            : index % 3 === 1
-                              ? colors.warning + '15'
-                              : colors.primary + '15'
-                        }
-                      ]}
-                    >
-                      <Text 
-                        style={[
-                          styles.sideEffectText, 
-                          { 
-                            color: index % 3 === 0
-                              ? colors.error
-                              : index % 3 === 1
-                                ? colors.warning
-                                : colors.primary
-                          }
-                        ]}
-                      >
-                        {effect}
-                      </Text>
-                    </View>
-                  ))
-                ) : (
-                  <>
-                    <View style={[styles.sideEffectTag, { backgroundColor: colors.text + '15' }]}>
-                      <Text style={[styles.sideEffectText, { color: colors.text }]}>
-                        Consult veterinarian for side effects
-                      </Text>
-                    </View>
-                    
-                    {/* Common side effects based on medication type */}
-                    {(() => {
-                      // Show type-specific side effects
-                      switch(medication.type) {
-                        case 'pill':
-                          return (
-                            <>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Drowsiness</Text>
-                              </View>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Upset stomach</Text>
-                              </View>
-                            </>
-                          );
-                        case 'liquid':
-                          return (
-                            <>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Nausea</Text>
-                              </View>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Increased thirst</Text>
-                              </View>
-                            </>
-                          );
-                        case 'injection':
-                          return (
-                            <>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Pain at injection site</Text>
-                              </View>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Lethargy</Text>
-                              </View>
-                            </>
-                          );
-                        case 'topical':
-                          return (
-                            <>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Skin irritation</Text>
-                              </View>
-                              <View style={[styles.sideEffectTag, { backgroundColor: colors.warning + '15' }]}>
-                                <Text style={[styles.sideEffectText, { color: colors.warning }]}>Itching</Text>
-                              </View>
-                            </>
-                          );
-                        default:
-                          return null;
-                      }
-                    })()}
-                  </>
+                {medication.frequency.specificTimes && medication.frequency.specificTimes.length > 0 && (
+                  <View style={styles.instructionItem}>
+                    <Ionicons name="alarm-outline" size={18} color={colors.primary} />
+                    <Text style={[styles.instructionText, { color: colors.text }]}>
+                      Scheduled times: {medication.frequency.specificTimes.join(', ')}
+                    </Text>
+                  </View>
                 )}
               </View>
             </View>
@@ -375,21 +401,43 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
           </ScrollView>
           
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
-            <TouchableOpacity 
-              style={[styles.button, styles.deleteButton, { borderColor: '#EF4444' }]}
-              onPress={handleDelete}
-            >
-              <Ionicons name="trash-outline" size={16} color="#EF4444" />
-              <Text style={[styles.buttonText, { color: '#EF4444' }]}>Delete</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.button, styles.editButton, { backgroundColor: colors.primary }]}
-              onPress={handleEdit}
-            >
-              <Ionicons name="pencil-outline" size={16} color="white" />
-              <Text style={[styles.buttonText, { color: 'white' }]}>Edit</Text>
-            </TouchableOpacity>
+            {medication.status === 'active' ? (
+              <>
+                <TouchableOpacity 
+                  style={[styles.button, styles.completeButton, { backgroundColor: colors.success || '#4CAF50' }]}
+                  onPress={handleMarkCompleted}
+                >
+                  <Ionicons name="checkmark-outline" size={16} color="white" />
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Complete</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.button, styles.discontinueButton, { backgroundColor: colors.warning || '#FF9800' }]}
+                  onPress={handleDiscontinue}
+                >
+                  <Ionicons name="stop-outline" size={16} color="white" />
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Discontinue</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity 
+                  style={[styles.button, styles.reactivateButton, { backgroundColor: colors.primary || '#4F46E5' }]}
+                  onPress={handleReactivate}
+                >
+                  <Ionicons name="play-outline" size={16} color="white" />
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Reactivate</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.button, styles.editButton, { backgroundColor: colors.text + '20', borderColor: colors.text + '40', borderWidth: 1 }]}
+                  onPress={handleEdit}
+                >
+                  <Ionicons name="pencil-outline" size={16} color={colors.text} />
+                  <Text style={[styles.buttonText, { color: colors.text }]}>Edit</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </View>
@@ -465,8 +513,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   statusText: {
+    fontSize: 14,
     fontWeight: '600',
+    marginLeft: 6,
   },
   instructionsCard: {
     borderRadius: 12,
@@ -480,21 +537,6 @@ const styles = StyleSheet.create({
   instructionText: {
     fontSize: 14,
     marginLeft: 10,
-  },
-  sideEffectsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  sideEffectTag: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  sideEffectText: {
-    fontSize: 12,
-    fontWeight: '500',
   },
   historyCard: {
     borderRadius: 12,
@@ -543,8 +585,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 6,
   },
-  deleteButton: {
+  completeButton: {
     borderWidth: 1,
+  },
+  discontinueButton: {
+    borderWidth: 1,
+  },
+  reactivateButton: {
+    backgroundColor: '#4A90E2',
   },
   editButton: {
     backgroundColor: '#4A90E2',

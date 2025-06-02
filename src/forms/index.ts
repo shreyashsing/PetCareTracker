@@ -4,7 +4,7 @@ import Select from './Select';
 import Switch from './Switch';
 import Form, { FormContext } from './Form';
 import FormRow from './FormRow';
-import SimpleDatePicker from './SimpleDatePicker';
+import StandardDatePicker from './StandardDatePicker';
 
 export {
   Button,
@@ -14,5 +14,5 @@ export {
   Form,
   FormContext,
   FormRow,
-  SimpleDatePicker as DatePicker,
+  StandardDatePicker as DatePicker,
 }; 

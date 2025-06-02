@@ -28,11 +28,11 @@ import AddHealthRecord from './pages/AddHealthRecord';
 import FullAnalytics from './pages/FullAnalytics';
 import ChatDebug from './pages/ChatDebug';
 
-import { RootStackParamList } from './types/navigation';
+import { MainStackParamList } from './types/navigation';
 
-const Stack = createNativeStackNavigator<RootStackParamList>();
+const Stack = createNativeStackNavigator<MainStackParamList>();
 
-type ExerciseScreenProps = NativeStackScreenProps<RootStackParamList, 'Exercise'>;
+type ExerciseScreenProps = NativeStackScreenProps<MainStackParamList, 'Exercise'>;
 
 // Exercise screen implementation
 const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
@@ -90,7 +90,7 @@ export default function App() {
     <ErrorBoundary>
       <SafeAreaProvider>
         <NavigationContainer>
-          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          <StatusBar style="dark" />
           <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Home" component={Home} />
             <Stack.Screen name="Feeding" component={Feeding} />

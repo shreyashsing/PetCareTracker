@@ -1,11 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {unifiedDatabaseManager} from "../services/db";
+import { unifiedDatabaseManager } from '../services/db/UnifiedDatabaseManager';
 import { Medication } from '../types/components';
 import { useAppColors } from '../hooks/useAppColors';
-import { formatDistanceToNow, addHours, isSameDay } from 'date-fns';
 import { notificationService } from '../services/notifications';
+
+// Helper function to add hours to a date
+const addHours = (date: Date, hours: number): Date => {
+  const result = new Date(date);
+  result.setHours(result.getHours() + hours);
+  return result;
+};
+
+// Helper function to check if two dates are the same day
+const isSameDay = (date1: Date, date2: Date): boolean => {
+  return date1.getDate() === date2.getDate() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getFullYear() === date2.getFullYear();
+};
 
 interface MedicationRemindersProps {
   petId?: string;
@@ -36,16 +49,38 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
     try {
       setLoading(true);
       
+      // Check and update expired medications first
+      await unifiedDatabaseManager.medications.checkAndUpdateExpiredMedications();
+      
       // Get all medications and filter by pet ID if provided
       const allMedications = await unifiedDatabaseManager.medications.getAll();
       const medications = petId 
         ? allMedications.filter(med => med.petId === petId)
         : allMedications;
       
-      // Filter to only active medications with reminders enabled
+      // Fix any medications that have incorrect reminder settings
+      await fixIncorrectReminderSettings(medications);
+      
+      // Filter to only active medications with reminders enabled (exclude completed/discontinued)
       const activeMedications = medications.filter(
-        med => med.status === 'active' && med.reminderSettings && med.reminderSettings.enabled
+        med => med.status === 'active' && 
+               med.reminderSettings && 
+               med.reminderSettings.enabled
       );
+      
+      // Separate non-active medications for logging
+      const excludedMedications = medications.filter(med => med.status !== 'active');
+      
+      console.log(`📋 Medication filtering:`, {
+        total: medications.length,
+        active: activeMedications.length,
+        excluded: excludedMedications.map(med => ({ 
+          name: med.name, 
+          status: med.status, 
+          reminders: med.reminderSettings?.enabled,
+          reason: med.status !== 'active' ? 'non-active status' : 'reminders disabled'
+        }))
+      });
       
       // Get pet names for medications
       const petIds = new Set(activeMedications.map(med => med.petId));
@@ -87,9 +122,34 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
             break;
         }
         
+        // Check for frequency/specific times mismatch and fix it
+        let specificTimes = medication.frequency.specificTimes;
+        if (medication.frequency.period === 'day' && medication.frequency.times > 1 && 
+            specificTimes && specificTimes.length > 0 && specificTimes.length < medication.frequency.times) {
+          // Handle mismatch: frequency says 3x day but only 1 specific time provided
+          console.log(`🔧 MedicationReminders: Detected mismatch for ${medication.name}: ${medication.frequency.times}x day but only ${specificTimes.length} time(s) specified. Generating additional times.`);
+          
+          const numDoses = medication.frequency.times;
+          const wakeHour = 8; // 8:00 AM
+          const sleepHour = 22; // 10:00 PM
+          const availableHours = sleepHour - wakeHour;
+          const interval = availableHours / numDoses;
+          
+          const generatedTimes = [];
+          for (let i = 0; i < numDoses; i++) {
+            const hour = wakeHour + Math.floor(interval * i);
+            const minute = Math.round((interval * i - Math.floor(interval * i)) * 60);
+            const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+            generatedTimes.push(timeString);
+          }
+          
+          specificTimes = generatedTimes;
+          console.log(`🔧 MedicationReminders: Generated times for ${medication.name}:`, generatedTimes);
+        }
+        
         // Process specific times if available
-        if (medication.frequency.specificTimes && medication.frequency.specificTimes.length > 0) {
-          for (const timeString of medication.frequency.specificTimes) {
+        if (specificTimes && specificTimes.length > 0) {
+          for (const timeString of specificTimes) {
             const [hours, minutes] = timeString.split(':').map(Number);
             
             // Create both today and tomorrow's dose times
@@ -147,7 +207,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
             for (let i = 0; i < numDoses; i++) {
               const hour = wakeHour + Math.floor(interval * i);
               const minute = Math.round((interval * i - Math.floor(interval * i)) * 60);
-              
+      
               const doseDate = new Date(now);
               doseDate.setDate(doseDate.getDate() + dayOffset);
               doseDate.setHours(hour, minute, 0, 0);
@@ -173,11 +233,46 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
       // Sort by scheduled time
       doses.sort((a, b) => a.scheduledTime.getTime() - b.scheduledTime.getTime());
       
-      setUpcomingDoses(doses);
+      // Filter to show only the next upcoming dose per unique medication
+      const uniqueMedicationDoses: MedicationDose[] = [];
+      const seenMedications = new Set<string>();
+      
+      for (const dose of doses) {
+        if (!seenMedications.has(dose.medicationId)) {
+          uniqueMedicationDoses.push(dose);
+          seenMedications.add(dose.medicationId);
+        }
+      }
+      
+      console.log(`📋 Total potential doses: ${doses.length}, Unique medications: ${uniqueMedicationDoses.length}`);
+      
+      setUpcomingDoses(uniqueMedicationDoses);
+      
     } catch (error) {
       console.error('Error loading medication schedule:', error);
     } finally {
       setLoading(false);
+    }
+  };
+  
+  // Function to fix medications with incorrect reminder settings
+  const fixIncorrectReminderSettings = async (medications: Medication[]) => {
+    const medicationsToFix = medications.filter(med => 
+      (med.status === 'completed' || med.status === 'discontinued') && 
+      med.reminderSettings?.enabled === true
+    );
+    
+    if (medicationsToFix.length > 0) {
+      console.log(`🔧 Found ${medicationsToFix.length} medications with incorrect reminder settings. Fixing...`);
+      
+      for (const medication of medicationsToFix) {
+        try {
+          await unifiedDatabaseManager.medications.updateStatus(medication.id, medication.status);
+          console.log(`✅ Fixed reminder settings for ${medication.status} medication: ${medication.name}`);
+        } catch (error) {
+          console.error(`❌ Failed to fix reminder settings for medication ${medication.name}:`, error);
+        }
+      }
     }
   };
   
@@ -222,7 +317,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
       <View style={[styles.container, { backgroundColor: colors.card }]}>
         <Text style={[styles.title, { color: colors.text }]}>Medication Reminders</Text>
         <Text style={[styles.emptyText, { color: colors.text + '80' }]}>
-          No upcoming medication doses in the next 24 hours
+          No upcoming medication doses scheduled
         </Text>
       </View>
     );

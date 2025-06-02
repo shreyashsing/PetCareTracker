@@ -26,6 +26,7 @@ import ManagePets from '../pages/ManagePets';
 import EditPetScreen from '../pages/EditPet';
 import ExerciseScreen from '../pages/Exercise';
 import AddActivityScreen from '../pages/AddActivity';
+import WeightTrendScreen from '../pages/WeightTrend';
 
 // Create stack navigator with correct type
 const Stack = createNativeStackNavigator<MainStackParamList>();
@@ -60,6 +61,7 @@ const MainStack = () => {
       <Stack.Screen name="EditPet" component={EditPetScreen as ComponentType<any>} />
       <Stack.Screen name="Exercise" component={ExerciseScreen as ComponentType<any>} />
       <Stack.Screen name="AddActivity" component={AddActivityScreen as ComponentType<any>} />
+      <Stack.Screen name="WeightTrend" component={WeightTrendScreen as ComponentType<any>} />
     </Stack.Navigator>
   );
 };

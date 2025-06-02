@@ -117,41 +117,48 @@ export class PetRepository extends BaseRepository<Pet> {
   /**
    * Override update method to save to both AsyncStorage and Supabase
    * @param id Pet ID
-   * @param pet Pet data to update
+   * @param update Pet data to update (partial)
    * @returns Updated pet
    */
-  async update(id: string, pet: Pet): Promise<Pet> {
+  async update(id: string, update: Partial<Pet>): Promise<Pet | null> {
     console.log('PetRepository.update called for pet:', id);
+    console.log('Update data received:', JSON.stringify(update, null, 2));
     
     try {
-      // First update in AsyncStorage
-      await super.update(id, pet);
+      // First update in AsyncStorage using parent method
+      const updatedPet = await super.update(id, update);
+      
+      if (!updatedPet) {
+        console.log('Pet not found in local storage');
+        return null;
+      }
+      
       console.log('Pet updated in AsyncStorage successfully');
       
       // Then try to update in Supabase
       try {
         // Convert Pet to PetData for Supabase compatibility
         const petForSupabase: PetData = {
-          id: pet.id,
-          name: pet.name,
-          type: pet.type,
-          breed: pet.breed,
-          birthDate: pet.birthDate instanceof Date ? pet.birthDate.toISOString() : pet.birthDate,
-          weight: pet.weight,
-          gender: pet.gender,
-          color: pet.color,
-          microchipped: pet.microchipped,
-          microchipId: pet.microchipId,
-          image: pet.image,
-          userId: pet.userId
+          id: updatedPet.id,
+          name: updatedPet.name,
+          type: updatedPet.type,
+          breed: updatedPet.breed,
+          birthDate: updatedPet.birthDate instanceof Date ? updatedPet.birthDate.toISOString() : updatedPet.birthDate,
+          weight: updatedPet.weight,
+          gender: updatedPet.gender,
+          color: updatedPet.color,
+          microchipped: updatedPet.microchipped,
+          microchipId: updatedPet.microchipId,
+          image: updatedPet.image,
+          userId: updatedPet.userId
         };
         
         // Use the utility function to create Supabase-compatible pet data
         const petData = createPetForSupabase(petForSupabase);
         
         // Ensure user_id is set correctly
-        if (!petData.user_id && pet.userId) {
-          petData.user_id = pet.userId;
+        if (!petData.user_id && updatedPet.userId) {
+          petData.user_id = updatedPet.userId;
         }
         
         // If still no user_id, try to get from current auth
@@ -161,8 +168,8 @@ export class PetRepository extends BaseRepository<Pet> {
             petData.user_id = data.user.id;
             
             // Also update the pet object for local storage
-            pet.userId = data.user.id;
-            await super.update(id, pet);
+            const petWithUserId = { ...updatedPet, userId: data.user.id };
+            await super.update(id, { userId: data.user.id });
           }
         }
         
@@ -195,47 +202,55 @@ export class PetRepository extends BaseRepository<Pet> {
             
             if (insertError) {
               console.error('Error inserting pet in Supabase:', insertError);
-              return pet;
+              return updatedPet;
             }
             
             console.log('Pet inserted in Supabase successfully:', insertData);
             
             // Update local pet with any server-generated fields
-            const updatedPet = snakeToCamel<Pet>(insertData);
+            const supabasePet = snakeToCamel<Pet>(insertData);
             
             // Handle user_id to userId conversion
-            if (insertData.user_id && !updatedPet.userId) {
-              updatedPet.userId = insertData.user_id;
+            if (insertData.user_id && !supabasePet.userId) {
+              supabasePet.userId = insertData.user_id;
             }
             
             // Update local storage with the complete data
-            await super.update(id, { ...pet, ...updatedPet });
+            const finalPet = { ...updatedPet, ...supabasePet };
+            await super.update(id, finalPet);
             
-            return { ...pet, ...updatedPet };
+            return finalPet;
           }
           
           // For other errors, just return the local pet
-          return pet;
+          return updatedPet;
         }
         
         console.log('Pet updated in Supabase successfully:', data);
         
         // Update local pet with any server-generated fields
-        const updatedPet = snakeToCamel<Pet>(data);
+        const supabasePet = snakeToCamel<Pet>(data);
         
         // Handle user_id to userId conversion
-        if (data.user_id && !updatedPet.userId) {
-          updatedPet.userId = data.user_id;
+        if (data.user_id && !supabasePet.userId) {
+          supabasePet.userId = data.user_id;
         }
         
-        // Update local storage with the complete data
-        await super.update(id, { ...pet, ...updatedPet });
+        // Update local storage with the complete data if there are server changes
+        const finalPet = { ...updatedPet, ...supabasePet };
         
-        return { ...pet, ...updatedPet };
+        // Only update local storage again if there are actual changes from Supabase
+        const hasServerChanges = JSON.stringify(updatedPet) !== JSON.stringify(finalPet);
+        if (hasServerChanges) {
+          await super.update(id, finalPet);
+          return finalPet;
+        }
+        
+        return updatedPet;
       } catch (supabaseError) {
         console.error('Exception updating pet in Supabase:', supabaseError);
         // Still return the pet since it was updated locally
-        return pet;
+        return updatedPet;
       }
     } catch (error) {
       console.error('Error in PetRepository.update:', error);

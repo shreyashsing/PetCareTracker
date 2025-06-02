@@ -32,7 +32,8 @@ const getDarkColors = () => ({
 
 const MainNavigator = () => {
   const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  // Force light mode - always use light colors  
+  const isDark = false; // Changed from: colorScheme === 'dark'
   const colors = isDark ? getDarkColors() : getLightColors();
   const insets = useSafeAreaInsets();
 

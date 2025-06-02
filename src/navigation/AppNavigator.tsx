@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { ActivityIndicator, View, Text, AppState, AppStateStatus } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../providers/AuthProvider';
 import AuthStack from './AuthStack';
@@ -14,6 +14,7 @@ import type { ComponentType } from 'react';
 import StorageDiagnostic from '../pages/debug/StorageDiagnostic';
 import DebugMenu from '../pages/debug/DebugMenu';
 import { isImagePickerActive } from '../utils/imageUpload';
+import { notificationService } from '../services/notifications';
 
 // Create a type specifically for the App root navigator
 type AppRootStackParamList = {
@@ -27,7 +28,7 @@ const RootStack = createNativeStackNavigator<AppRootStackParamList>();
 // Safe component that handles the auth context
 const NavigationContent = () => {
   const { user, isLoading } = useAuth();
-  const navigationRef = useRef<any>(null);
+  const navigationRef = useRef<NavigationContainerRef<AppRootStackParamList>>(null);
   const [needsFirstPet, setNeedsFirstPet] = useState(false);
   const [checkingPets, setCheckingPets] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0); // Add a refresh key to force re-render
@@ -121,6 +122,9 @@ const NavigationContent = () => {
     if (navigationRef.current) {
       // Initialize deep links handling with the navigation reference
       initializeDeepLinks(navigationRef.current);
+      
+      // Set navigation reference for notification service
+      notificationService.setNavigationRef(navigationRef.current);
     }
   }, [navigationRef.current]);
 

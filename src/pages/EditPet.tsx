@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { 
   Form, 
   Input, 
@@ -27,17 +27,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
 import { Pet } from '../types/components';
-import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
-import { AsyncStorageService } from '../services/db/asyncStorage';
-import { useActivePet } from '../hooks/useActivePet';
+import {unifiedDatabaseManager} from "../services/db";
 import { useAuth } from '../providers/AuthProvider';
-import { uploadImageToSupabase, setImagePickerActive, deleteImageFromSupabase, updatePetImage } from '../utils/imageUpload';
-import { supabase } from '../services/supabase';
+import { usePetStore } from '../store/PetStore';
+import { setImagePickerActive, updatePetImage } from '../utils/imageUpload';
 
 const { width } = Dimensions.get('window');
 
 // Type for the screen props
-type EditPetScreenProps = NativeStackScreenProps<RootStackParamList, 'EditPet'>;
+type EditPetScreenProps = NativeStackScreenProps<MainStackParamList, 'EditPet'>;
 
 type PetType = 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
 
@@ -66,20 +64,12 @@ interface FormState {
   status: 'healthy' | 'recovering' | 'ill' | 'chronic' | 'unknown';
 }
 
-const PetTypeIcons: Record<PetType, any> = {
-  dog: 'paw',
-  cat: 'paw',
-  bird: 'egg',
-  rabbit: 'paw',
-  fish: 'water',
-  reptile: 'leaf',
-  small_mammal: 'paw',
-  other: 'paw',
-};
+
 
 const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
-  const { colors, isDark } = useAppColors();
+  const { colors } = useAppColors();
   const { user } = useAuth();
+  const { updatePet: updatePetInStore } = usePetStore();
   const [isLoading, setIsLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
   const [loadingPet, setLoadingPet] = useState(true);
@@ -167,7 +157,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               neutered: pet.neutered || false,
               adoptionDate: pet.adoptionDate ? new Date(pet.adoptionDate) : undefined,
               color: pet.color || '',
-              notes: '',  // Notes might not exist in the Pet type, initialize as empty
+              notes: pet.notes || '',
               image: pet.image,
               medicalConditions: pet.medicalConditions ? pet.medicalConditions.join(', ') : '',
               allergies: pet.allergies ? pet.allergies.join(', ') : '',
@@ -399,6 +389,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
         neutered: formState.neutered,
         adoptionDate: formState.adoptionDate,
         color: formState.color || '',
+        notes: formState.notes || '',
         image: imageUrl,
         medicalConditions: formState.medicalConditions.split(',').map(item => item.trim()).filter(Boolean),
         allergies: formState.allergies.split(',').map(item => item.trim()).filter(Boolean),
@@ -413,7 +404,15 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       console.log('Updating pet with data:', JSON.stringify(updatedPet));
       
       // Update the pet in the database
-      await unifiedDatabaseManager.pets.update(petId, updatedPet);
+      const result = await unifiedDatabaseManager.pets.update(petId, updatedPet);
+      
+      if (!result) {
+        throw new Error("Pet not found");
+      }
+      
+      // Update the pet store to propagate changes to other pages
+      updatePetInStore(result);
+      
       console.log(`Pet ${updatedPet.name} updated successfully`);
       
       // Navigate to Home screen and show success message
@@ -553,8 +552,6 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
                   label="Birth Date"
                   value={formState.birthDate || new Date()}
                   onChange={(value) => handleChange('birthDate', value)}
-                  placeholder="Select birth date"
-                  maxDate={new Date()}
                 />
               </View>
               <View style={styles.halfInput}>
@@ -665,8 +662,6 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
                 label="Adoption Date"
                 value={formState.adoptionDate || new Date()}
                 onChange={(value) => handleChange('adoptionDate', value)}
-                placeholder="Select adoption date"
-                maxDate={new Date()}
               />
             </FormRow>
             

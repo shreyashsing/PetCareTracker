@@ -106,7 +106,8 @@ export class DataManager<T extends BaseEntity> {
     }
     
     // Remove known problematic camelCase fields before conversion
-    const problematicFields = ['adoptionDate', 'microchipId', 'birthDate', 'createdAt'];
+    // Note: microchipId should NOT be removed as it's a valid field that needs conversion to microchip_id
+    const problematicFields = ['adoptionDate', 'birthDate', 'createdAt'];
     for (const field of problematicFields) {
       if (field in sanitizedEntity) {
         console.log(`Pre-sanitizing problematic field: ${field}`);
@@ -184,17 +185,29 @@ export class DataManager<T extends BaseEntity> {
       console.warn(`Warning: Found ${camelCaseFields.length} camelCase keys after conversion: `, camelCaseFields);
       // Remove any remaining camelCase keys and convert them
       camelCaseFields.forEach(camelKey => {
-        const snakeKey = camelToSnake(camelKey);
+        const snakeKey = camelKey.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
         if (!(snakeKey in snakeCaseEntity) && snakeCaseEntity[camelKey] !== undefined) {
           // Transfer value to snake_case key if it doesn't exist
           snakeCaseEntity[snakeKey] = snakeCaseEntity[camelKey];
-          console.log(`Last-minute conversion: ${camelKey} → ${snakeKey}`);
+          console.log(`Last-minute conversion: ${camelKey} → ${snakeKey}, value: ${snakeCaseEntity[camelKey]}`);
+          
+          // Debug microchipId specifically
+          if (camelKey === 'microchipId') {
+            console.log(`🔍 MICROCHIP DEBUG - Last-minute conversion successful: ${camelKey} → ${snakeKey}, value: ${snakeCaseEntity[snakeKey]}`);
+          }
         }
         // Remove the camelCase key
         delete snakeCaseEntity[camelKey];
         console.log(`Removed unexpected camelCase key: ${camelKey}`);
+        
+        // Debug microchipId specifically
+        if (camelKey === 'microchipId') {
+          console.log(`🔍 MICROCHIP DEBUG - After removal, ${snakeKey} exists: ${snakeKey in snakeCaseEntity}, value: ${snakeCaseEntity[snakeKey]}`);
+        }
       });
     }
+    
+
     
     console.log(`DataManager: Converted entity for ${this.tableName}:`, 
       JSON.stringify({
@@ -216,39 +229,47 @@ export class DataManager<T extends BaseEntity> {
     if (this.tableName === 'pets') {
       // Handle known schema mismatches for the pets table
       
-      // Fields that might not exist in the Supabase pets table schema (snake_case format)
-      const fieldsToCheck = [
-        'adoption_date',   // adoptionDate in local model
-        'birth_date',      // birthDate in local model
-        'neutered',        // Check if this exists in schema
-        'microchipped',    // Check if this exists in schema
-        'microchip_id',    // Check if this exists in schema
-        'veterinarian',    // This might be a nested object in local but not in Supabase
-        'medical_conditions', // This might be stored differently in Supabase
-        'allergies',       // This might be stored differently in Supabase
-        'status'           // This might not exist in older schemas
+      // Fields that actually don't exist in the Supabase pets table schema and should be removed
+      const fieldsToRemove: string[] = [
+        // Only remove fields that truly don't exist in the schema
+        // Most fields in the original list actually DO exist in the Supabase schema
+        // The veterinarian field is handled separately above
       ];
       
       // Check for camelCase version of the fields too (in case they weren't properly converted)
       const camelCaseFieldsToCheck = [
         'adoptionDate',
-        'microchipId',
         'birthDate',
         'createdAt'
       ];
+      
+      // Handle veterinarian data before removing it
+      if ('veterinarian' in entity && entity.veterinarian) {
+        const vet = entity.veterinarian;
+        // Extract veterinarian fields to separate columns
+        if (vet.name) entity.veterinarian_name = vet.name;
+        if (vet.phone) entity.veterinarian_phone = vet.phone;
+        if (vet.clinic) entity.veterinarian_clinic = vet.clinic;
+        console.log('Extracted veterinarian fields:', {
+          veterinarian_name: entity.veterinarian_name,
+          veterinarian_phone: entity.veterinarian_phone,
+          veterinarian_clinic: entity.veterinarian_clinic
+        });
+        // Now we can safely remove the nested object
+        delete entity.veterinarian;
+      }
       
       // Log all entity keys for debugging
       console.log(`Entity keys for ${this.tableName}:`, Object.keys(entity));
       
       // Log fields being sanitized for debugging
       console.log(`Sanitizing fields for Supabase (${this.tableName}):`, 
-        Object.keys(entity).filter(k => fieldsToCheck.includes(k) || camelCaseFieldsToCheck.includes(k)));
+        Object.keys(entity).filter(k => fieldsToRemove.includes(k) || camelCaseFieldsToCheck.includes(k)));
       
-      // Remove fields that might cause issues with the schema (snake_case version)
-      fieldsToCheck.forEach(field => {
+      // Remove fields that actually don't exist in the schema (snake_case version)
+      fieldsToRemove.forEach((field: string) => {
         if (field in entity) {
-          // Special case for veterinarian field which might be a nested object
-          console.log(`Removing field ${field} that might not exist in schema`);
+          console.log(`Removing field ${field} that doesn't exist in schema`);
           delete entity[field];
         }
       });
@@ -450,14 +471,18 @@ export class DataManager<T extends BaseEntity> {
       }
       
       // Handle follow_up_date field 
-      if (entity['followUpDate'] !== undefined) {
-        if (entity['followUpDate'] instanceof Date) {
-          entity['follow_up_date'] = formatDateForSupabase(entity['followUpDate']);
-        } else if (entity['followUpDate'] === null) {
+      if (entity['follow_up_date']) {
+        if (entity['follow_up_date'] instanceof Date) {
+          entity['follow_up_date'] = formatDateForSupabase(entity['follow_up_date']);
+        } else if (entity['follow_up_date'] === null) {
           entity['follow_up_date'] = null;
         }
-        delete entity['followUpDate'];
         console.log(`Handled follow_up_date field: ${entity['follow_up_date']}`);
+      } else if (entity['follow_up_needed'] === true && !entity['follow_up_date']) {
+        // SAFETY: If follow-up is needed but no date is set, provide a default
+        const defaultDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+        entity['follow_up_date'] = formatDateForSupabase(defaultDate);
+        console.log(`Applied default follow_up_date because follow_up_needed=true but date was missing`);
       }
       
       // Handle provider fields if they exist in a nested structure
@@ -517,9 +542,7 @@ export class DataManager<T extends BaseEntity> {
       }
       
       // Remove any nested fields that don't exist in the Supabase schema
-      if (entity['labResults']) {
-        delete entity['labResults'];
-      }
+      // (labResults field removed as it's not needed)
       
       console.log('Health record sanitized for Supabase:', Object.keys(entity));
     }
@@ -556,8 +579,11 @@ export class DataManager<T extends BaseEntity> {
     const result: Record<string, any> = {};
     
     Object.keys(obj).forEach(key => {
-      const snakeKey = camelToSnake(key);
+      // Convert individual key name from camelCase to snake_case
+      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
       const value = obj[key];
+      
+
       
       // Special handling for task-specific fields
       if (this.tableName === 'tasks') {
@@ -607,6 +633,14 @@ export class DataManager<T extends BaseEntity> {
             result['follow_up_date'] = value;
           }
           console.log(`Converting critical field followUpDate → follow_up_date in health_records`);
+        }
+        else if (key === 'overdueDate') {
+          if (value instanceof Date) {
+            result['overdue_date'] = value.toISOString();
+          } else {
+            result['overdue_date'] = value;
+          }
+          console.log(`Converting critical field overdueDate → overdue_date in health_records`);
         }
         else if (key === 'provider' && typeof value === 'object') {
           // Extract provider fields instead of nesting them
@@ -682,7 +716,7 @@ export class DataManager<T extends BaseEntity> {
     // Process object properties
     Object.keys(original).forEach(key => {
       const value = original[key];
-      const snakeKey = camelToSnake(key);
+      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
       
       // Special handling for task-specific fields
       if (this.tableName === 'tasks') {
@@ -837,6 +871,21 @@ export class DataManager<T extends BaseEntity> {
         }
       }
       
+      // Make sure overdueDate is a Date if it exists
+      if (entity['overdue_date']) {
+        try {
+          (camelCaseEntity as any).overdueDate = new Date(entity['overdue_date']);
+        } catch (error) {
+          console.error('Error converting overdue_date to Date:', error);
+          (camelCaseEntity as any).overdueDate = null;
+        }
+      }
+      
+      // Make sure overdue is a boolean if it exists
+      if (entity['overdue'] !== undefined) {
+        (camelCaseEntity as any).overdue = Boolean(entity['overdue']);
+      }
+      
       // Reconstruct provider object
       if (entity['provider_name'] || entity['provider_clinic']) {
         (camelCaseEntity as any).provider = {
@@ -858,6 +907,20 @@ export class DataManager<T extends BaseEntity> {
         followUpNeeded: (camelCaseEntity as any).followUpNeeded,
         followUpDate: (camelCaseEntity as any).followUpDate
       });
+    }
+    
+    // Handle pets table - reconstruct veterinarian object
+    else if (this.tableName === 'pets') {
+      // Reconstruct veterinarian object from separate fields
+      if (entity['veterinarian_name'] || entity['veterinarian_phone'] || entity['veterinarian_clinic']) {
+        (camelCaseEntity as any).veterinarian = {
+          name: entity['veterinarian_name'] || '',
+          phone: entity['veterinarian_phone'] || '',
+          clinic: entity['veterinarian_clinic'] || ''
+        };
+        
+        console.log('Reconstructed veterinarian object:', (camelCaseEntity as any).veterinarian);
+      }
     }
     
     return camelCaseEntity;
@@ -1122,8 +1185,14 @@ export class DataManager<T extends BaseEntity> {
       // Get the current entity
       const currentEntity = currentData[index];
       
-      // Merge the update with the current entity
-      const updatedEntity = { ...currentEntity, ...update };
+      // Pre-process the existing entity to fix any data type issues
+      const processedCurrentEntity = this.preprocessUpdateData(currentEntity as Partial<T>);
+      
+      // Pre-process the update data to handle dates and other special fields
+      const processedUpdate = this.preprocessUpdateData(update);
+      
+      // Merge the update with the processed current entity
+      const updatedEntity = { ...processedCurrentEntity, ...processedUpdate };
       
       // Validate the updated entity
       try {
@@ -1186,6 +1255,128 @@ export class DataManager<T extends BaseEntity> {
       console.error(`Error in update operation for ${this.tableName}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Pre-process update data to handle special fields and data types
+   * @param update The update data to process
+   * @returns Processed update data
+   */
+  private preprocessUpdateData(update: Partial<T>): Partial<T> {
+    const processed = { ...update } as any;
+    
+    // Handle pet-specific date fields
+    if (this.tableName === 'pets') {
+      // Handle birthDate - convert string to Date if needed, null to undefined
+      if ('birthDate' in processed) {
+        if (processed.birthDate === null) {
+          processed.birthDate = undefined;
+          console.log(`Converted birthDate null to undefined`);
+        } else if (processed.birthDate && typeof processed.birthDate === 'string') {
+          processed.birthDate = new Date(processed.birthDate);
+          console.log(`Converted birthDate string to Date: ${processed.birthDate}`);
+        }
+      }
+      
+      // Handle adoptionDate - convert string to Date if needed, null to undefined
+      if ('adoptionDate' in processed) {
+        if (processed.adoptionDate === null) {
+          processed.adoptionDate = undefined;
+          console.log(`Converted adoptionDate null to undefined`);
+        } else if (processed.adoptionDate && typeof processed.adoptionDate === 'string') {
+          processed.adoptionDate = new Date(processed.adoptionDate);
+          console.log(`Converted adoptionDate string to Date: ${processed.adoptionDate}`);
+        }
+      }
+      
+      // Handle weight - ensure it's a number
+      if ('weight' in processed && processed.weight) {
+        if (typeof processed.weight === 'string') {
+          processed.weight = parseFloat(processed.weight);
+          console.log(`Converted weight string to number: ${processed.weight}`);
+        }
+      }
+      
+      // Handle boolean fields
+      const booleanFields = ['microchipped', 'neutered'];
+      booleanFields.forEach(field => {
+        if (field in processed && processed[field] !== undefined) {
+          const value = processed[field];
+          if (typeof value === 'string') {
+            processed[field] = (value === 'true' || value === '1');
+            console.log(`Converted ${field} string to boolean: ${processed[field]}`);
+          }
+        }
+      });
+      
+      // Handle arrays
+      if ('medicalConditions' in processed && processed.medicalConditions) {
+        if (typeof processed.medicalConditions === 'string') {
+          processed.medicalConditions = []; // Default to empty array if it's a string
+          console.log(`Reset medicalConditions to empty array`);
+        }
+      }
+      
+      if ('allergies' in processed && processed.allergies) {
+        if (typeof processed.allergies === 'string') {
+          processed.allergies = []; // Default to empty array if it's a string
+          console.log(`Reset allergies to empty array`);
+        }
+      }
+    }
+    
+    // Handle medication-specific fields
+    if (this.tableName === 'medications') {
+      // Handle refillsRemaining - convert null to undefined for optional number field
+      if ('refillsRemaining' in processed) {
+        if (processed.refillsRemaining === null) {
+          processed.refillsRemaining = undefined;
+          console.log(`Converted refillsRemaining null to undefined`);
+        } else if (processed.refillsRemaining !== undefined && typeof processed.refillsRemaining === 'string') {
+          const parsed = parseInt(processed.refillsRemaining, 10);
+          if (!isNaN(parsed)) {
+            processed.refillsRemaining = parsed;
+            console.log(`Converted refillsRemaining string to number: ${processed.refillsRemaining}`);
+          } else {
+            processed.refillsRemaining = undefined;
+            console.log(`Invalid refillsRemaining string, set to undefined`);
+          }
+        }
+      }
+      
+      // Handle other optional number fields that might be null
+      const optionalNumberFields = ['prescriptionNumber'];
+      optionalNumberFields.forEach(field => {
+        if (field in processed && processed[field] === null) {
+          processed[field] = undefined;
+          console.log(`Converted ${field} null to undefined`);
+        }
+      });
+      
+      // Handle date fields in duration object
+      if ('duration' in processed && processed.duration) {
+        // Handle startDate
+        if (processed.duration.startDate) {
+          if (typeof processed.duration.startDate === 'string') {
+            processed.duration.startDate = new Date(processed.duration.startDate);
+            console.log(`Converted medication startDate string to Date: ${processed.duration.startDate}`);
+          }
+        }
+        
+        // Handle endDate
+        if ('endDate' in processed.duration) {
+          if (processed.duration.endDate === null) {
+            processed.duration.endDate = undefined;
+            console.log(`Converted medication endDate null to undefined`);
+          } else if (typeof processed.duration.endDate === 'string') {
+            processed.duration.endDate = new Date(processed.duration.endDate);
+            console.log(`Converted medication endDate string to Date: ${processed.duration.endDate}`);
+          }
+        }
+      }
+    }
+    
+    return processed;
   }
 
   /**

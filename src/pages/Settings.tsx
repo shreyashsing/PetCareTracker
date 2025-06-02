@@ -29,6 +29,7 @@ import { Pet } from '../types/components';
 import { notificationService } from '../services/notifications';
 import { MainStackParamList } from '../types/navigation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useToast } from '../hooks/use-toast';
 
 // Simple button components
 const BackButton = ({ color }: { color: string }) => (
@@ -86,6 +87,7 @@ const Settings = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'profile' | 'apiKey'>('profile');
   const [apiKey, setApiKey] = useState('');
+  const { toast } = useToast();
   
   // Check notification permissions using the notification service
   const checkNotificationPermissions = async () => {
@@ -426,7 +428,8 @@ const Settings = () => {
   };
 
   const handleOpenChatDebug = () => {
-    navigation.navigate('ChatDebug');
+    // navigation.navigate('ChatDebug');
+    Alert.alert('Chat Debug', 'Chat debug functionality not yet implemented');
   };
 
   // Dynamic styles based on theme
@@ -523,151 +526,136 @@ const Settings = () => {
           <ForwardArrow color={colors.text + '80'} />
         </TouchableOpacity>
 
-        {/* Notifications Section */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>NOTIFICATIONS</Text>
-        </View>
-        
-        <View style={[styles.optionItem, dynamicStyles.optionItem]}>
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="notifications-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Enable notifications</Text>
-          <Switch
-            value={notificationsEnabled}
-            onValueChange={toggleNotifications}
-            trackColor={{ false: colors.disabled, true: colors.primary }}
-            thumbColor="#fff"
-          />
-        </View>
-
-        {notificationsEnabled && (
-          <>
-            <View style={[styles.optionItem, dynamicStyles.optionItem]}>
-              <View style={styles.optionIconContainer}>
-                <IconWrapper name="volume-high-outline" color={colors.text} />
-              </View>
-              <Text style={[styles.optionText, dynamicStyles.optionText]}>Enable sounds</Text>
-              <Switch
-                value={soundEnabled}
-                onValueChange={setSoundEnabled}
-                trackColor={{ false: colors.disabled, true: colors.primary }}
-                thumbColor="#fff"
-              />
-            </View>
-            
-            <TouchableOpacity 
-              style={[styles.optionItem, dynamicStyles.optionItem]}
-              onPress={() => {
-                Alert.alert(
-                  'Default Reminder Time',
-                  'How many minutes before a task should we remind you?',
-                  [
-                    {
-                      text: '5 minutes',
-                      onPress: () => setReminderTimes('5')
-                    },
-                    {
-                      text: '15 minutes',
-                      onPress: () => setReminderTimes('15')
-                    },
-                    {
-                      text: '30 minutes',
-                      onPress: () => setReminderTimes('30')
-                    },
-                    {
-                      text: '1 hour',
-                      onPress: () => setReminderTimes('60')
-                    },
-                    {
-                      text: 'Cancel',
-                      style: 'cancel'
-                    }
-                  ]
-                );
-              }}
-            >
-              <View style={styles.optionIconContainer}>
-                <IconWrapper name="time-outline" color={colors.text} />
-              </View>
-              <Text style={[styles.optionText, dynamicStyles.optionText]}>Default reminder time</Text>
-              <View style={styles.valueContainer}>
-                <Text style={[styles.valueText, { color: colors.primary }]}>
-                  {reminderTimes === '60' ? '1 hour before' : `${reminderTimes} min before`}
-                </Text>
-                <ForwardArrow color={colors.text + '80'} />
-              </View>
-            </TouchableOpacity>
-          </>
-        )}
-
         {/* Pet Management Section */}
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>PET MANAGEMENT</Text>
         </View>
         
-            <TouchableOpacity
-          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
           onPress={handleManagePets}
         >
-          <View style={styles.settingsItemLeft}>
-            <IconWrapper name="paw" color={colors.primary} />
-            <Text style={[styles.settingsItemText, { color: colors.text }]}>Manage Pets</Text>
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="paw-outline" color={colors.text} />
           </View>
-          <ForwardArrow color={colors.secondary} />
-            </TouchableOpacity>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Manage pets</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => setShowPetModal(true)}
+        >
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="swap-horizontal-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Switch active pet</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        {/* Assistant & Features Section */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>FEATURES</Text>
+        </View>
         
         <TouchableOpacity 
-          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => {
+            setModalType('apiKey');
+            setModalVisible(true);
+          }}
+        >
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="key-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Configure Pet Assistant</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
           onPress={handleOpenChatAssistant}
         >
-          <View style={styles.settingsItemLeft}>
-            <IconWrapper name="chatbubble-ellipses" color={colors.primary} />
-            <Text style={[styles.settingsItemText, { color: colors.text }]}>Pet Assistant</Text>
-        </View>
-          <ForwardArrow color={colors.secondary} />
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="chatbubbles-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Open Chat Assistant</Text>
+          <ForwardArrow color={colors.text + '80'} />
         </TouchableOpacity>
 
-        {/* General Section */}
+        {/* Debug Section */}
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>GENERAL</Text>
+          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>DEBUG & SUPPORT</Text>
         </View>
         
-        {/* Add Supabase section */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>DEVELOPER</Text>
-        </View>
-
         <TouchableOpacity 
-          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
-          onPress={() => navigation.navigate('SupabaseSetup')}
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => {
+            Alert.alert('Debug Menu', 'Debug menu functionality not yet implemented');
+          }}
         >
-          <View style={styles.settingsItemLeft}>
-            <IconWrapper name="cloud-outline" color={colors.primary} />
-            <Text style={[styles.settingsItemText, { color: colors.text }]}>Supabase Setup</Text>
-          </View>
-          <ForwardArrow color={colors.secondary} />
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.settingsItem, { borderBottomColor: colors.border }]}
-          onPress={() => navigation.navigate('PetDebug')}
-        >
-          <View style={styles.settingsItemLeft}>
-            <IconWrapper name="bug-outline" color={colors.primary} />
-            <Text style={[styles.settingsItemText, { color: colors.text }]}>Pet Debug Tools</Text>
-          </View>
-          <ForwardArrow color={colors.secondary} />
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
           <View style={styles.optionIconContainer}>
             <IconWrapper name="bug-outline" color={colors.text} />
           </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Report A Bug</Text>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Debug Menu</Text>
           <ForwardArrow color={colors.text + '80'} />
         </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={handleOpenChatDebug}
+        >
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="terminal-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Chat Debug</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => {
+            Alert.alert('Storage Diagnostic', 'Storage diagnostic functionality not yet implemented');
+          }}
+        >
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="folder-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Storage Diagnostic</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        {/* App Info Section */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>APP INFO</Text>
+        </View>
         
+        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="information-circle-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>App version</Text>
+          <View style={styles.valueContainer}>
+            <Text style={[styles.valueText, { color: colors.primary }]}>1.0.0</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="shield-checkmark-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Privacy Policy</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
+          <View style={styles.optionIconContainer}>
+            <IconWrapper name="document-text-outline" color={colors.text} />
+          </View>
+          <Text style={[styles.optionText, dynamicStyles.optionText]}>Terms of Service</Text>
+          <ForwardArrow color={colors.text + '80'} />
+        </TouchableOpacity>
+
         {/* Account Section */}
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>ACCOUNT</Text>
@@ -680,66 +668,14 @@ const Settings = () => {
           <View style={styles.optionIconContainer}>
             <IconWrapper name="log-out-outline" color="#F44336" />
           </View>
-          <Text style={[styles.optionText, { color: '#F44336' }]}>Logout</Text>
+          <Text style={[styles.optionText, { color: '#F44336' }]}>Sign out</Text>
           <ForwardArrow color="#F44336" />
         </TouchableOpacity>
 
-        {/* Diagnostic Tools Section */}
-        <View style={[styles.sectionHeader, { backgroundColor: colors.card }]}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostic Tools</Text>
-          </View>
-          <TouchableOpacity style={styles.menuItem} onPress={handleOpenChatDebug}>
-            <View style={styles.menuItemLeft}>
-              <IconWrapper name="bug" color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.text }]}>Chat System Diagnostics</Text>
-            </View>
-            <ForwardArrow color={colors.secondary} />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.menuItem} 
-            onPress={() => navigation.navigate('PetDebug')}
-          >
-            <View style={styles.menuItemLeft}>
-              <IconWrapper name="medkit" color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.text }]}>Pet Database Diagnostics</Text>
-            </View>
-            <ForwardArrow color={colors.secondary} />
-          </TouchableOpacity>
+        {/* Notifications Section */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>NOTIFICATIONS</Text>
         </View>
-
-        {/* Pet Assistant API Key */}
-        <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>
-          Pet Assistant
-        </Text>
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => {
-            Alert.alert(
-              'Configure Gemini API Key',
-              'Enter your Gemini API key to use the Pet Assistant. You can get one from https://makersuite.google.com/',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { 
-                  text: 'Configure', 
-                  onPress: () => {
-                    // Open a dialog to input the API key
-                    // Since React Native doesn't have Alert.prompt on Android,
-                    // we'll create a modal for this
-                    setModalVisible(true);
-                    setModalType('apiKey');
-                  } 
-                }
-              ]
-            );
-          }}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="key-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Configure API Key</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
       </ScrollView>
       
       {/* Pet Management Modal */}
@@ -1202,6 +1138,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  settingsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+  },
+  settingsButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  settingsIcon: {
+    marginRight: 16,
+  },
+  settingsTextContainer: {
+    flex: 1,
+  },
+  settingsButtonTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  settingsButtonDescription: {
+    fontSize: 14,
   },
 });
 

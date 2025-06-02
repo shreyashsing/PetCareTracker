@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { 
@@ -18,7 +18,7 @@ import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 import { supabase } from '../services/supabase'; // Only for auth
 
-type AddTaskScreenProps = NativeStackScreenProps<RootStackParamList, 'AddTask'>;
+type AddTaskScreenProps = NativeStackScreenProps<MainStackParamList, 'AddTask'>;
 
 // Task Category enum
 type TaskCategory = 'feeding' | 'exercise' | 'medication' | 'grooming' | 'other';
@@ -393,7 +393,6 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
                 mode="date"
                 error={errors.dueDate}
                 containerStyle={styles.inputContainer}
-                allowMonthYearSelection={true}
               />
             </View>
             

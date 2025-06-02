@@ -667,6 +667,7 @@ export interface PetTable {
   neutered: boolean;
   adoption_date?: string;
   color: string;
+  notes?: string;
   image?: string;
   medical_conditions: string[];
   allergies: string[];
@@ -753,6 +754,8 @@ export interface HealthRecordTable {
   status: string;
   severity?: string;
   weight?: number;
+  overdue?: boolean;
+  overdue_date?: string;
   created_at: string;
 }
 

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "PetCareTrackerMobile",
-    "slug": "PetCareTrackerMobile",
+    "slug": "petcaretracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,18 +13,55 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.shreyash1313.PetCareTrackerMobile",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "background-fetch",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.shreyash1313.PetCareTrackerMobile"
+      "package": "com.shreyash1313.PetCareTrackerMobile",
+      "googleServicesFile": "./android/app/google-services.json",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK",
+        "android.permission.VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "scheme": "petcaretracker"
+    "scheme": "petcaretracker",
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": true,
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff"
+        }
+      ],
+      [
+        "expo-background-fetch",
+        {
+          "backgroundModes": [
+            "background-fetch"
+          ]
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f0d9faf1-7d2a-4369-aa93-85be27c920d0"
+      }
+    },
+    "owner": "shreyash1313"
   }
 }

@@ -7,7 +7,7 @@ import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
@@ -17,7 +17,7 @@ import { notificationService } from '../services/notifications';
 import { supabase } from '../services/supabase';
 import { Task } from '../types/components';
 
-type ScheduleScreenProps = NativeStackScreenProps<RootStackParamList, 'Schedule'>;
+type ScheduleScreenProps = NativeStackScreenProps<MainStackParamList, 'Schedule'>;
 
 // Local type for simplified version of Task used only in this component
 type LocalTask = {
@@ -308,8 +308,11 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
         await notificationService.scheduleTaskNotifications(task);
       }
       
-      // Reload data after status change
-      loadData();
+      // Add a brief delay to ensure database update is processed
+      console.log('Task status updated, reloading data...');
+      setTimeout(() => {
+        loadData(); // Reload data after status change
+      }, 300);
     } catch (error) {
       console.error('Error updating task status:', error);
       Alert.alert('Error', 'Failed to update task status. Please try again.');
@@ -424,10 +427,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
           </View>
           <TouchableOpacity 
             style={[styles.addButton, { backgroundColor: colors.primary }]}
-            onPress={() => navigation.navigate({
-              name: 'AddTask',
-              params: { petId: activePetId || undefined }
-            })}
+            onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
           >
             <Ionicons name="add" size={20} color="white" />
             <Text style={styles.addButtonText}>Add Task</Text>
@@ -517,12 +517,9 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                   <View style={styles.taskActions}>
                     <TouchableOpacity
                       style={styles.taskActionButton}
-                      onPress={() => navigation.navigate({
-                        name: 'AddTask',
-                        params: { 
-                          petId: activePetId || undefined,
-                          taskId: task.id 
-                        }
+                      onPress={() => navigation.navigate('AddTask', { 
+                        petId: activePetId || undefined,
+                        taskId: task.id 
                       })}
                     >
                       <Ionicons name="pencil" size={20} color={colors.primary} />
@@ -542,10 +539,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                 <Text style={[styles.emptyStateText, { color: colors.text }]}>No tasks scheduled for today</Text>
                 <TouchableOpacity 
                   style={[styles.emptyStateButton, { backgroundColor: colors.primary }]}
-                  onPress={() => navigation.navigate({
-                    name: 'AddTask',
-                    params: { petId: activePetId || undefined }
-                  })}
+                  onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
                 >
                   <Text style={styles.emptyStateButtonText}>Add a Task</Text>
                 </TouchableOpacity>
@@ -593,12 +587,9 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                   <View style={styles.upcomingActions}>
                     <TouchableOpacity
                       style={styles.upcomingActionButton}
-                      onPress={() => navigation.navigate({
-                        name: 'AddTask',
-                        params: { 
-                          petId: activePetId || undefined,
-                          taskId: event.id 
-                        }
+                      onPress={() => navigation.navigate('AddTask', { 
+                        petId: activePetId || undefined,
+                        taskId: event.id 
                       })}
                     >
                       <Ionicons name="pencil" size={20} color={colors.primary} />
@@ -618,10 +609,7 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                 <Text style={[styles.emptyStateText, { color: colors.text }]}>No upcoming events</Text>
                 <TouchableOpacity 
                   style={[styles.emptyStateButton, { backgroundColor: colors.primary }]}
-                  onPress={() => navigation.navigate({
-                    name: 'AddTask',
-                    params: { petId: activePetId || undefined }
-                  })}
+                  onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
                 >
                   <Text style={styles.emptyStateButtonText}>Schedule an Event</Text>
                 </TouchableOpacity>

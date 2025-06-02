@@ -316,7 +316,8 @@ type ChatAssistantNavigationProp = any; // Use any as a fallback
 // Main ChatAssistant Component
 const ChatAssistant = () => {
   const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  // Force light mode - always use light theme
+  const isDark = false; // Changed from: colorScheme === 'dark'
   const navigation = useNavigation<ChatAssistantNavigationProp>();
   const route = useRoute<ChatAssistantScreenRouteProp>();
   const flatListRef = useRef<FlatList>(null);

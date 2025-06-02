@@ -563,6 +563,13 @@ const healthRecordService = {
   async create(healthRecord: Omit<HealthRecord, 'id'>): Promise<HealthRecord> {
     const healthRecordData = camelToSnake(healthRecord);
     
+    // SAFETY CHECK: Ensure follow-up date is never null when follow-up is needed
+    if (healthRecordData.follow_up_needed && !healthRecord.followUpDate) {
+      const defaultDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      healthRecord.followUpDate = defaultDate;
+      console.log('Applied default follow-up date because followUpNeeded=true but date was missing');
+    }
+    
     // Convert date objects to ISO strings
     if (healthRecord.date instanceof Date) {
       healthRecordData.date = healthRecord.date.toISOString().split('T')[0];

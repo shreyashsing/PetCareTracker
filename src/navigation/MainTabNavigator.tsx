@@ -1,12 +1,12 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { AppStackParamList } from '../types/navigation';
 import Settings from '../pages/Settings';
 import ManagePets from '../pages/ManagePets';
 import DebugMenu from '../pages/debug/DebugMenu';
 import StorageDiagnostic from '../pages/debug/StorageDiagnostic';
 
-const RootStack = createNativeStackNavigator<RootStackParamList>();
+const RootStack = createNativeStackNavigator<AppStackParamList>();
 
 const RootStackNavigator = () => {
   return (

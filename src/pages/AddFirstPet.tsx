@@ -331,13 +331,12 @@ const AddFirstPet: React.FC<AddFirstPetScreenProps> = ({ navigation }) => {
           />
           
           <DatePicker
-            label="Birth Date (Approximate)"
+            label="Birth Date"
             value={formState.birthDate || new Date()}
-            onChange={(value) => handleChange('birthDate', value)}
-            placeholder="Select birth date"
-            maxDate={new Date()}
-            allowMonthYearSelection={true}
+            onChange={(date) => handleChange('birthDate', date)}
             mode="date"
+            error={errors.birthDate}
+            containerStyle={styles.inputContainer}
           />
           
           <Select
@@ -469,6 +468,9 @@ const styles = StyleSheet.create({
   buttonContainer: {
     marginTop: 20,
     marginBottom: 40,
+  },
+  inputContainer: {
+    marginBottom: 20,
   },
 });
 

@@ -20,10 +20,14 @@ CREATE TABLE IF NOT EXISTS public.pets (
   neutered BOOLEAN DEFAULT false,
   adoption_date TIMESTAMP WITH TIME ZONE,
   color TEXT,
+  notes TEXT,
   image TEXT,
   medical_conditions TEXT[] DEFAULT '{}',
   allergies TEXT[] DEFAULT '{}',
   status TEXT DEFAULT 'healthy',
+  veterinarian_name TEXT,
+  veterinarian_phone TEXT,
+  veterinarian_clinic TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

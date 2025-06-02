@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { 
@@ -45,7 +45,7 @@ const generateUUID = (): string => {
   });
 };
 
-type AddFoodItemScreenProps = NativeStackScreenProps<RootStackParamList, 'AddFoodItem'>;
+type AddFoodItemScreenProps = NativeStackScreenProps<MainStackParamList, 'AddFoodItem'>;
 
 type FoodCategory = 'dry' | 'wet' | 'treats' | 'supplements' | 'prescription' | 'other';
 
@@ -222,18 +222,6 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
         [name]: value,
       };
     });
-    
-    setTouched(prev => ({
-      ...prev,
-      [name]: true,
-    }));
-  }, []);
-  
-  const handleDateChange = useCallback((name: 'purchaseDate' | 'expiryDate', date: Date | undefined) => {
-    setFormState(prev => ({
-      ...prev,
-      [name]: date,
-    }));
     
     setTouched(prev => ({
       ...prev,
@@ -602,10 +590,10 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
               <DatePicker
                 label="Purchase Date"
                 value={formState.purchaseDate}
-                onChange={(date) => handleDateChange('purchaseDate', date || new Date())}
+                onChange={(date) => handleChange('purchaseDate', date)}
+                mode="date"
                 error={errors.purchaseDate}
                 containerStyle={styles.inputContainer}
-                allowMonthYearSelection={true}
               />
             </View>
             
@@ -613,12 +601,10 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
               <DatePicker
                 label="Expiry Date"
                 value={formState.expiryDate || new Date()}
-                onChange={(date) => handleDateChange('expiryDate', date)}
-                placeholder="Select expiry date"
+                onChange={(date) => handleChange('expiryDate', date)}
+                mode="date"
                 error={errors.expiryDate}
                 containerStyle={styles.inputContainer}
-                allowMonthYearSelection={true}
-                minDate={formState.purchaseDate}
               />
             </View>
           </FormRow>

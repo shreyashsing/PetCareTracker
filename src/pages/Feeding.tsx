@@ -21,7 +21,7 @@ import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { Meal, FoodItem, Pet } from '../types/components';
 import {unifiedDatabaseManager} from "../services/db";
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,7 +29,7 @@ import Footer from '../components/layout/Footer';
 import { notificationService } from '../services/notifications';
 import { useToast } from '../hooks/use-toast';
 
-type FeedingScreenProps = NativeStackScreenProps<RootStackParamList, 'Feeding'>;
+type FeedingScreenProps = NativeStackScreenProps<MainStackParamList, 'Feeding'>;
 
 // Simple meal type for display purposes
 interface SimpleMeal {
@@ -852,10 +852,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       </Text>
       <TouchableOpacity
         style={[styles.button, {backgroundColor: colors.primary}]}
-        onPress={() => navigation.navigate({
-          name: 'AddMeal',
-          params: { petId: activePetId || undefined }
-        })}
+        onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}
       >
         <Ionicons name="add-circle-outline" size={20} color="white" />
         <Text style={styles.buttonText}>Add First Meal</Text>
@@ -872,12 +869,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       
       <TouchableOpacity 
         style={styles.mealCardContent}
-        onPress={() => navigation.navigate({
-          name: 'AddMeal',
-          params: { 
+        onPress={() => navigation.navigate('AddMeal', { 
             petId: activePetId || undefined,
             mealId: meal.id !== 'mock-meal' ? meal.id : undefined 
-          }
         })}
       >
         <View style={styles.mealTimeColumn}>
@@ -946,12 +940,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   const RecentMealRow = React.memo(({ meal }: { meal: SimpleMeal }) => (
     <TouchableOpacity 
       style={[styles.recentMealRow, {backgroundColor: colors.card}]}
-      onPress={() => navigation.navigate({
-        name: 'AddMeal',
-        params: { 
+      onPress={() => navigation.navigate('AddMeal', { 
           petId: activePetId || undefined,
           mealId: meal.id 
-        }
       })}
     >
       <View style={styles.recentMealContent}>
@@ -1218,10 +1209,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   <View style={styles.summaryRight}>
                     <TouchableOpacity 
                       style={[styles.addMealButton, {backgroundColor: colors.primary}]}
-                      onPress={() => navigation.navigate({
-                        name: 'AddMeal',
-                        params: { petId: activePetId || undefined }
-                      })}
+                      onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}
                     >
                       <Ionicons name="add" size={24} color="white" />
                       <Text style={styles.addMealText}>Log Meal</Text>
@@ -1234,10 +1222,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
               <View style={styles.sectionContainer}>
                 <View style={styles.sectionHeader}>
                   <Text style={[styles.sectionTitle, {color: colors.text}]}>Today's Meals</Text>
-                  <TouchableOpacity onPress={() => navigation.navigate({
-                    name: 'AddMeal',
-                    params: { petId: activePetId || undefined }
-                  })}>
+                  <TouchableOpacity onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}>
                     <Text style={[styles.sectionLink, {color: colors.primary}]}>Add Meal</Text>
                   </TouchableOpacity>
                 </View>
@@ -1493,10 +1478,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                     </Text>
                     <TouchableOpacity 
                       style={[styles.createHistoryButton, {backgroundColor: colors.primary}]}
-                      onPress={() => navigation.navigate({
-                        name: 'AddMeal',
-                        params: { petId: activePetId || undefined }
-                      })}
+                      onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}
                     >
                       <Text style={styles.createHistoryButtonText}>Add Meal</Text>
                     </TouchableOpacity>
@@ -1508,10 +1490,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
               {historyMeals.length > 0 && (
                 <TouchableOpacity 
                   style={[styles.analyticsButton, {backgroundColor: colors.primary}]}
-                  onPress={() => navigation.navigate({
-                    name: 'FullAnalytics',
-                    params: { petId: activePetId || undefined }
-                  })}
+                  onPress={() => navigation.navigate('FullAnalytics', { petId: activePetId || undefined })}
                 >
                   <Ionicons name="analytics-outline" size={20} color="white" />
                   <Text style={styles.analyticsButtonText}>
@@ -1581,12 +1560,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   <View key={item.id} style={[styles.inventoryItem, {backgroundColor: colors.card}]}>
                     <TouchableOpacity 
                       style={styles.inventoryItemMainContent}
-                      onPress={() => navigation.navigate({
-                        name: 'AddFoodItem',
-                        params: { 
+                      onPress={() => navigation.navigate('AddFoodItem', { 
                           petId: activePetId || undefined,
                           itemId: item.id 
-                        }
                       })}
                     >
                       <View style={styles.inventoryItemHeader}>
@@ -1638,12 +1614,9 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                       
                       <TouchableOpacity
                         style={[styles.inventoryItemActionButton, {backgroundColor: colors.primary + '15'}]}
-                        onPress={() => navigation.navigate({
-                          name: 'AddFoodItem',
-                          params: { 
+                        onPress={() => navigation.navigate('AddFoodItem', { 
                             petId: activePetId || undefined,
                             itemId: item.id 
-                          }
                         })}
                       >
                         <Ionicons name="create-outline" size={18} color={colors.primary} />
@@ -1673,10 +1646,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   </Text>
                   <TouchableOpacity 
                     style={[styles.addFirstItemButton, {backgroundColor: colors.primary}]}
-                    onPress={() => navigation.navigate({
-                      name: 'AddFoodItem',
-                      params: { petId: activePetId || undefined }
-                    })}
+                    onPress={() => navigation.navigate('AddFoodItem', { petId: activePetId || undefined })}
                   >
                     <Text style={styles.addFirstItemText}>Add First Item</Text>
                   </TouchableOpacity>

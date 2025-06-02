@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { 
@@ -18,7 +18,7 @@ import { Medication } from '../types/components';
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 
-type AddMedicationScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMedication'>;
+type AddMedicationScreenProps = NativeStackScreenProps<MainStackParamList, 'AddMedication'>;
 
 type DosageUnit = 'tablet(s)' | 'ml' | 'mg' | 'g' | 'drop(s)' | 'application(s)';
 type FrequencyPeriod = 'day' | 'week' | 'month';
@@ -197,19 +197,84 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
     }
   };
   
+  // Validation function for medication times
+  const validateMedicationTimes = () => {
+    const warnings = [];
+    
+    if (formState.frequencyPeriod === 'day' && parseInt(formState.frequencyTimes, 10) > 1) {
+      const timesPerDay = parseInt(formState.frequencyTimes, 10);
+      const specificTimesCount = formState.reminderTimes?.length || 0;
+      
+      if (specificTimesCount === 1 && timesPerDay > 1) {
+        warnings.push(
+          `You've set the frequency to ${timesPerDay}x per day but only specified 1 time. ` +
+          `The app will automatically generate ${timesPerDay - 1} additional reminder times.`
+        );
+      } else if (specificTimesCount > 0 && specificTimesCount < timesPerDay) {
+        warnings.push(
+          `You've set the frequency to ${timesPerDay}x per day but only specified ${specificTimesCount} time(s). ` +
+          `The app will automatically generate ${timesPerDay - specificTimesCount} additional reminder times.`
+        );
+      }
+    }
+    
+    return warnings;
+  };
+  
   const handleSubmit = async () => {
-    if (!validate()) return;
-    
-    setIsLoading(true);
-    
-    // Use effective pet ID (either from params or active pet)
-    const effectivePetId = route.params?.petId || activePetId;
-    
-    if (!effectivePetId) {
-      Alert.alert('Error', 'No pet selected. Please select a pet first.');
-      setIsLoading(false);
+    if (!validate()) {
+      // Return early if validation fails
       return;
     }
+    
+    // Check for time configuration warnings
+    if (formState.reminderEnabled && formState.frequencyPeriod === 'day' && parseInt(formState.frequencyTimes, 10) > 1) {
+      const timesPerDay = parseInt(formState.frequencyTimes, 10);
+      const specificTimesCount = formState.reminderTimes?.length || 0;
+      
+      if (specificTimesCount === 1 && timesPerDay > 1) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Time Configuration Notice',
+            `You've set the frequency to ${timesPerDay}x per day but only specified 1 reminder time. The app will automatically generate ${timesPerDay - 1} additional reminder times between 8:00 AM and 10:00 PM.\n\nDo you want to continue?`,
+            [
+              { text: 'Cancel', onPress: () => resolve(false) },
+              { text: 'Continue', onPress: () => resolve(true) }
+            ]
+          );
+        });
+        
+        if (!confirmed) return;
+      } else if (specificTimesCount > 0 && specificTimesCount < timesPerDay) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Time Configuration Notice',
+            `You've set the frequency to ${timesPerDay}x per day but only specified ${specificTimesCount} reminder time(s). The app will automatically generate ${timesPerDay - specificTimesCount} additional reminder times.\n\nDo you want to continue?`,
+            [
+              { text: 'Cancel', onPress: () => resolve(false) },
+              { text: 'Continue', onPress: () => resolve(true) }
+            ]
+          );
+        });
+        
+        if (!confirmed) return;
+      }
+    }
+    
+    // Prevent multiple submissions
+    if (isLoading) {
+      return;
+    }
+    
+    // Get effective pet ID - either from editMode or from AsyncStorage
+    const effectivePetId = realPetId || activePetId;
+    
+    if (!effectivePetId) {
+      Alert.alert('Error', 'No active pet selected. Please select a pet first.');
+      return;
+    }
+    
+    setIsLoading(true);
     
     try {
       console.log('Using effective pet ID:', effectivePetId);
@@ -237,6 +302,7 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
         administrationMethod: 'oral',
         prescribedBy: '',
         refillable: false,
+        refillsRemaining: undefined,
         purpose: '',
         status: 'active',
         history: [],
@@ -260,9 +326,26 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
         
         // Handle notification scheduling for updated medication
         if (formState.reminderEnabled) {
+          try {
           // Schedule notifications for this medication
           await notificationService.scheduleMedicationNotifications(medicationRecord as Medication);
           console.log('Medication notifications scheduled successfully');
+          } catch (notificationError: any) {
+            console.error('[ERROR TRACKING] REGULAR:', notificationError);
+            
+            // Check if this is a notification limit error
+            const errorMessage = notificationError.message || '';
+            if (errorMessage.includes('maximum limit') || errorMessage.includes('limit reached')) {
+              Alert.alert(
+                'Notification Limit Reached',
+                'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
+                [{ text: 'OK' }]
+              );
+            } else {
+              // For other notification errors, just log them but don't block the medication from being saved
+              console.error('Error scheduling medication notifications:', notificationError);
+            }
+          }
         } else {
           // Cancel any existing notifications for this medication
           await notificationService.cancelMedicationNotifications(medicationId);
@@ -274,8 +357,25 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
         
         // Schedule notifications if reminders are enabled
         if (formState.reminderEnabled) {
+          try {
           await notificationService.scheduleMedicationNotifications(medicationRecord as Medication);
           console.log('Medication notifications scheduled successfully');
+          } catch (notificationError: any) {
+            console.error('[ERROR TRACKING] REGULAR:', notificationError);
+            
+            // Check if this is a notification limit error
+            const errorMessage = notificationError.message || '';
+            if (errorMessage.includes('maximum limit') || errorMessage.includes('limit reached')) {
+              Alert.alert(
+                'Notification Limit Reached',
+                'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
+                [{ text: 'OK' }]
+              );
+            } else {
+              // For other notification errors, just log them but don't block the medication from being saved
+              console.error('Error scheduling medication notifications:', notificationError);
+            }
+          }
         }
       }
       
@@ -393,7 +493,6 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
             mode="date"
             error={errors.startDate}
             containerStyle={styles.inputContainer}
-            allowMonthYearSelection={true}
           />
           
           <View style={styles.switchContainer}>
@@ -414,7 +513,6 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
               mode="date"
               error={errors.endDate}
               containerStyle={styles.inputContainer}
-              allowMonthYearSelection={true}
             />
           )}
           

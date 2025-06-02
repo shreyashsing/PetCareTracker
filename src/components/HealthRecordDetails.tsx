@@ -221,31 +221,15 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
               </View>
             )}
             
-            {record.labResults && record.labResults.length > 0 && (
+            {record.weight && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                  <Ionicons name="flask-outline" size={18} color={colors.primary} />
-                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Lab Results</Text>
+                  <Ionicons name="scale-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Weight</Text>
                 </View>
-                
-                {record.labResults.map((result, index) => (
-                  <View key={index} style={styles.labResult}>
-                    <View style={styles.labResultHeader}>
-                      <Text style={[styles.labResultName, { color: colors.text }]}>
-                        {result.name}
+                <Text style={[styles.description, { color: colors.text }]}>
+                  {record.weight} kg
                       </Text>
-                      <Text style={[styles.labResultValue, { color: colors.primary }]}>
-                        {result.value} {result.unit}
-                      </Text>
-                    </View>
-                    
-                    {result.normalRange && (
-                      <Text style={[styles.labResultRange, { color: colors.text + '70' }]}>
-                        Normal range: {result.normalRange}
-                      </Text>
-                    )}
-                  </View>
-                ))}
               </View>
             )}
             

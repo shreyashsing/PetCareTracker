@@ -13,14 +13,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
-import { Button } from '../forms';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { Button, DatePicker } from '../forms';
 import { generateUUID } from '../utils/helpers';
+import { unifiedDatabaseManager } from '../services/db';
 
-type AddActivityScreenProps = NativeStackScreenProps<RootStackParamList, 'AddActivity'>;
+type AddActivityScreenProps = NativeStackScreenProps<MainStackParamList, 'AddActivity'>;
 
 const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
   const { colors } = useAppColors();
@@ -32,7 +32,6 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
   const [distance, setDistance] = useState('');
   const [notes, setNotes] = useState('');
   const [date, setDate] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
   
   const activityTypes = [
     'Walk',
@@ -62,27 +61,45 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
     setIsLoading(true);
     
     try {
-      // This is where you would save the activity to your database
-      // For now, we'll just simulate a successful save
-      const newActivity = {
-        id: generateUUID(),
-        petId: activePetId,
-        type: activityType,
-        duration: Number(duration),
-        distance: distance ? Number(distance) : undefined,
-        date: date,
-        notes: notes,
-        createdAt: new Date()
+      // Map activity type to ActivitySession type
+      const activityTypeMap = {
+        'Walk': 'walk',
+        'Play': 'play', 
+        'Training': 'training',
+        'Grooming': 'other',
+        'Vet Visit': 'other',
+        'Other': 'other'
       };
       
-      console.log('New activity created:', newActivity);
+      const mappedType = activityTypeMap[activityType as keyof typeof activityTypeMap] || 'other';
       
-      // Add to database logic would go here
-      // await unifiedDatabaseManager.activities.create(newActivity);
+      // Create ActivitySession object
+      const newActivitySession = {
+        id: generateUUID(),
+        petId: activePetId,
+        date: date,
+        startTime: new Date(date.getTime()), // Use the selected date as start time
+        endTime: new Date(date.getTime() + (Number(duration) * 60000)), // Add duration in milliseconds
+        type: mappedType as 'walk' | 'run' | 'play' | 'swim' | 'training' | 'other',
+        duration: Number(duration),
+        distance: distance ? Number(distance) : undefined,
+        distanceUnit: 'km' as 'km' | 'mi',
+        intensity: 'moderate' as 'low' | 'moderate' | 'high', // Default to moderate
+        location: {
+          name: 'Home' // Default location
+        },
+        mood: 'happy' as 'energetic' | 'happy' | 'tired' | 'reluctant', // Default mood
+        notes: notes || undefined
+      };
+      
+      console.log('Saving activity session:', newActivitySession);
+      
+      // Save to database using the unified database manager
+      await unifiedDatabaseManager.activitySessions.create(newActivitySession);
       
       Alert.alert(
         'Success',
-        'Activity saved successfully',
+        'Activity saved successfully!',
         [
           { 
             text: 'OK', 
@@ -92,16 +109,9 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
       );
     } catch (error) {
       console.error('Error saving activity:', error);
-      Alert.alert('Error', 'Failed to save activity');
+      Alert.alert('Error', 'Failed to save activity. Please try again.');
     } finally {
       setIsLoading(false);
-    }
-  };
-  
-  const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      setDate(selectedDate);
     }
   };
   
@@ -156,29 +166,18 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
           <View style={styles.formSection}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Activity Details</Text>
             
-            <TouchableOpacity 
-              style={[styles.datePickerButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-              onPress={() => setShowDatePicker(true)}
-            >
-              <Ionicons name="calendar-outline" size={20} color={colors.primary} style={styles.inputIcon} />
-              <Text style={[styles.dateText, { color: colors.text }]}>
-                {date.toLocaleDateString()}
-              </Text>
-            </TouchableOpacity>
-            
-            {showDatePicker && (
-              <DateTimePicker
-                value={date}
-                mode="date"
-                display="default"
-                onChange={handleDateChange}
-              />
-            )}
+            <DatePicker
+              label="Date"
+              value={date}
+              onChange={(selectedDate) => setDate(selectedDate)}
+              mode="date"
+              containerStyle={styles.datePickerContainer}
+            />
             
             <View style={styles.inputRow}>
               <View style={styles.halfInput}>
                 <Text style={[styles.inputLabel, { color: colors.text }]}>Duration (minutes)</Text>
-                <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.textInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Ionicons name="time-outline" size={20} color={colors.primary} style={styles.inputIcon} />
                   <TextInput
                     style={[styles.input, { color: colors.text }]}
@@ -193,7 +192,7 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
               
               <View style={styles.halfInput}>
                 <Text style={[styles.inputLabel, { color: colors.text }]}>Distance (km)</Text>
-                <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.textInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Ionicons name="navigate-outline" size={20} color={colors.primary} style={styles.inputIcon} />
                   <TextInput
                     style={[styles.input, { color: colors.text }]}
@@ -283,16 +282,8 @@ const styles = StyleSheet.create({
   activityTypeText: {
     fontWeight: '500',
   },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
+  datePickerContainer: {
     marginBottom: 16,
-  },
-  dateText: {
-    fontSize: 16,
   },
   inputRow: {
     flexDirection: 'row',
@@ -307,13 +298,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-  },
   inputIcon: {
     marginRight: 8,
   },
@@ -321,6 +305,13 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 44,
     fontSize: 16,
+  },
+  textInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
   },
   notesContainer: {
     borderWidth: 1,

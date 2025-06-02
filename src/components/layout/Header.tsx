@@ -1,10 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { NavigationProps } from '../../types/navigation';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { MainStackParamList } from '../../types/navigation';
 
 export default function Header() {
-  const navigation = useNavigation<NavigationProps>();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
 
   return (
     <View style={styles.header}>
@@ -30,10 +31,7 @@ export default function Header() {
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.navItem} 
-          onPress={() => navigation.navigate({
-            name: 'Feeding',
-            params: {}
-          })}
+          onPress={() => navigation.navigate('Feeding', {})}
         >
           <Text style={styles.navText}>Feeding</Text>
         </TouchableOpacity>

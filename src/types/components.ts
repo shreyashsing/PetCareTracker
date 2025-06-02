@@ -4,6 +4,7 @@ export interface Pet {
   name: string;
   type: 'dog' | 'cat' | 'bird' | 'rabbit' | 'fish' | 'reptile' | 'small_mammal' | 'other';
   breed: string;
+  size?: 'tiny' | 'small' | 'medium' | 'large' | 'giant';
   birthDate: Date;
   gender: 'male' | 'female' | 'unknown';
   weight: number;
@@ -13,6 +14,7 @@ export interface Pet {
   neutered: boolean;
   adoptionDate?: Date;
   color: string;
+  notes?: string;
   image?: string;
   medicalConditions: string[];
   allergies: string[];
@@ -238,12 +240,7 @@ export interface HealthRecord {
     startDate: Date;
     endDate?: Date;
   }[];
-  labResults?: {
-    name: string;
-    value: string;
-    unit: string;
-    normalRange?: string;
-  }[];
+
   provider: {
     name: string;
     specialty?: string;
@@ -266,6 +263,9 @@ export interface HealthRecord {
   status: 'completed' | 'ongoing' | 'scheduled';
   severity?: 'low' | 'medium' | 'high';
   weight?: number;
+  // New overdue tracking fields
+  overdue?: boolean;
+  overdueDate?: Date;
 }
 
 export interface WeightRecord {

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../services/supabase';
 
-type ManagePetsScreenProps = NativeStackScreenProps<RootStackParamList, 'ManagePets'>;
+type ManagePetsScreenProps = NativeStackScreenProps<MainStackParamList, 'ManagePets'>;
 
 const ManagePets: React.FC<ManagePetsScreenProps> = ({ navigation }) => {
   const { colors } = useAppColors();
@@ -126,10 +126,7 @@ const ManagePets: React.FC<ManagePetsScreenProps> = ({ navigation }) => {
       // Brief delay to ensure AsyncStorage update completes
       setTimeout(() => {
         // Navigate to the Home screen to see the updated pet
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'Main' }],
-        });
+        navigation.navigate('Home');
       }, 100);
     } catch (error) {
       console.error('Error setting active pet:', error);

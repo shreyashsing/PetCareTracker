@@ -9,14 +9,15 @@ import {
   Image, 
   ImageBackground, 
   Dimensions,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal
 } from 'react-native';
 import { useToast } from '../hooks/use-toast';
 import { useActivePet } from '../hooks/useActivePet';
 import { format } from 'date-fns';
-import { Pet, PetStatsProps, Task, Meal, ActivitySession, HealthRecord } from '../types/components';
+import { Pet, PetStatsProps, Task, Meal, ActivitySession, HealthRecord, WeightRecord } from '../types/components';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Button } from '../forms';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,7 +36,7 @@ import { addCacheBuster, refreshImageCache } from '../utils/imageCacheHelper';
 
 const { width } = Dimensions.get('window');
 
-type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
+type HomeScreenProps = NativeStackScreenProps<MainStackParamList, 'Home'>;
 
 type Activity = {
   id: string;
@@ -275,40 +276,80 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [recentHealthRecords, setRecentHealthRecords] = useState<HealthRecord[]>([]);
   const [debugMessage, setDebugMessage] = useState<string>('');
   
+  // Add new state for health record modal
+  const [selectedHealthRecord, setSelectedHealthRecord] = useState<HealthRecord | null>(null);
+  const [healthRecordModalVisible, setHealthRecordModalVisible] = useState(false);
+  const [isMarkingComplete, setIsMarkingComplete] = useState(false);
+  
   // Add a loading ref to prevent multiple simultaneous loads
   const isLoadingRef = useRef(false);
   // Add a debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Optimize with useCallback to prevent recreation on every render
-  const calculateNextCheckup = useCallback(() => {
-    const today = new Date();
-    const nextCheckup = new Date(today);
-    nextCheckup.setMonth(today.getMonth() + 3); // Assume next checkup in 3 months
-    
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${nextCheckup.getDate()} ${monthNames[nextCheckup.getMonth()]}`;
-  }, []);
   
   // Use useCallback for the formatActivities function - move this before loadData
   const formatActivities = useCallback((tasks: Task[], meals: Meal[], healthRecords: any[] = []): Activity[] => {
     // Combine all activities
     const allActivities: Activity[] = [];
     
+    console.log(`Formatting ${tasks.length} tasks for display`);
+    
     // Format tasks
     tasks.forEach(task => {
-      if (task.status === 'completed' && task.completionDetails) {
+      // Debug log task status
+      console.log(`Task ${task.id} (${task.title}) - Status: ${task.status}, Completed: ${task.status === 'completed'}`);
+      
+      // Create an activity entry for each task, not just completed ones
+      let activityTime = '';
+      let isCompleted = false;
+      
+      if (task.status === 'completed') {
+        // For completed tasks, use completion time if available, otherwise use scheduled time
+        if (task.completionDetails?.completedAt) {
+          activityTime = format(new Date(task.completionDetails.completedAt), 'MMM d, h:mm a');
+        } else {
+          // If no completion time is available, use the scheduled time
+          const taskDate = new Date(task.scheduleInfo.date);
+          const taskTime = new Date(task.scheduleInfo.time);
+          
+          const scheduledDateTime = new Date(
+            taskDate.getFullYear(),
+            taskDate.getMonth(), 
+            taskDate.getDate(),
+            taskTime.getHours(),
+            taskTime.getMinutes()
+          );
+          
+          activityTime = format(scheduledDateTime, 'MMM d, h:mm a');
+        }
+        isCompleted = true;
+      } else {
+        // For pending tasks, use scheduled time
+        const taskDate = new Date(task.scheduleInfo.date);
+        const taskTime = new Date(task.scheduleInfo.time);
+        
+        // Create a combined date+time
+        const scheduledDateTime = new Date(
+          taskDate.getFullYear(),
+          taskDate.getMonth(), 
+          taskDate.getDate(),
+          taskTime.getHours(),
+          taskTime.getMinutes()
+        );
+        
+        activityTime = format(scheduledDateTime, 'MMM d, h:mm a');
+        isCompleted = false;
+      }
+      
         allActivities.push({
           id: `task-${task.id}`,
           title: task.title,
-          time: task.completionDetails.completedAt ? format(new Date(task.completionDetails.completedAt), 'h:mm a') : '',
-          icon: 'checkmark-circle-outline',
-          iconColor: '#4CAF50',
-          iconBackground: '#4CAF5020',
-          completed: true,
+        time: activityTime,
+        icon: isCompleted ? 'checkmark-circle-outline' : 'calendar-outline',
+        iconColor: isCompleted ? '#4CAF50' : '#2196F3',
+        iconBackground: isCompleted ? '#4CAF5020' : '#2196F320',
+        completed: isCompleted,
           category: 'task'
         });
-      }
     });
     
     // Format meals
@@ -324,7 +365,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         allActivities.push({
           id: `meal-${meal.id}`,
           title: `${meal.type} - ${foodDescription}`,
-          time: meal.time ? format(new Date(meal.time), 'h:mm a') : '',
+          time: meal.time ? format(new Date(meal.time), 'MMM d, h:mm a') : '',
           icon: 'restaurant-outline',
           iconColor: '#FFA000',
           iconBackground: '#FFA00020',
@@ -336,17 +377,47 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     
     // Format health records
     healthRecords.forEach(record => {
+      // Check if this is a follow-up due today
+      const isFollowUp = record.followUpNeeded && record.followUpDate && 
+                         new Date(record.followUpDate).toDateString() === new Date().toDateString();
+      
+      // Regular health records shouldn't appear in Today's Schedule, only in Recent Activity
+      // For follow-ups due today, create a special reminder activity
+      if (isFollowUp) {
+        // This is a follow-up reminder for today
+        allActivities.push({
+          id: `followup-${record.id}`,
+          title: record.title ? `${record.type}: ${record.title}` : record.type,
+          description: record.notes || record.description,
+          time: format(new Date(record.followUpDate), 'MMM d, h:mm a'),
+          icon: 'calendar-outline',
+          iconColor: '#FF9800',
+          iconBackground: '#FF980020',
+          // Always show as not completed - it's just a reminder
+          completed: false,
+          category: 'health-followup'
+        });
+      }
+      
+      // Also add the original health record to activities (for Recent Activity section)
+      // Only if it's not created today (to avoid duplication in Today's Schedule)
+      const recordDate = new Date(record.date);
+      const today = new Date();
+      const isCreatedToday = recordDate.toDateString() === today.toDateString();
+      
+      if (!isCreatedToday) {
       allActivities.push({
         id: `health-${record.id}`,
         title: record.type,
-        description: record.notes,
+          description: record.notes || record.description,
         time: record.date ? format(new Date(record.date), 'MMM d, h:mm a') : '',
         icon: 'fitness-outline',
         iconColor: '#2196F3',
         iconBackground: '#2196F320',
-        completed: true,
+          completed: record.status === 'completed',
         category: 'health'
       });
+      }
     });
     
     // Sort activities by time (most recent first)
@@ -439,21 +510,83 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
         
+        // Get all health records and filter by pet ID
         const allHealthRecords = await unifiedDatabaseManager.healthRecords.getAll();
-        const healthRecords = allHealthRecords.filter(record => {
-          return record.petId === petToLoadId;
-        });
+        const healthRecords = allHealthRecords.filter(record => record.petId === petToLoadId);
         console.log(`Loaded ${healthRecords.length} health records for pet ${petToLoadId}`);
         
-        // Filter to recent records
-        const recentRecords = healthRecords.filter(record => {
-          const recordDate = new Date(record.date);
-          return recordDate >= sevenDaysAgo;
-        });
-        setRecentHealthRecords(recentRecords);
+        // Filter to recent health records (last 7 days)
+        const recentRecords = healthRecords.filter(
+          (record: HealthRecord) => new Date(record.date) >= sevenDaysAgo
+        );
         
-        // Save this pet as the active pet
-        await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, petToLoadId);
+        // Get health records with follow-ups due today
+        today.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(today);
+        todayEnd.setHours(23, 59, 59, 999);
+        
+        // Find health records with follow-up dates that match today
+        const followUpsDueToday = healthRecords.filter(record => {
+          if (!record.followUpNeeded || !record.followUpDate || record.status === 'completed') {
+            return false;
+          }
+          
+          const followUpDate = new Date(record.followUpDate);
+          followUpDate.setHours(0, 0, 0, 0);
+          return followUpDate.getTime() === today.getTime();
+        });
+        
+        console.log(`Found ${followUpsDueToday.length} health record follow-ups due today`);
+        
+        // Combine recent records with follow-ups due today (avoiding duplicates)
+        const healthRecordsToDisplay = [...recentRecords];
+        
+        // Add follow-ups that aren't already in the recent records
+        followUpsDueToday.forEach(followUp => {
+          if (!healthRecordsToDisplay.some(record => record.id === followUp.id)) {
+            healthRecordsToDisplay.push(followUp);
+          }
+        });
+
+        // Save all health records to state for use in calculating next checkup
+        setRecentHealthRecords(healthRecords);
+        
+        // Load actual weight records from the weight records table (same as Health page)
+        const allWeightRecords = await unifiedDatabaseManager.weightRecords.getAll();
+        const petWeightRecords = allWeightRecords
+          .filter(record => record.petId === petToLoadId)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // If no weight records exist, create one from pet's current weight (same as Health page)
+        if (petWeightRecords.length === 0 && pet) {
+          const initialWeight: Omit<WeightRecord, 'id'> = {
+            petId: petToLoadId,
+            date: new Date(),
+            weight: pet.weight,
+            unit: pet.weightUnit,
+            notes: 'Initial weight from profile',
+            bodyConditionScore: 3
+          };
+          
+          try {
+            const createdRecord = await unifiedDatabaseManager.weightRecords.create(initialWeight);
+            petWeightRecords.push(createdRecord);
+            console.log('Created initial weight record:', createdRecord);
+          } catch (error) {
+            console.error('Error creating initial weight record:', error);
+            // Fallback to in-memory record for display
+            petWeightRecords.push({
+              id: `initial-weight-${petToLoadId}`,
+              ...initialWeight
+            } as WeightRecord);
+          }
+        }
+
+        setWeightRecords(petWeightRecords);
+        console.log(`Loaded ${petWeightRecords.length} weight records for pet ${pet.name}`);
+        
+        const formattedActivities = formatActivities(petTasks, petMeals, healthRecordsToDisplay);
+        setActivities(formattedActivities);
       }
     } catch (error) {
       console.error('Error loading pet data:', error);
@@ -558,20 +691,109 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
           });
           setMeals(petMeals);
           
-          // Load recent health records (last 7 days)
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          
-          // Get all health records and filter by pet ID
+          // Get all health records for this pet
           const allHealthRecords = await unifiedDatabaseManager.healthRecords.getAll();
           const healthRecords = allHealthRecords.filter(record => record.petId === petToLoadId);
           console.log(`Loaded ${healthRecords.length} health records for pet ${petToLoadId}`);
           
-          const recentHealthRecords = healthRecords.filter(
-            (record: HealthRecord) => new Date(record.date) >= sevenDaysAgo
+          // Print details of health records with follow-ups
+          const recordsWithFollowUps = healthRecords.filter(record => record.followUpNeeded && record.followUpDate);
+          console.log(`Found ${recordsWithFollowUps.length} health records with follow-ups`);
+          
+          recordsWithFollowUps.forEach(record => {
+            const followUpDate = new Date(record.followUpDate || '');
+            console.log(`Record: ${record.type} (${record.id}), Follow-up: ${followUpDate.toISOString()}`);
+          });
+          
+          // Save all health records to state for use in next checkup calculation
+          setRecentHealthRecords(healthRecords);
+          
+          // Load actual weight records from the weight records table (same as Health page)
+          const allWeightRecords = await unifiedDatabaseManager.weightRecords.getAll();
+          const petWeightRecords = allWeightRecords
+            .filter(record => record.petId === petToLoadId)
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  
+          // If no weight records exist, create one from pet's current weight (same as Health page)
+          if (petWeightRecords.length === 0 && pet) {
+            const initialWeight: Omit<WeightRecord, 'id'> = {
+              petId: petToLoadId,
+              date: new Date(),
+              weight: pet.weight,
+              unit: pet.weightUnit,
+              notes: 'Initial weight from profile',
+              bodyConditionScore: 3
+            };
+            
+            try {
+              const createdRecord = await unifiedDatabaseManager.weightRecords.create(initialWeight);
+              petWeightRecords.push(createdRecord);
+              console.log('Created initial weight record:', createdRecord);
+            } catch (error) {
+              console.error('Error creating initial weight record:', error);
+              // Fallback to in-memory record for display
+              petWeightRecords.push({
+                id: `initial-weight-${petToLoadId}`,
+                ...initialWeight
+              } as WeightRecord);
+            }
+          }
+  
+          setWeightRecords(petWeightRecords);
+          console.log(`Loaded ${petWeightRecords.length} weight records for pet ${pet.name}`);
+          
+          // Load recent health records (last 7 days) for display
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          
+          // Filter to recent health records (last 7 days)
+          const recentRecords = healthRecords.filter(
+            (record: HealthRecord) => {
+              try {
+                return new Date(record.date) >= sevenDaysAgo;
+              } catch (e) {
+                console.error(`Error parsing record date: ${e}`);
+                return false;
+              }
+            }
           );
           
-          const formattedActivities = formatActivities(petTasks, petMeals, recentHealthRecords);
+          // Find health records with follow-up dates that match today
+          today.setHours(0, 0, 0, 0);
+          const followUpsDueToday = healthRecords.filter(record => {
+            if (!record.followUpNeeded || !record.followUpDate || record.status === 'completed') {
+              return false;
+            }
+            
+            try {
+              const followUpDate = new Date(record.followUpDate);
+              followUpDate.setHours(0, 0, 0, 0);
+              const isToday = followUpDate.toDateString() === today.toDateString();
+              
+              if (isToday) {
+                console.log(`Follow-up due today: ${record.type} (${record.title || ''}), date: ${followUpDate.toISOString()}`);
+              }
+              
+              return isToday;
+            } catch (e) {
+              console.error(`Error checking follow-up date: ${e}`);
+              return false;
+            }
+          });
+          
+          console.log(`Found ${followUpsDueToday.length} health record follow-ups due today`);
+          
+          // Combine recent records with follow-ups due today (avoiding duplicates)
+          const healthRecordsToDisplay = [...recentRecords];
+          
+          // Add follow-ups that aren't already in the recent records
+          followUpsDueToday.forEach(followUp => {
+            if (!healthRecordsToDisplay.some(record => record.id === followUp.id)) {
+              healthRecordsToDisplay.push(followUp);
+            }
+          });
+          
+          const formattedActivities = formatActivities(petTasks, petMeals, healthRecordsToDisplay);
           setActivities(formattedActivities);
         } else {
           console.log(`Pet with ID ${petToLoadId} not found`);
@@ -637,7 +859,8 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
           return;
         }
         
-        // Always reload data when returning to Home screen
+        // Always reload data when returning to Home screen to reflect any changes made in other screens
+        console.log('Reloading home data to refresh activities and task status...');
         await loadHomeData();
       };
       
@@ -652,12 +875,12 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   // Use useCallback for the getTodaysActivities function
   const getTodaysActivities = useCallback((allActivities: Activity[]): Activity[] => {
     const today = new Date();
-    const todayString = format(today, 'MMM d, yyyy');
+    const todayString = format(today, 'MMM d');
     
     return allActivities.filter(activity => {
       if (!activity.time) return false;
       
-      // Check if the activity time includes today's date
+      // Check if the activity time includes today's date (just month and day)
       return activity.time.includes(todayString);
     });
   }, []);
@@ -706,10 +929,187 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     return getHealthStatusText();
   }, [getHealthStatusText]);
   
+  // Enhanced next checkup calculation to include type information
+  const nextCheckupInfo = useMemo(() => {
+    if (!recentHealthRecords || recentHealthRecords.length === 0) {
+      return { 
+        date: 'No upcoming checkup',
+        type: 'checkup',
+        title: '',
+        hasUpcoming: false
+      };
+    }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Create a list of upcoming health events (follow-ups and future checkups)
+    const upcomingEvents: { date: Date; type: string; title?: string; recordId: string }[] = [];
+    
+    // Process health records to find upcoming follow-ups
+    recentHealthRecords.forEach(record => {
+      // Check for follow-up dates (this is the primary way to find next health events)
+      if (record.followUpNeeded && record.followUpDate) {
+        try {
+          const followUpDate = new Date(record.followUpDate);
+          
+          // Check if there's already a follow-up health record for this original record
+          // Look for health records that were created after the original record date
+          const originalRecordDate = new Date(record.date);
+          const hasFollowUpRecord = recentHealthRecords.some(followUpRecord => {
+            if (followUpRecord.id === record.id) return false; // Skip the same record
+            
+            const followUpRecordDate = new Date(followUpRecord.date);
+            
+            // Check if this record is of the same type and created after the original
+            // and is within reasonable timeframe of the follow-up date (within 30 days)
+            const timeDifference = Math.abs(followUpRecordDate.getTime() - followUpDate.getTime());
+            const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
+            
+            return followUpRecord.type === record.type && 
+                   followUpRecordDate.getTime() > originalRecordDate.getTime() &&
+                   timeDifference <= thirtyDaysInMs;
+          });
+          
+          // If there's already a follow-up record, don't show this as overdue
+          if (hasFollowUpRecord) {
+            console.log(`Skipping ${record.type} follow-up because follow-up record exists`);
+            return;
+          }
+          
+          // Calculate how many days overdue this is
+          const twoDaysAgo = new Date();
+          twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+          twoDaysAgo.setHours(0, 0, 0, 0);
+          
+          // Only include if it's not more than 2 days overdue OR it's in the future
+          if (followUpDate.getTime() >= twoDaysAgo.getTime()) {
+            upcomingEvents.push({
+              date: followUpDate,
+              type: record.type,
+              title: record.title,
+              recordId: record.id
+            });
+            
+            console.log(`Added ${record.type} follow-up: ${record.title} on ${followUpDate.toISOString()}`);
+          } else {
+            console.log(`Skipping ${record.type} follow-up because it's more than 2 days overdue`);
+          }
+        } catch (error) {
+          console.error(`Error parsing follow-up date: ${error}`);
+        }
+      }
+    });
+    
+    // Sort upcoming events by date (earliest first)
+    upcomingEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    // If we found upcoming health events, use the earliest one
+    if (upcomingEvents.length > 0) {
+      const nextEvent = upcomingEvents[0];
+      const isOverdue = nextEvent.date.getTime() < today.getTime();
+      
+      return {
+        date: isOverdue ? 'Overdue' : format(nextEvent.date, 'MMM d, yyyy'),
+        type: nextEvent.type,
+        title: nextEvent.title || '',
+        hasUpcoming: true
+      };
+    }
+    
+    // If no upcoming events, show "No upcoming checkup"
+    return { 
+      date: 'No upcoming checkup',
+      type: 'checkup',
+      title: '',
+      hasUpcoming: false
+    };
+  }, [recentHealthRecords]);
+  
   const nextCheckupDate = useMemo(() => {
-    return calculateNextCheckup();
-  }, [calculateNextCheckup]);
+    return nextCheckupInfo.date;
+  }, [nextCheckupInfo]);
 
+  // Calculate the most recent health record by date
+  const mostRecentHealthRecord = useMemo(() => {
+    if (!recentHealthRecords || recentHealthRecords.length === 0) {
+      return null;
+    }
+    
+    // Sort health records by date (most recent first)
+    const sortedRecords = [...recentHealthRecords].sort((a, b) => {
+      try {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateB - dateA; // Most recent first
+      } catch (error) {
+        console.error('Error sorting health records by date:', error);
+        return 0;
+      }
+    });
+    
+    return sortedRecords[0];
+  }, [recentHealthRecords]);
+
+  // Calculate weight trend based on health records with weight data (matching Health page logic)
+  const weightTrend = useMemo(() => {
+    // This will be updated when we load weight records properly
+    return {
+      trend: 'stable',
+      text: 'Loading...',
+      icon: 'remove',
+      color: '#6B7280'
+    };
+  }, []);
+
+  // Add state for weight records (same as Health page)
+  const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
+  
+  // Calculate weight trend using actual weight records (exactly like Health page)
+  const calculatedWeightTrend = useMemo(() => {
+    if (weightRecords.length < 2) {
+      return {
+        trend: 'stable',
+        text: 'No data',
+        icon: 'remove',
+        color: '#6B7280'
+      };
+    }
+
+    // Sort weights by date (newest first) - same as Health page calculateHealthMetrics
+    const sortedWeights = [...weightRecords].sort((a, b) => 
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    const currentWeight = sortedWeights[0].weight;
+    const previousWeight = sortedWeights[1].weight;
+    const weightChange = currentWeight - previousWeight;
+
+    // Health page logic: if change is less than 0.1, it's stable
+    if (Math.abs(weightChange) < 0.1) {
+      return {
+        trend: 'stable',
+        text: 'Stable',
+        icon: 'remove',
+        color: '#4CAF50'
+      };
+    } else if (weightChange > 0) {
+      return {
+        trend: 'up',
+        text: `+${Math.abs(weightChange).toFixed(1)}${activePet?.weightUnit || 'kg'}`,
+        icon: 'trending-up',
+        color: '#f59e0b' // Use same orange as Health page WeightTrendCard
+      };
+    } else {
+      return {
+        trend: 'down',
+        text: `-${Math.abs(weightChange).toFixed(1)}${activePet?.weightUnit || 'kg'}`,
+        icon: 'trending-down',
+        color: '#3b82f6' // Use same blue as Health page WeightTrendCard
+      };
+    }
+  }, [weightRecords, activePet?.weightUnit]);
+  
   // Debug sync function
   const debugSync = async () => {
     try {
@@ -732,6 +1132,239 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       setDebugMessage(`Error: ${error.message}`);
     }
   };
+
+  // Function to handle health record follow-up click
+  const handleHealthRecordClick = useCallback((activityId: string) => {
+    // Extract health record ID from activity ID (format: "followup-{recordId}")
+    const recordId = activityId.replace('followup-', '');
+    
+    // Find the health record
+    const healthRecord = recentHealthRecords.find(record => record.id === recordId);
+    
+    if (healthRecord) {
+      setSelectedHealthRecord(healthRecord);
+      setHealthRecordModalVisible(true);
+    } else {
+      toast({
+        title: "Health record not found",
+        description: "Unable to find the health record details",
+        variant: 'destructive'
+      });
+    }
+  }, [recentHealthRecords, toast]);
+  
+  // Function to mark health record follow-up as complete
+  const markFollowUpComplete = useCallback(async () => {
+    if (!selectedHealthRecord) return;
+    
+    setIsMarkingComplete(true);
+    
+    try {
+      // Update the health record to mark follow-up as complete
+      const currentDate = new Date();
+      const updatedRecord = {
+        ...selectedHealthRecord,
+        followUpNeeded: false,
+        status: 'completed' as const,
+        // Update the date to reflect when the follow-up was actually completed
+        date: currentDate
+      };
+      
+      await unifiedDatabaseManager.healthRecords.update(selectedHealthRecord.id, updatedRecord);
+      
+      toast({
+        title: "Follow-up completed",
+        description: `Health record follow-up completed on ${format(currentDate, 'MMM d, yyyy')}`,
+        variant: 'default'
+      });
+      
+      // Close modal and refresh data
+      setHealthRecordModalVisible(false);
+      setSelectedHealthRecord(null);
+      
+      // Refresh the home data to update the schedule
+      await loadHomeData();
+      
+    } catch (error) {
+      console.error('Error marking follow-up as complete:', error);
+      toast({
+        title: "Error",
+        description: "Failed to mark follow-up as complete",
+        variant: 'destructive'
+      });
+    } finally {
+      setIsMarkingComplete(false);
+    }
+  }, [selectedHealthRecord, toast, loadHomeData]);
+  
+  // Function to close health record modal
+  const closeHealthRecordModal = useCallback(() => {
+    setHealthRecordModalVisible(false);
+    setSelectedHealthRecord(null);
+  }, []);
+
+  // Health Record Details Modal Component
+  const HealthRecordModal = React.memo(() => {
+    if (!selectedHealthRecord) return null;
+    
+    const formatDate = (dateString: string | Date) => {
+      try {
+        const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+        return format(date, 'MMM d, yyyy');
+      } catch {
+        return typeof dateString === 'string' ? dateString : dateString.toString();
+      }
+    };
+    
+    const formatTime = (dateString: string | Date) => {
+      try {
+        const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+        return format(date, 'h:mm a');
+      } catch {
+        return '';
+      }
+    };
+    
+    return (
+      <Modal
+        visible={healthRecordModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeHealthRecordModal}
+      >
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+            <TouchableOpacity onPress={closeHealthRecordModal}>
+              <Icon name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Health Record Details</Text>
+            <View style={{ width: 24 }} />
+          </View>
+          
+          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <View style={[styles.healthRecordCard, { backgroundColor: colors.card }]}>
+              <View style={styles.healthRecordHeader}>
+                <View style={[styles.healthRecordIcon, { backgroundColor: colors.primary + '20' }]}>
+                  <Icon name="fitness-outline" size={24} color={colors.primary} />
+                </View>
+                <View style={styles.healthRecordInfo}>
+                  <Text style={[styles.healthRecordType, { color: colors.text }]}>
+                    {selectedHealthRecord.type}
+                  </Text>
+                  {selectedHealthRecord.title && (
+                    <Text style={[styles.healthRecordTitle, { color: colors.text + '80' }]}>
+                      {selectedHealthRecord.title}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              
+              <View style={styles.healthRecordDetails}>
+                <View style={styles.detailRow}>
+                  <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Date:</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {formatDate(selectedHealthRecord.date)}
+                  </Text>
+                </View>
+                
+                {selectedHealthRecord.followUpDate && (
+                  <View style={styles.detailRow}>
+                    <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Follow-up Due:</Text>
+                    <Text style={[styles.detailValue, { color: '#FF9800' }]}>
+                      {formatDate(selectedHealthRecord.followUpDate)}
+                    </Text>
+                  </View>
+                )}
+                
+                {selectedHealthRecord.description && (
+                  <View style={styles.detailColumn}>
+                    <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Description:</Text>
+                    <Text style={[styles.detailValue, { color: colors.text, marginTop: 4 }]}>
+                      {selectedHealthRecord.description}
+                    </Text>
+                  </View>
+                )}
+                
+                {selectedHealthRecord.treatment && (
+                  <View style={styles.detailColumn}>
+                    <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Treatment:</Text>
+                    <Text style={[styles.detailValue, { color: colors.text, marginTop: 4 }]}>
+                      {selectedHealthRecord.treatment}
+                    </Text>
+                  </View>
+                )}
+                
+                {selectedHealthRecord.veterinarian && (
+                  <View style={styles.detailRow}>
+                    <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Veterinarian:</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>
+                      {selectedHealthRecord.veterinarian}
+                    </Text>
+                  </View>
+                )}
+                
+                {selectedHealthRecord.medications && selectedHealthRecord.medications.length > 0 && (
+                  <View style={styles.detailColumn}>
+                    <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Medications:</Text>
+                    <View style={{ marginTop: 4 }}>
+                      {selectedHealthRecord.medications.map((medication, index) => (
+                        <Text key={index} style={[styles.detailValue, { color: colors.text, marginBottom: 2 }]}>
+                          • {medication.name} - {medication.dosage}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                )}
+                
+                <View style={styles.detailRow}>
+                  <Text style={[styles.detailLabel, { color: colors.text + '80' }]}>Status:</Text>
+                  <View style={[
+                    styles.statusBadge, 
+                    { backgroundColor: selectedHealthRecord.followUpNeeded ? '#FF980020' : '#4CAF5020' }
+                  ]}>
+                    <Text style={[
+                      styles.statusText, 
+                      { color: selectedHealthRecord.followUpNeeded ? '#FF9800' : '#4CAF50' }
+                    ]}>
+                      {selectedHealthRecord.followUpNeeded ? 'Follow-up Required' : 'Completed'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+            
+            {selectedHealthRecord.followUpNeeded && (
+              <View style={[styles.followUpSection, { backgroundColor: colors.card }]}>
+                <Icon name="alarm-outline" size={24} color="#FF9800" />
+                <Text style={[styles.followUpText, { color: colors.text }]}>
+                  This health record requires a follow-up. Mark as complete when the follow-up care has been provided.
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+          
+          {selectedHealthRecord.followUpNeeded && (
+            <View style={[styles.modalFooter, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+              <TouchableOpacity
+                style={[styles.completeFollowUpButton, { backgroundColor: colors.primary }]}
+                onPress={markFollowUpComplete}
+                disabled={isMarkingComplete}
+              >
+                {isMarkingComplete ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <>
+                    <Icon name="checkmark-circle-outline" size={20} color="white" />
+                    <Text style={styles.completeFollowUpButtonText}>Mark Follow-up Complete</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </Modal>
+    );
+  });
 
   if (loading) {
     return (
@@ -887,19 +1520,22 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                       <View
                         style={[
                           styles.healthIndicator,
-                          { backgroundColor: healthStatusColorValue + '20' },
+                          { backgroundColor: colors.primary + '20' },
                         ]}
                       >
                         <Text
                           style={[
                             styles.healthIndicatorText,
-                            { color: healthStatusColorValue },
+                            { color: colors.primary },
                           ]}
                         >
-                          {healthStatusTextValue}
+                          {activePet.adoptionDate 
+                            ? format(new Date(activePet.adoptionDate), 'MMM yyyy')
+                            : 'Forever home'
+                          }
                         </Text>
                       </View>
-                      <Text style={[styles.petStatLabel, { color: colors.text + '60' }]}>Status</Text>
+                      <Text style={[styles.petStatLabel, { color: colors.text + '60' }]}>Family since</Text>
                     </View>
                   </View>
                 </View>
@@ -907,10 +1543,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
               <View style={styles.cardActions}>
                 <TouchableOpacity
                   style={[styles.cardAction, { backgroundColor: colors.primary + '10' }]}
-                  onPress={() => navigation.navigate({
-                    name: 'Feeding',
-                    params: {}
-                  })}
+                  onPress={() => navigation.navigate('Feeding', { refresh: true })}
                 >
                   <Icon name="nutrition-outline" size={20} color={colors.primary} />
                   <Text style={[styles.cardActionText, { color: colors.primary }]}>Feeding</Text>
@@ -951,6 +1584,12 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                         { backgroundColor: colors.card },
                         index === todayActivities.length - 1 ? { marginBottom: 0 } : null,
                       ]}
+                      onPress={() => {
+                        if (activity.category === 'health-followup') {
+                          handleHealthRecordClick(activity.id);
+                        }
+                      }}
+                      disabled={activity.category !== 'health-followup'}
                     >
                       <View
                         style={[
@@ -974,9 +1613,18 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                       </View>
                       <View style={styles.scheduleStatus}>
                         {activity.completed ? (
-                          <Icon name="checkmark-circle" size={24} color="#2dce89" />
-                        ) : (
+                          <View style={[styles.completedStatusContainer, { backgroundColor: "#2dce8920" }]}>
+                            <Icon name="checkmark-circle" size={16} color="#2dce89" />
+                            <Text style={[styles.completedText, { color: "#2dce89", marginLeft: 4 }]}>Completed</Text>
+                          </View>
+                        ) : activity.category === 'health-followup' ? (
+                          // Only show timer icon for health follow-up reminders, no text
                           <Icon name="time-outline" size={24} color="#fb6340" />
+                        ) : (
+                          <View style={[styles.pendingStatusContainer, { backgroundColor: "#fb634020" }]}>
+                            <Icon name="time-outline" size={16} color="#fb6340" />
+                            <Text style={[styles.completedText, { color: "#fb6340", marginLeft: 4 }]}>Pending</Text>
+                          </View>
                         )}
                       </View>
                     </TouchableOpacity>
@@ -1002,51 +1650,131 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
               Pet Health Overview
             </Text>
             
+            {/* Enhanced Health Overview with Grid Layout */}
             <View style={styles.healthOverviewContainer}>
-              <View style={[styles.healthCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.healthIconContainer, { backgroundColor: '#4CAF50' + '20' }]}>
-                  <Icon name="pulse-outline" size={24} color="#4CAF50" />
-                </View>
-                <View style={styles.healthCardContent}>
-                  <Text style={[styles.healthCardTitle, { color: colors.text }]}>Overall Health</Text>
-                  <Text style={[styles.healthCardValue, { color: healthStatusColorValue }]}>
-                    {healthStatusTextValue}
+              {/* Health Metrics Grid */}
+              <View style={styles.healthMetricsGrid}>
+                {/* Next Checkup Card */}
+                <TouchableOpacity 
+                  style={[styles.healthMetricCard, { backgroundColor: colors.card }]}
+                  onPress={() => navigation.navigate('Health')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.metricHeader}>
+                    <View style={styles.metricIconGroup}>
+                      <View style={[styles.metricIconContainer, { 
+                        backgroundColor: (nextCheckupInfo.hasUpcoming !== false) ? '#FF9800' + '20' : '#6B7280' + '20' 
+                      }]}>
+                        <Icon 
+                          name={(nextCheckupInfo.hasUpcoming !== false) ? "calendar" : "calendar-outline"} 
+                          size={20} 
+                          color={(nextCheckupInfo.hasUpcoming !== false) ? "#FF9800" : "#6B7280"} 
+                        />
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={[styles.metricTitle, { color: colors.text }]}>
+                    {(nextCheckupInfo.hasUpcoming !== false) 
+                      ? (nextCheckupInfo.type ? `Next ${nextCheckupInfo.type.charAt(0).toUpperCase() + nextCheckupInfo.type.slice(1)}` : 'Next Checkup')
+                      : 'Schedule Checkup'
+                    }
                   </Text>
-                </View>
-              </View>
-              
-              <View style={[styles.healthCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.healthIconContainer, { backgroundColor: '#FF9800' + '20' }]}>
-                  <Icon name="alarm-outline" size={24} color="#FF9800" />
-                </View>
-                <View style={styles.healthCardContent}>
-                  <Text style={[styles.healthCardTitle, { color: colors.text }]}>Next Checkup</Text>
-                  <Text style={[styles.healthCardValue, { color: colors.text }]}>
+                  <Text style={[styles.metricValue, { 
+                    color: nextCheckupDate === 'Overdue' ? '#F44336' : 
+                           (nextCheckupInfo.hasUpcoming !== false) ? colors.text : colors.text + '60' 
+                  }]}>
                     {nextCheckupDate}
                   </Text>
-                </View>
-              </View>
-              
-              <View style={[styles.healthCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.healthIconContainer, { backgroundColor: '#2196F3' + '20' }]}>
-                  <Icon name="fitness-outline" size={24} color="#2196F3" />
-                </View>
-                <View style={styles.healthCardContent}>
-                  <Text style={[styles.healthCardTitle, { color: colors.text }]}>Weight Trend</Text>
-                  <Text style={[styles.healthCardValue, { color: colors.text }]}>
-                    {activePet.weight} {activePet.weightUnit}
+                  {nextCheckupInfo.title && (
+                    <Text style={[styles.metricSubtitle, { color: colors.text + '70' }]} numberOfLines={1}>
+                      {nextCheckupInfo.title}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Weight Trend Card */}
+                <TouchableOpacity 
+                  style={[styles.healthMetricCard, { backgroundColor: colors.card }]}
+                  onPress={() => navigation.navigate('WeightTrend' as any)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.metricHeader}>
+                    <View style={styles.metricIconGroup}>
+                      <View style={[styles.metricIconContainer, { backgroundColor: '#2196F3' + '20' }]}>
+                        <Icon name="fitness" size={20} color="#2196F3" />
+                      </View>
+                      <View style={[styles.trendIndicator, { backgroundColor: calculatedWeightTrend.color + '20' }]}>
+                        <Icon name={calculatedWeightTrend.icon} size={14} color={calculatedWeightTrend.color} />
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={[styles.metricTitle, { color: colors.text }]}>Weight</Text>
+                  <Text style={[styles.metricValue, { color: colors.text }]}>
+                    {activePet?.weight} {activePet?.weightUnit}
                   </Text>
+                  <Text style={[styles.metricSubtitle, { color: calculatedWeightTrend.color }]}>
+                    {calculatedWeightTrend.text}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Recent Activity Card */}
+                <TouchableOpacity 
+                  style={[styles.healthMetricCard, { backgroundColor: colors.card }]}
+                  onPress={() => navigation.navigate('Health')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.metricHeader}>
+                    <View style={styles.metricIconGroup}>
+                      <View style={[styles.metricIconContainer, { backgroundColor: '#9C27B0' + '20' }]}>
+                        <Icon name="time" size={20} color="#9C27B0" />
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={[styles.metricTitle, { color: colors.text }]}>Last Visit</Text>
+                  <Text style={[styles.metricValue, { color: colors.text }]}>
+                    {mostRecentHealthRecord 
+                      ? format(new Date(mostRecentHealthRecord.date), 'MMM d')
+                      : 'No records'
+                    }
+                  </Text>
+                  <Text style={[styles.metricSubtitle, { color: colors.text + '70' }]}>
+                    {mostRecentHealthRecord 
+                      ? mostRecentHealthRecord.type
+                      : 'Add first record'
+                    }
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick Health Actions */}
+              <View style={styles.healthActionsContainer}>
+                <Text style={[styles.healthActionsTitle, { color: colors.text }]}>Quick Actions</Text>
+                <View style={styles.healthActionsGrid}>
+                  <TouchableOpacity 
+                    style={[styles.healthActionButton, { backgroundColor: colors.primary + '15' }]}
+                    onPress={() => navigation.navigate('AddHealthRecord', { petId: activePetId || '' })}
+                  >
+                    <Icon name="add-circle" size={24} color={colors.primary} />
+                    <Text style={[styles.healthActionText, { color: colors.primary }]}>Add Record</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={[styles.healthActionButton, { backgroundColor: '#FF9800' + '15' }]}
+                    onPress={() => navigation.navigate('AddMedication', { petId: activePetId || '' })}
+                  >
+                    <Icon name="medical" size={24} color="#FF9800" />
+                    <Text style={[styles.healthActionText, { color: '#FF9800' }]}>Add Medication</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={[styles.healthActionButton, { backgroundColor: '#2196F3' + '15' }]}
+                    onPress={() => navigation.navigate('Health')}
+                  >
+                    <Icon name="analytics" size={24} color="#2196F3" />
+                    <Text style={[styles.healthActionText, { color: '#2196F3' }]}>View Analytics</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-            </View>
-            
-            <View style={styles.row}>
-              <TouchableOpacity 
-                style={[styles.actionButton, { backgroundColor: colors.primary }]} 
-                onPress={() => navigation.navigate('Health')}
-              >
-                <Text style={styles.actionButtonText}>View Full Health Record</Text>
-              </TouchableOpacity>
             </View>
 
             {/* Pet Assistant Card */}
@@ -1071,6 +1799,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         )}
       </ScrollView>
       <Footer />
+      <HealthRecordModal />
     </SafeAreaView>
   );
 };
@@ -1200,6 +1929,7 @@ const styles = StyleSheet.create({
   scheduleInfo: {
     flex: 1,
     marginLeft: 12,
+    marginRight: 8,
   },
   scheduleTitle: {
     fontSize: 16,
@@ -1209,8 +1939,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   scheduleStatus: {
-    width: 40,
+    width: 80,
     alignItems: 'flex-end',
+  },
+  completedText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   emptyState: {
     padding: 24,
@@ -1267,6 +2001,11 @@ const styles = StyleSheet.create({
   healthCardValue: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  healthCardSubtitle: {
+    fontSize: 12,
+    opacity: 0.8,
+    marginTop: 4,
   },
   row: {
     flexDirection: 'row',
@@ -1474,6 +2213,271 @@ const styles = StyleSheet.create({
   },
   petAssistantDescription: {
     fontSize: 14,
+  },
+  completedStatusContainer: {
+    flexDirection: 'row',
+    padding: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  pendingStatusContainer: {
+    flexDirection: 'row',
+    padding: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'center',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  healthRecordCard: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  healthRecordHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  healthRecordIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  healthRecordInfo: {
+    flex: 1,
+  },
+  healthRecordType: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  healthRecordTitle: {
+    fontSize: 14,
+    opacity: 0.8,
+  },
+  healthRecordDetails: {
+    marginTop: 12,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  detailLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 8,
+    minWidth: 80,
+  },
+  detailValue: {
+    fontSize: 14,
+    flex: 1,
+  },
+  detailColumn: {
+    marginBottom: 12,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  followUpSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  followUpText: {
+    fontSize: 14,
+    marginLeft: 8,
+    flex: 1,
+  },
+  modalFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+  },
+  completeFollowUpButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+  },
+  completeFollowUpButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginLeft: 8,
+  },
+  primaryHealthCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  healthStatusGradient: {
+    borderRadius: 12,
+    padding: 16,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  healthStatusHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  healthStatusIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  healthStatusInfo: {
+    flex: 1,
+  },
+  healthStatusTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  healthStatusValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  healthScoreContainer: {
+    borderTopWidth: 2,
+    borderBottomWidth: 2,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  healthScoreLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  healthScore: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  healthStatusDescription: {
+    fontSize: 14,
+    opacity: 0.8,
+    marginTop: 8,
+  },
+  healthMetricsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  healthMetricCard: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 4,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  metricHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  metricIconGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metricIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  metricTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  metricValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  metricSubtitle: {
+    fontSize: 12,
+    opacity: 0.8,
+    marginTop: 4,
+  },
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  healthActionsContainer: {
+    marginBottom: 16,
+  },
+  healthActionsTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  healthActionsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  healthActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  healthActionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  trendIndicator: {
+    width: 24,
+    height: 16,
+    borderRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
   },
 });
 

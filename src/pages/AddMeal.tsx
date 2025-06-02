@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { 
@@ -20,7 +20,7 @@ import { useToast } from '../hooks/use-toast';
 import { Meal } from '../types/components';
 import { useAuth } from '../hooks/useAuth';
 
-type AddMealScreenProps = NativeStackScreenProps<RootStackParamList, 'AddMeal'>;
+type AddMealScreenProps = NativeStackScreenProps<MainStackParamList, 'AddMeal'>;
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 

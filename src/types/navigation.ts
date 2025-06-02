@@ -38,12 +38,18 @@ export type MainStackParamList = {
   PetSyncDebug: undefined;
   ManagePets: undefined;
   EditPet: { petId: string };
+  WeightTrend: { petId?: string };
 };
 
-// Root stack combining all param lists
+// Root stack combining all param lists (App-level navigation)
 export type RootStackParamList = {
-  Auth: undefined;
-  Main: undefined;
+  AuthStack: NavigatorScreenParams<AuthStackParamList>;
+  MainStack: NavigatorScreenParams<MainStackParamList>;
+  AddFirstPet: undefined;
+};
+
+// Extended param list for full app navigation (includes all screens)
+export type AppStackParamList = {
   Home: undefined;
   Feeding: { refresh?: boolean };
   Schedule: undefined;
@@ -77,12 +83,10 @@ export type RootStackParamList = {
   ChatDebug: undefined;
   PetDebug: undefined;
   PetSyncDebug: undefined;
-  AuthStack: NavigatorScreenParams<AuthStackParamList>;
-  MainStack: NavigatorScreenParams<MainStackParamList>;
   ManagePets: undefined;
   OnboardingFeatures: undefined;
-  AddFirstPet: undefined;
   PetProfile: { petId: string };
+  WeightTrend: { petId?: string };
   StorageDiagnostic: undefined;
   DebugMenu: undefined;
 };

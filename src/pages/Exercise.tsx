@@ -5,74 +5,141 @@ import {
   StyleSheet, 
   ScrollView, 
   TouchableOpacity, 
-  ActivityIndicator 
+  ActivityIndicator,
+  Alert 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { useFocusEffect } from '@react-navigation/native';
+import { MainStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
-import {unifiedDatabaseManager} from "../services/db";
+import { unifiedDatabaseManager } from "../services/db";
+import { ActivitySession } from '../types/components';
 
-type ExerciseScreenProps = NativeStackScreenProps<RootStackParamList, 'Exercise'>;
+type ExerciseScreenProps = NativeStackScreenProps<MainStackParamList, 'Exercise'>;
 
 const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
   const { colors } = useAppColors();
   const { activePetId } = useActivePet();
-  const [activities, setActivities] = useState<any[]>([]);
+  const [activities, setActivities] = useState<ActivitySession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [pet, setPet] = useState<any>(null);
 
+  const loadData = async () => {
+    if (!activePetId) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      // Clean up old activity sessions (older than 6 days) before loading new data
+      await cleanupOldActivities();
+
+      // Load pet data
+      const petData = await unifiedDatabaseManager.pets.getById(activePetId);
+      setPet(petData);
+
+      // Load real activity data from ActivitySession table
+      const activitySessions = await unifiedDatabaseManager.activitySessions.getRecentByPetId(activePetId, 20);
+      console.log('Loaded activity sessions:', activitySessions);
+      setActivities(activitySessions);
+      
+    } catch (error) {
+      console.error('Error loading exercise data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to clean up activity sessions older than 6 days
+  const cleanupOldActivities = async () => {
+    try {
+      const sixDaysAgo = new Date();
+      sixDaysAgo.setDate(sixDaysAgo.getDate() - 6);
+      
+      console.log('Cleaning up activity sessions older than:', sixDaysAgo.toISOString());
+      
+      // Delete activity sessions older than 6 days for the current user
+      const deleteCount = await unifiedDatabaseManager.activitySessions.deleteOlderThan(sixDaysAgo);
+      
+      if (deleteCount > 0) {
+        console.log(`Cleaned up ${deleteCount} old activity sessions`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up old activities:', error);
+      // Don't throw error - cleanup failure shouldn't prevent data loading
+    }
+  };
+
+  // Manual cleanup function with user confirmation
+  const handleManualCleanup = () => {
+    Alert.alert(
+      'Delete Old Activities',
+      'This will delete all activity records older than 6 days. This action cannot be undone. Are you sure?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: performManualCleanup
+        }
+      ]
+    );
+  };
+
+  const performManualCleanup = async () => {
+    setIsDeleting(true);
+    try {
+      const sixDaysAgo = new Date();
+      sixDaysAgo.setDate(sixDaysAgo.getDate() - 6);
+      
+      const deleteCount = await unifiedDatabaseManager.activitySessions.deleteOlderThan(sixDaysAgo);
+      
+      if (deleteCount > 0) {
+        Alert.alert(
+          'Cleanup Complete',
+          `Successfully deleted ${deleteCount} old activity record${deleteCount === 1 ? '' : 's'}.`,
+          [{ text: 'OK' }]
+        );
+        // Reload the data to reflect changes
+        await loadData();
+      } else {
+        Alert.alert(
+          'No Old Records',
+          'No activity records older than 6 days were found.',
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error) {
+      console.error('Error during manual cleanup:', error);
+      Alert.alert(
+        'Error',
+        'Failed to delete old records. Please try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   useEffect(() => {
-    const loadData = async () => {
-      if (!activePetId) {
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        // Load pet data
-        const petData = await unifiedDatabaseManager.pets.getById(activePetId);
-        setPet(petData);
-
-        // Placeholder for activity data - this would be replaced with real data
-        // from your database in a production app
-        const mockActivities = [
-          {
-            id: '1',
-            type: 'Walk',
-            duration: 30,
-            distance: 1.5,
-            date: new Date(),
-            notes: 'Morning walk in the park'
-          },
-          {
-            id: '2',
-            type: 'Play',
-            duration: 15,
-            date: new Date(Date.now() - 24 * 60 * 60 * 1000),
-            notes: 'Played fetch in the backyard'
-          },
-          {
-            id: '3',
-            type: 'Training',
-            duration: 20,
-            date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-            notes: 'Basic commands practice'
-          }
-        ];
-
-        setActivities(mockActivities);
-      } catch (error) {
-        console.error('Error loading exercise data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     loadData();
   }, [activePetId]);
+
+  // Reload data when screen comes into focus (e.g., when returning from AddActivity)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (activePetId) {
+        loadData();
+      }
+    }, [activePetId])
+  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -86,7 +153,17 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
         <Text style={[styles.headerTitle, { color: colors.text }]}>
           Exercise & Activities
         </Text>
-        <View style={styles.rightPlaceholder} />
+        <TouchableOpacity 
+          style={[styles.deleteButton, { opacity: isDeleting ? 0.5 : 1 }]}
+          onPress={handleManualCleanup}
+          disabled={isDeleting}
+        >
+          {isDeleting ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Ionicons name="trash-outline" size={24} color={colors.primary} />
+          )}
+        </TouchableOpacity>
       </View>
       
       {isLoading ? (
@@ -140,51 +217,71 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
             </View>
             
             {activities.length > 0 ? (
-              activities.map((activity) => (
-                <TouchableOpacity 
-                  key={activity.id}
-                  style={[styles.activityCard, { backgroundColor: colors.card }]}
-                >
-                  <View style={[styles.activityIconContainer, { backgroundColor: colors.primary + '20' }]}>
-                    <Ionicons 
-                      name={
-                        activity.type === 'Walk' 
-                          ? 'walk-outline' 
-                          : activity.type === 'Play' 
-                            ? 'game-controller-outline' 
-                            : 'fitness-outline'
-                      } 
-                      size={24} 
-                      color={colors.primary} 
-                    />
-                  </View>
-                  
-                  <View style={styles.activityDetails}>
-                    <Text style={[styles.activityTitle, { color: colors.text }]}>
-                      {activity.type}
-                    </Text>
-                    <Text style={[styles.activityDate, { color: colors.text + '80' }]}>
-                      {activity.date.toLocaleDateString()}
-                    </Text>
-                    {activity.notes && (
-                      <Text style={[styles.activityNotes, { color: colors.text + '99' }]}>
-                        {activity.notes}
+              activities.map((activity) => {
+                // Map ActivitySession type to display format
+                const getDisplayType = (type: string) => {
+                  switch (type) {
+                    case 'walk': return 'Walk';
+                    case 'play': return 'Play';
+                    case 'training': return 'Training';
+                    case 'run': return 'Run';
+                    case 'swim': return 'Swim';
+                    default: return 'Other';
+                  }
+                };
+                
+                // Get icon based on activity type
+                const getActivityIcon = (type: string) => {
+                  switch (type) {
+                    case 'walk': return 'walk-outline';
+                    case 'play': return 'game-controller-outline';
+                    case 'training': return 'fitness-outline';
+                    case 'run': return 'walk-outline';
+                    case 'swim': return 'water-outline';
+                    default: return 'fitness-outline';
+                  }
+                };
+                
+                return (
+                  <TouchableOpacity 
+                    key={activity.id}
+                    style={[styles.activityCard, { backgroundColor: colors.card }]}
+                  >
+                    <View style={[styles.activityIconContainer, { backgroundColor: colors.primary + '20' }]}>
+                      <Ionicons 
+                        name={getActivityIcon(activity.type)} 
+                        size={24} 
+                        color={colors.primary} 
+                      />
+                    </View>
+                    
+                    <View style={styles.activityDetails}>
+                      <Text style={[styles.activityTitle, { color: colors.text }]}>
+                        {getDisplayType(activity.type)}
                       </Text>
-                    )}
-                  </View>
-                  
-                  <View style={styles.activityStats}>
-                    <Text style={[styles.activityDuration, { color: colors.text }]}>
-                      {activity.duration} min
-                    </Text>
-                    {activity.distance && (
-                      <Text style={[styles.activityDistance, { color: colors.text + '80' }]}>
-                        {activity.distance} km
+                      <Text style={[styles.activityDate, { color: colors.text + '80' }]}>
+                        {new Date(activity.date).toLocaleDateString()}
                       </Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))
+                      {activity.notes && (
+                        <Text style={[styles.activityNotes, { color: colors.text + '99' }]}>
+                          {activity.notes}
+                        </Text>
+                      )}
+                    </View>
+                    
+                    <View style={styles.activityStats}>
+                      <Text style={[styles.activityDuration, { color: colors.text }]}>
+                        {activity.duration} min
+                      </Text>
+                      {activity.distance && (
+                        <Text style={[styles.activityDistance, { color: colors.text + '80' }]}>
+                          {activity.distance} {activity.distanceUnit || 'km'}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
             ) : (
               <View style={[styles.emptyState, { backgroundColor: colors.card + '80' }]}>
                 <Ionicons name="fitness-outline" size={48} color={colors.text + '40'} />
@@ -221,8 +318,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  rightPlaceholder: {
-    width: 40,
+  deleteButton: {
+    padding: 8,
   },
   loadingContainer: {
     flex: 1,

@@ -71,12 +71,13 @@ export type AppColors = typeof lightColors;
 // Simple hook that returns colors based on system theme
 export const useAppColors = () => {
   const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  // Force light mode - always return false for isDark
+  const isDark = false; // Changed from: colorScheme === 'dark'
   const colors = isDark ? darkColors : lightColors;
   
   return {
     colors,
     isDark,
-    colorScheme,
+    colorScheme: 'light', // Always return 'light' instead of actual colorScheme
   };
 }; 

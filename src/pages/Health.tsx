@@ -10,28 +10,33 @@ import {
   Animated,
   ActivityIndicator
 } from 'react-native';
-import { useActivePet } from '../hooks/useActivePet';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Pet, HealthRecord as DbHealthRecord, Medication as DbMedication, WeightRecord } from '../types/components';
-import { Button } from '../forms';
-import { TopNavBar, HealthRecordDetails, MedicationDetails } from '../components';
-import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { MainStackParamList } from '../types/navigation';
+import { useActivePet } from '../hooks/useActivePet';
+import { useAppColors } from '../hooks/useAppColors';
+import { TopNavBar, HealthRecordDetails, MedicationDetails } from '../components';
+import WeightTrendCard from '../components/WeightTrendCard';
+import { LinearGradient } from 'expo-linear-gradient';
+import Footer from '../components/layout/Footer';
+import { format } from 'date-fns';
 import { STORAGE_KEYS,unifiedDatabaseManager} from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
-// Add import for Footer
-import Footer from '../components/layout/Footer';
-// Import the MedicationReminders component
+// Add import for MedicationReminders component
 import MedicationReminders from '../components/MedicationReminders';
 import { syncHealthRecordsForPet } from '../utils/healthRecordSync';
+import { 
+  Pet, 
+  HealthRecord as DbHealthRecord, 
+  Medication as DbMedication, 
+  WeightRecord 
+} from '../types/components';
 
 const { width } = Dimensions.get('window');
 
-type HealthScreenProps = NativeStackScreenProps<RootStackParamList, 'Health'>;
+type HealthScreenProps = NativeStackScreenProps<MainStackParamList, 'Health'>;
 
 interface HealthRecord {
   id: string;
@@ -41,6 +46,9 @@ interface HealthRecord {
   notes: string;
   provider: string;
   icon?: string;
+  followUpNeeded?: boolean;
+  followUpDate?: string;
+  title?: string;
 }
 
 interface Medication {
@@ -51,6 +59,7 @@ interface Medication {
   frequency: string;
   nextDue: string;
   color?: string;
+  status?: string; // Add status field
 }
 
 interface HealthMetric {
@@ -60,18 +69,6 @@ interface HealthMetric {
   unit: string;
   trend: 'up' | 'down' | 'stable';
   icon: string;
-}
-
-interface HealthAnalytic {
-  id: string;
-  title: string;
-  value: string;
-  change: string;
-  trend: 'up' | 'down' | 'stable';
-  data: number[];
-  color: string;
-  labels?: string[];
-  details?: string[];
 }
 
 const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
@@ -84,15 +81,33 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const [healthRecords, setHealthRecords] = useState<HealthRecord[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
   const [healthMetrics, setHealthMetrics] = useState<HealthMetric[]>([]);
-  const [healthAnalytics, setHealthAnalytics] = useState<HealthAnalytic[]>([]);
   const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncingRecords, setSyncingRecords] = useState(false);
   const [recordType, setRecordType] = useState<string>('All');
+  const [medicationFilter, setMedicationFilter] = useState<string>('All'); // Add medication filter state
   const [healthSummary, setHealthSummary] = useState({
     status: 'Good',
     lastCheckup: 'No record',
-    nextVaccination: 'No record'
+    nextVaccination: 'No record',
+    nextHealthEvent: 'None scheduled',
+    recordsSummary: 'No records yet'
+  });
+  
+  // Add state for recommendations
+  const [recommendations, setRecommendations] = useState({
+    weight: {
+      title: 'Maintain Healthy Weight',
+      text: 'Continue with regular exercise and balanced diet.'
+    },
+    vaccination: {
+      title: 'Vaccination Reminder',
+      text: 'No vaccination records found.'
+    },
+    checkup: {
+      title: 'Regular Health Checkups',
+      text: 'Schedule a wellness checkup to establish a health baseline.'
+    }
   });
   
   // New state for health record details modal
@@ -110,8 +125,27 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     medications: DbMedication[],
     weights: WeightRecord[]
   ) => {
+    console.log('=== CALCULATE HEALTH METRICS DEBUG ===');
+    console.log('Total records received:', records.length);
+    
     // Calculate vaccination status
     const vaccinations = records.filter(r => r.type === 'vaccination');
+    console.log('All vaccinations found:', vaccinations.length);
+    
+    // Log detailed information about all vaccinations
+    vaccinations.forEach((v, index) => {
+      console.log(`Vaccination ${index + 1}:`, {
+        id: v.id,
+        title: v.title,
+        type: v.type,
+        date: v.date,
+        followUpNeeded: v.followUpNeeded,
+        followUpDate: v.followUpDate,
+        status: v.status,
+        raw: JSON.stringify(v, null, 2)
+      });
+    });
+    
     let vaccinationStatus = 'Unknown';
     let vaccinationTrend: 'up' | 'down' | 'stable' = 'stable';
     
@@ -166,7 +200,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       medications.forEach(med => {
         if (med.history && med.history.length > 0) {
           totalDoses += med.history.length;
-          administeredDoses += med.history.filter(h => h.administered).length;
+          administeredDoses += med.history.filter((h: any) => h.administered).length;
         }
       });
       
@@ -204,15 +238,216 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     let nextVaccination = 'No record';
     
     if (vaccinations.length > 0) {
-      // Simplified - in a real app, would calculate based on vaccination schedule
-      const lastVacDate = new Date(vaccinations[0].date);
-      const nextVacDate = new Date(lastVacDate);
-      nextVacDate.setFullYear(nextVacDate.getFullYear() + 1);
+      console.log('Processing vaccinations for next vaccination date:', vaccinations.length);
+      vaccinations.forEach(v => {
+        console.log(`Vaccination ${v.id}: followUpNeeded=${v.followUpNeeded}, followUpDate=${v.followUpDate}, status=${v.status}`);
+      });
       
-      if (nextVacDate > new Date()) {
-        nextVaccination = formatDate(nextVacDate);
+      // First check if any vaccination records have follow-up dates
+      const vaccinationsWithFollowUp = vaccinations.filter(v => {
+        const hasFollowUp = v.followUpNeeded && v.followUpDate;
+        
+        // For vaccinations, we need to include:
+        // 1. Not completed vaccinations with follow-ups, OR  
+        // 2. Completed vaccinations with future follow-up dates (boosters/next doses)
+        const isNotCompleted = v.status !== 'completed';
+        let hasFutureFollowUp = false;
+        
+        if (v.followUpDate) {
+          try {
+            const followUpDate = new Date(v.followUpDate);
+            hasFutureFollowUp = followUpDate > new Date();
+          } catch (error) {
+            console.error('Error parsing vaccination follow-up date:', v.followUpDate, error);
+          }
+        }
+        
+        const shouldInclude = hasFollowUp && (isNotCompleted || hasFutureFollowUp);
+        
+        console.log(`Vaccination ${v.id} filter check:`, {
+          followUpNeeded: v.followUpNeeded,
+          followUpDate: v.followUpDate,
+          status: v.status,
+          hasFollowUp,
+          isNotCompleted,
+          hasFutureFollowUp,
+          shouldInclude
+        });
+        
+        return shouldInclude;
+      });
+      
+      console.log('Vaccinations with follow-up (not completed):', vaccinationsWithFollowUp.length);
+      
+      if (vaccinationsWithFollowUp.length > 0) {
+        // For vaccinations, be less restrictive with date filtering - only exclude very old dates (more than 30 days ago)
+        const validVaccinations = vaccinationsWithFollowUp.filter(v => {
+          try {
+            const followUpDate = new Date(v.followUpDate!);
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const isValid = followUpDate > thirtyDaysAgo;
+            
+            console.log(`Vaccination ${v.id} date check: followUpDate=${followUpDate.toISOString()}, thirtyDaysAgo=${thirtyDaysAgo.toISOString()}, isValid=${isValid}`);
+            return isValid;
+          } catch (error) {
+            console.error('Error parsing vaccination follow-up date:', v.followUpDate, error);
+            return false;
+          }
+        });
+        
+        console.log('Valid vaccinations after date filtering:', validVaccinations.length);
+        
+        if (validVaccinations.length > 0) {
+          // Sort by follow-up date (soonest first)
+          validVaccinations.sort((a, b) => {
+            return new Date(a.followUpDate!).getTime() - new Date(b.followUpDate!).getTime();
+          });
+          
+          // Get the soonest follow-up date
+          const nextFollowUpDate = new Date(validVaccinations[0].followUpDate!);
+          
+          console.log('Next vaccination follow-up date:', nextFollowUpDate.toISOString());
+      
+          if (nextFollowUpDate > new Date()) {
+            nextVaccination = formatDate(nextFollowUpDate);
+            console.log('Setting next vaccination to:', nextVaccination);
       } else {
+            // Check if it's recent (within last 7 days) - consider as overdue
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            
+            if (nextFollowUpDate > sevenDaysAgo) {
         nextVaccination = 'Overdue';
+              console.log('Setting next vaccination to: Overdue');
+            } else {
+              // If vaccination is old, show no record
+              nextVaccination = 'No record';
+              console.log('Setting next vaccination to: No record (too old)');
+            }
+          }
+        } else {
+          console.log('No valid vaccinations after date filtering');
+        }
+      } else {
+        console.log('No vaccinations with follow-up found');
+      }
+      // Removed the fallback calculation that was adding 1 year automatically
+      // If no valid follow-ups exist, we'll keep "No record"
+    }
+    
+    // Find next health event (any follow-up or scheduled appointment)
+    let nextHealthEvent = 'No upcoming health events';
+    
+    console.log('=== NEXT HEALTH EVENT DEBUG ===');
+    console.log('Total records for health events:', records.length);
+    
+    // Get all records with follow-up dates that are not yet completed
+    const recordsWithFollowUp = records.filter(r => {
+      const hasFollowUp = r.followUpNeeded && r.followUpDate;
+      
+      // For health events, we need to include:
+      // 1. Not completed records with follow-ups, OR
+      // 2. Completed records with future follow-up dates (like vaccination boosters)
+      const isNotCompleted = r.status !== 'completed';
+      let hasFutureFollowUp = false;
+      
+      if (r.followUpDate) {
+        try {
+          const followUpDate = new Date(r.followUpDate);
+          hasFutureFollowUp = followUpDate > new Date();
+        } catch (error) {
+          console.error('Error parsing follow-up date:', r.followUpDate, error);
+        }
+      }
+      
+      // followUpDate is a Date object, so we just need to check if it exists
+      const hasValidDate = r.followUpDate !== null && r.followUpDate !== undefined;
+      const shouldInclude = hasFollowUp && hasValidDate && (isNotCompleted || hasFutureFollowUp);
+      
+      console.log(`Record ${r.id} (${r.type}):`, {
+        followUpNeeded: r.followUpNeeded,
+        followUpDate: r.followUpDate,
+        status: r.status,
+        hasFollowUp,
+        isNotCompleted,
+        hasFutureFollowUp,
+        hasValidDate,
+        shouldInclude
+      });
+      
+      return shouldInclude;
+    });
+    
+    console.log('Records with valid follow-ups for health events:', recordsWithFollowUp.length);
+    
+    if (recordsWithFollowUp.length > 0) {
+      // Filter out any follow-up dates that are in the past (more than 7 days ago)
+      const futureFollowUps = recordsWithFollowUp.filter(r => {
+        try {
+          const followUpDate = new Date(r.followUpDate!);
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          return followUpDate > sevenDaysAgo;
+        } catch (error) {
+          console.error('Error parsing follow-up date:', r.followUpDate, error);
+          return false;
+        }
+      });
+      
+      console.log('Future follow-ups after filtering old dates:', futureFollowUps.length);
+      
+      if (futureFollowUps.length > 0) {
+        // Sort by follow-up date (soonest first)
+        futureFollowUps.sort((a, b) => 
+          new Date(a.followUpDate!).getTime() - new Date(b.followUpDate!).getTime()
+        );
+        
+        // Get the soonest follow-up date
+        const nextEvent = futureFollowUps[0];
+        const nextEventDate = new Date(nextEvent.followUpDate!);
+        
+        if (nextEventDate > new Date()) {
+          nextHealthEvent = `${nextEvent.type.charAt(0).toUpperCase() + nextEvent.type.slice(1)} on ${formatDate(nextEventDate)}`;
+        } else {
+          // Check if it's very recent (within last 3 days) - consider as current/overdue
+          const threeDaysAgo = new Date();
+          threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+          
+          if (nextEventDate > threeDaysAgo) {
+            nextHealthEvent = `${nextEvent.type.charAt(0).toUpperCase() + nextEvent.type.slice(1)} (Overdue)`;
+          } else {
+            // If all events are too far in the past, show no upcoming events
+            nextHealthEvent = 'No upcoming health events';
+          }
+        }
+      }
+    }
+    
+    // Generate a summary of past health events
+    let recordsSummary = 'No records yet';
+    
+    if (records.length > 0) {
+      // Filter records from the past year
+      const oneYearAgo = new Date();
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+      
+      const recentRecords = records.filter(r => new Date(r.date) >= oneYearAgo);
+      
+      // Count records by type
+      const vaccinationCount = recentRecords.filter(r => r.type.toLowerCase() === 'vaccination').length;
+      const checkupCount = recentRecords.filter(r => r.type.toLowerCase() === 'checkup').length;
+      const otherCount = recentRecords.length - vaccinationCount - checkupCount;
+      
+      const parts = [];
+      if (vaccinationCount > 0) parts.push(`${vaccinationCount} vaccination${vaccinationCount !== 1 ? 's' : ''}`);
+      if (checkupCount > 0) parts.push(`${checkupCount} checkup${checkupCount !== 1 ? 's' : ''}`);
+      if (otherCount > 0) parts.push(`${otherCount} other${otherCount !== 1 ? 's' : ''}`);
+      
+      if (parts.length > 0) {
+        recordsSummary = `Past year: ${parts.join(', ')}`;
+      } else {
+        recordsSummary = 'No recent records (past year)';
       }
     }
     
@@ -225,7 +460,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       weightTrend,
       weightChange,
       medicationAdherence,
-      medicationTrend
+      medicationTrend,
+      nextHealthEvent,
+      recordsSummary
     };
   };
 
@@ -236,29 +473,23 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     // Get all checkup records that might contain weight information
     const checkups = records.filter(r => r.type === 'checkup');
     
-    // Extract weight from checkups if available in lab results
+    // Extract weight from checkups if available in weight field
     checkups.forEach(checkup => {
-      if (checkup.labResults) {
-        const weightResult = checkup.labResults.find(
-          lab => lab.name.toLowerCase().includes('weight')
-        );
-        
-        if (weightResult) {
-          try {
-            const weight = parseFloat(weightResult.value);
-            const unit = weightResult.unit.toLowerCase() === 'kg' ? 'kg' : 'lb';
-            
-            weightRecords.push({
-              id: `weight-${checkup.id}`,
-              petId: pet.id,
-              date: new Date(checkup.date),
-              weight,
-              unit,
-              notes: `From checkup: ${checkup.title}`
-            });
-          } catch (e) {
-            console.error('Error parsing weight value:', e);
-          }
+      if (checkup.weight && checkup.weight > 0) {
+        try {
+          const weight = parseFloat(checkup.weight.toString());
+          const unit = pet.weightUnit; // Use pet's weight unit as default
+          
+          weightRecords.push({
+            id: `weight-${checkup.id}`,
+            petId: pet.id,
+            date: new Date(checkup.date),
+            weight,
+            unit,
+            notes: `From checkup: ${checkup.title}`
+          });
+        } catch (e) {
+          console.error('Error parsing weight value:', e);
         }
       }
     });
@@ -362,40 +593,95 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 displayType: record.type.charAt(0).toUpperCase() + record.type.slice(1),
                 notes: record.description || '',
                 provider: record.provider?.name || 'Unknown',
-                icon
+                icon,
+                // Allow completed records with future follow-up dates to show in upcoming events
+                followUpNeeded: record.followUpNeeded && (
+                  record.status !== 'completed' || 
+                  (record.followUpDate && new Date(record.followUpDate) > new Date())
+                ),
+                followUpDate: record.followUpDate ? record.followUpDate.toString() : undefined,
+                title: record.title
               };
             });
             
             console.log('Formatted health records:', formattedRecords?.length || 0);
             setHealthRecords(formattedRecords);
-            
-            // Extract weight records from health records
-            const extractedWeightRecords = extractWeightRecords(records, pet);
-            setWeightRecords(extractedWeightRecords);
           } else {
             // Reset records to empty array if no records found
             console.log('No health records found');
             setHealthRecords([]);
-            
-            // Create a placeholder weight record if none exists
-            const currentWeight: WeightRecord = {
-              id: `current-weight-${pet.id}`,
-              petId: pet.id,
+          }
+          
+          // Load actual weight records from the weight records table
+          const allWeightRecords = await unifiedDatabaseManager.weightRecords.getAll();
+          const petWeightRecords = allWeightRecords
+            .filter(record => record.petId === currentPetId)
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+          // If no weight records exist, create one from pet's current weight
+          if (petWeightRecords.length === 0) {
+            const initialWeight: Omit<WeightRecord, 'id'> = {
+              petId: currentPetId,
               date: new Date(),
               weight: pet.weight,
               unit: pet.weightUnit,
-              notes: 'Current weight from profile'
+              notes: 'Initial weight from profile',
+              bodyConditionScore: 3
             };
             
-            setWeightRecords([currentWeight]);
+            try {
+              const createdRecord = await unifiedDatabaseManager.weightRecords.create(initialWeight);
+              petWeightRecords.push(createdRecord);
+              console.log('Created initial weight record:', createdRecord);
+            } catch (error) {
+              console.error('Error creating initial weight record:', error);
+              // Fallback to in-memory record for display
+              petWeightRecords.push({
+                id: `initial-weight-${currentPetId}`,
+                ...initialWeight
+              } as WeightRecord);
+            }
           }
+
+          setWeightRecords(petWeightRecords);
+          console.log(`Loaded ${petWeightRecords.length} weight records for pet ${pet.name}`);
           
           // Load medications
           const allMedications = await unifiedDatabaseManager.medications.getAll();
-          const meds = allMedications.filter(med => med.petId === currentPetId);
+          let meds = allMedications.filter(med => med.petId === currentPetId);
+          
+          // Check and update expired medications first
+          console.log('Checking for expired medications...');
+          const expiredMedications = await unifiedDatabaseManager.medications.checkAndUpdateExpiredMedications(currentPetId);
+          if (expiredMedications.length > 0) {
+            console.log(`Automatically marked ${expiredMedications.length} medications as completed`);
+            // Reload medications to get updated statuses
+            const updatedMedications = await unifiedDatabaseManager.medications.getAll();
+            meds = updatedMedications.filter(med => med.petId === currentPetId);
+          }
+          
+          // Filter medications by status based on medicationFilter
+          let filteredMeds = meds;
+          switch (medicationFilter) {
+            case 'Active':
+              filteredMeds = meds.filter(med => med.status === 'active');
+              break;
+            case 'Completed':
+              filteredMeds = meds.filter(med => med.status === 'completed');
+              break;
+            case 'Discontinued':
+              filteredMeds = meds.filter(med => med.status === 'discontinued');
+              break;
+            case 'All':
+            default:
+              filteredMeds = meds; // Show all medications
+              break;
+          }
+          
+          console.log(`Total medications: ${meds.length}, Filtered: ${filteredMeds.length} (filter: ${medicationFilter})`);
           
           // Calculate health metrics and analytics based on real data
-          const healthStats = calculateHealthMetrics(pet, records, meds, weightRecords);
+          const healthStats = calculateHealthMetrics(pet, records, filteredMeds, petWeightRecords);
           
           // Update health metrics
           const updatedHealthMetrics: HealthMetric[] = [
@@ -418,9 +704,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           ];
           setHealthMetrics(updatedHealthMetrics);
           
-          if (meds.length > 0) {
+          if (filteredMeds.length > 0) {
             // Sort medications by next due date
-            meds.sort((a, b) => {
+            filteredMeds.sort((a, b) => {
               // Get next due date for each medication
               const getNextDueDate = (med: DbMedication) => {
                 if (med.duration.endDate) {
@@ -449,7 +735,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
             });
             
             // Transform medications to match the UI component's format
-            const formattedMeds = meds.map((med, index): Medication => {
+            const formattedMeds = filteredMeds.map((med, index): Medication => {
               // Assign a color based on the index
               const colors = ['#4F46E5', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6'];
               const color = colors[index % colors.length];
@@ -473,8 +759,56 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 intervalHours = (30 * 24) / frequency.times;
               }
               
-              // Get specific times if available, or use default
-              const specificTimes = frequency.specificTimes || ['09:00'];
+              // Get specific times if available, or generate evenly distributed times
+              let specificTimes = frequency.specificTimes;
+              if (!specificTimes || specificTimes.length === 0) {
+                // Generate evenly distributed times based on frequency
+                if (frequency.period === 'day' && frequency.times > 1) {
+                  // Generate multiple times per day
+                  const numDoses = frequency.times;
+                  const wakeHour = 8; // 8:00 AM
+                  const sleepHour = 22; // 10:00 PM
+                  const availableHours = sleepHour - wakeHour;
+                  const interval = availableHours / numDoses;
+                  
+                  specificTimes = [];
+                  for (let i = 0; i < numDoses; i++) {
+                    const hour = wakeHour + Math.floor(interval * i);
+                    const minute = Math.round((interval * i - Math.floor(interval * i)) * 60);
+                    const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                    specificTimes.push(timeString);
+                  }
+                } else {
+                  // Default to single morning dose
+                  specificTimes = ['09:00'];
+                }
+              } else if (frequency.period === 'day' && frequency.times > 1 && specificTimes.length < frequency.times) {
+                // Handle mismatch: frequency says 3x day but only 1 specific time provided
+                console.log(`🔧 Detected mismatch: ${frequency.times}x day but only ${specificTimes.length} time(s) specified. Generating additional times.`);
+                
+                const numDoses = frequency.times;
+                const wakeHour = 8; // 8:00 AM
+                const sleepHour = 22; // 10:00 PM
+                const availableHours = sleepHour - wakeHour;
+                const interval = availableHours / numDoses;
+                
+                const generatedTimes = [];
+                for (let i = 0; i < numDoses; i++) {
+                  const hour = wakeHour + Math.floor(interval * i);
+                  const minute = Math.round((interval * i - Math.floor(interval * i)) * 60);
+                  const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                  generatedTimes.push(timeString);
+                }
+                
+                specificTimes = generatedTimes;
+                console.log(`🔧 Generated times for ${med.name}:`, generatedTimes);
+              }
+              
+              console.log(`💊 Medication ${med.name} - Times:`, {
+                frequency: `${frequency.times}x ${frequency.period}`,
+                specificTimes,
+                originalSpecificTimes: frequency.specificTimes
+              });
               
               // Find last dose date from history
               let lastDoseTime = null;
@@ -491,43 +825,51 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 }
               }
               
-              // Calculate next due time
-              let nextDueDate;
+              // Calculate next due time only for active medications
+              let nextDue;
               
-              if (lastDoseTime) {
-                // Calculate next dose based on last dose + interval
-                nextDueDate = new Date(lastDoseTime.getTime() + intervalHours * 60 * 60 * 1000);
-                
-                // If next due is in the past, recalculate from current time
-                if (nextDueDate < now) {
-                  nextDueDate = calculateNextScheduledTime(specificTimes, now);
-                }
+              if (med.status === 'completed') {
+                nextDue = 'Completed';
+              } else if (med.status === 'discontinued') {
+                nextDue = 'Discontinued';
               } else {
-                // If no history, use start date or today
-                if (med.duration && med.duration.startDate) {
-                  const startDate = new Date(med.duration.startDate);
-                  if (startDate > now) {
-                    // If start date is in the future, use that
-                    nextDueDate = startDate;
-                  } else {
-                    // Otherwise calculate from now
+                // Only calculate next due for active medications
+                let nextDueDate;
+                
+                if (lastDoseTime) {
+                  // Calculate next dose based on last dose + interval
+                  nextDueDate = new Date(lastDoseTime.getTime() + intervalHours * 60 * 60 * 1000);
+                  
+                  // If next due is in the past, recalculate from current time
+                  if (nextDueDate < now) {
                     nextDueDate = calculateNextScheduledTime(specificTimes, now);
                   }
                 } else {
-                  // No start date, calculate from now
-                  nextDueDate = calculateNextScheduledTime(specificTimes, now);
+                  // If no history, use start date or today
+                  if (med.duration && med.duration.startDate) {
+                    const startDate = new Date(med.duration.startDate);
+                    if (startDate > now) {
+                      // If start date is in the future, use that
+                      nextDueDate = startDate;
+                    } else {
+                      // Otherwise calculate from now
+                      nextDueDate = calculateNextScheduledTime(specificTimes, now);
+                    }
+                  } else {
+                    // No start date, calculate from now
+                    nextDueDate = calculateNextScheduledTime(specificTimes, now);
+                  }
                 }
-              }
-              
-              // Format the next due date for display
-              let nextDue;
-              if (nextDueDate.toDateString() === today.toDateString()) {
-                // If due today, show "Today" with the time
-                const hours = nextDueDate.getHours().toString().padStart(2, '0');
-                const minutes = nextDueDate.getMinutes().toString().padStart(2, '0');
-                nextDue = `Today, ${hours}:${minutes}`;
-              } else {
-                nextDue = formatDate(nextDueDate);
+                
+                // Format the next due date for display
+                if (nextDueDate.toDateString() === today.toDateString()) {
+                  // If due today, show "Today" with the time
+                  const hours = nextDueDate.getHours().toString().padStart(2, '0');
+                  const minutes = nextDueDate.getMinutes().toString().padStart(2, '0');
+                  nextDue = `Today, ${hours}:${minutes}`;
+                } else {
+                  nextDue = formatDate(nextDueDate);
+                }
               }
               
               return {
@@ -537,7 +879,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 dosage: `${med.dosage.amount} ${med.dosage.unit}`,
                 frequency: `${med.frequency.times}x ${med.frequency.period}`,
                 nextDue,
-                color
+                color,
+                status: med.status || 'Active'
               };
             });
             
@@ -551,73 +894,100 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           let weightData: number[] = [];
           let weightLabels: string[] = [];
           
-          if (weightRecords.length > 0) {
+          if (petWeightRecords.length > 0) {
             // Take the last 6 weight records (or all if fewer than 6)
-            const recentWeights = weightRecords.slice(-6);
+            const recentWeights = petWeightRecords.slice(-6);
             weightData = recentWeights.map(w => w.weight);
             weightLabels = recentWeights.map(w => {
               const date = new Date(w.date);
               return date.toLocaleString('default', { month: 'short' });
             });
-          } else {
-            // Fallback to mock data
-            weightData = [pet.weight - 0.5, pet.weight - 0.3, pet.weight - 0.2, pet.weight - 0.1, pet.weight];
-            weightLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
+          } else if (pet) {
+            // Instead of showing fake historical data, show a flat line at current weight
+            // with correct dates starting from pet creation date
+            const petCreationDate = new Date(pet.birthDate || new Date());
+            const today = new Date();
+            const months = [];
+            const currentMonth = today.getMonth();
+            
+            // Generate labels for last 5 months starting from pet creation or at most 5 months ago
+            for (let i = 4; i >= 0; i--) {
+              const monthDate = new Date(today);
+              monthDate.setMonth(currentMonth - i);
+              
+              // Only include months after pet creation
+              if (monthDate >= petCreationDate) {
+                months.push(monthDate.toLocaleString('default', { month: 'short' }));
+              }
+            }
+            
+            // If we have less than 2 months since pet creation, add current month twice for visual effect
+            if (months.length < 2) {
+              months.push(today.toLocaleString('default', { month: 'short' }));
+            }
+            
+            // Create flat data at current weight (since no history)
+            weightData = Array(months.length).fill(pet.weight);
+            weightLabels = months;
           }
           
           // Format weight change for display
           const weightChangeDisplay = healthStats.weightChange !== 0 
             ? `${healthStats.weightChange > 0 ? '+' : ''}${healthStats.weightChange.toFixed(1)} ${pet.weightUnit}`
             : 'Stable';
-            
-          // Update health analytics
-          const updatedAnalytics: HealthAnalytic[] = [
-            {
-              id: '1',
-              title: 'Weight Trend',
-              value: `${pet.weight} ${pet.weightUnit}`,
-              change: weightChangeDisplay,
-              trend: healthStats.weightTrend,
-              data: weightData,
-              color: '#4F46E5',
-              labels: weightLabels
-            },
-            {
-              id: '2',
-              title: 'Medication Adherence',
-              value: `${healthStats.medicationAdherence}%`,
-              change: healthStats.medicationAdherence >= 90 ? 'Excellent' : 
-                     healthStats.medicationAdherence >= 70 ? 'Good' : 'Needs improvement',
-              trend: healthStats.medicationTrend,
-              data: meds.length > 0 ? [
-                Math.max(60, healthStats.medicationAdherence - 20),
-                Math.max(65, healthStats.medicationAdherence - 15),
-                Math.max(70, healthStats.medicationAdherence - 10),
-                Math.max(75, healthStats.medicationAdherence - 5),
-                healthStats.medicationAdherence
-              ] : [80, 85, 88, 90, 92],
-              color: '#10B981'
-            },
-            {
-              id: '3',
-              title: 'Overall Health',
-              value: healthStats.healthStatus,
-              change: pet.status.charAt(0).toUpperCase() + pet.status.slice(1),
-              trend: healthStats.healthStatus === 'Excellent' ? 'up' : 
-                    healthStats.healthStatus === 'Needs attention' ? 'down' : 'stable',
-              data: [75, 80, 82, 78, 80], // Activity data is not yet tracked in our DB
-              color: '#F59E0B'
-            }
-          ];
-          setHealthAnalytics(updatedAnalytics);
           
           // Update health summary
           const healthSummary = {
             status: healthStats.healthStatus,
             lastCheckup: healthStats.lastCheckup,
-            nextVaccination: healthStats.nextVaccination
+            nextVaccination: healthStats.nextVaccination,
+            nextHealthEvent: healthStats.nextHealthEvent,
+            recordsSummary: healthStats.recordsSummary
           };
           setHealthSummary(healthSummary);
+          
+          // Generate recommendation data
+          const weightRecommendation = {
+            title: healthStats.weightTrend === 'up' 
+              ? 'Monitor Weight Gain' 
+              : healthStats.weightTrend === 'down' 
+                ? 'Monitor Weight Loss' 
+                : 'Maintain Healthy Weight',
+            text: healthStats.weightTrend === 'up' 
+              ? `Regular weight tracking recommended. Consult your vet if ${pet?.type === 'cat' ? 'your cat' : 'your dog'} continues to gain weight.` 
+              : healthStats.weightTrend === 'down' 
+                ? `Regular weight tracking recommended. Consult your vet if ${pet?.type === 'cat' ? 'your cat' : 'your dog'} continues to lose weight.`
+                : `${pet?.type === 'cat' ? 'Your cat\'s' : 'Your dog\'s'} weight is stable. Continue with regular exercise and balanced diet.`
+          };
+          
+          const vaccinationRecommendation = {
+            title: healthStats.vaccinationStatus === 'Up to date' 
+              ? 'Vaccinations on Track' 
+              : 'Vaccination Reminder',
+            text: healthStats.vaccinationStatus === 'Up to date' 
+              ? `Vaccinations are current. Next vaccination due on ${healthStats.nextVaccination}.` 
+              : healthStats.nextVaccination === 'Overdue'
+                ? 'Vaccinations are overdue. Schedule a vet appointment as soon as possible.'
+                : `Schedule the next vaccination by ${healthStats.nextVaccination}.`
+          };
+          
+          const checkupRecommendation = {
+            title: 'Regular Health Checkups',
+            text: healthStats.lastCheckup === 'No record' 
+              ? `Schedule a wellness checkup for ${pet?.type === 'cat' ? 'your cat' : 'your dog'} to establish a health baseline.`
+              : `Last checkup: ${healthStats.lastCheckup}. ${
+                  new Date(healthStats.lastCheckup).getTime() < new Date().getTime() - (365 * 24 * 60 * 60 * 1000)
+                    ? 'Consider scheduling an annual wellness exam.'
+                    : 'You\'re on track with regular checkups.'
+                }`
+          };
+          
+          // Set recommendations state
+          setRecommendations({
+            weight: weightRecommendation,
+            vaccination: vaccinationRecommendation,
+            checkup: checkupRecommendation
+          });
           
           console.log('Health data loaded successfully');
         }
@@ -628,6 +998,20 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       setLoading(false);
     }
   };
+
+  // When the user navigates to this screen or when the active pet changes, reload data
+  useEffect(() => {
+    console.log('→→→ Health screen focused - reloading data');
+    loadHealthData();
+  }, [activePetId]);
+  
+  // Reload data when medication filter changes
+  useEffect(() => {
+    if (medicationFilter) {
+      console.log('→→→ Medication filter changed to:', medicationFilter);
+      loadHealthData();
+    }
+  }, [medicationFilter]);
 
   // Use useFocusEffect to reload data when the screen comes into focus
   useFocusEffect(
@@ -683,6 +1067,18 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 title: v.title
               })), null, 2));
             }
+            
+            // Log records with follow-up dates
+            const recordsWithFollowUp = petRecords.filter(r => r.followUpNeeded && r.followUpDate);
+            console.log('→→→ Records with follow-up dates:', recordsWithFollowUp.length);
+            if (recordsWithFollowUp.length > 0) {
+              console.log('→→→ Follow-up details:', JSON.stringify(recordsWithFollowUp.map(r => ({
+                id: r.id,
+                type: r.type,
+                title: r.title,
+                followUpDate: r.followUpDate
+              })), null, 2));
+            }
           }
         } catch (error) {
           console.error('Error verifying records:', error);
@@ -697,6 +1093,21 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       };
     }, [activePetId])
   );
+  
+  // Log information about follow-up records after loading
+  useEffect(() => {
+    if (healthRecords.length > 0) {
+      const recordsWithFollowUp = healthRecords.filter(record => record.followUpNeeded && record.followUpDate);
+      console.log('RECORDS WITH FOLLOW-UP:', recordsWithFollowUp.length);
+      console.log('FOLLOW-UP DETAILS:', JSON.stringify(recordsWithFollowUp.map(r => ({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        followUpDate: r.followUpDate,
+        valid: r.followUpDate && r.followUpDate.trim() !== ''
+      })), null, 2));
+    }
+  }, [healthRecords]);
 
   // Filter health records based on selected type
   const filteredHealthRecords = healthRecords.filter(record => {
@@ -750,84 +1161,6 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     status: 'healthy'
   };
 
-  const [activeTooltip, setActiveTooltip] = useState<{
-    analyticId: string;
-    index: number;
-    position: { x: number; y: number };
-  } | null>(null);
-
-  const renderChart = (analytic: HealthAnalytic) => {
-    const maxValue = Math.max(...analytic.data);
-    const minValue = Math.min(...analytic.data);
-    const range = maxValue - minValue;
-    
-    return (
-      <View style={styles.chartContainer}>
-        {analytic.data.map((value, index) => {
-          const height = range > 0 
-            ? ((value - minValue) / range) * 60 
-            : 30;
-          
-          return (
-            <TouchableOpacity 
-              key={index} 
-              style={styles.chartBarContainer}
-              onPress={() => {
-                // Calculate position for tooltip
-                const x = (index / analytic.data.length) * (width - 40);
-                const y = 60 - height;
-                
-                setActiveTooltip({
-                  analyticId: analytic.id,
-                  index,
-                  position: { x, y }
-                });
-                
-                // Auto-hide tooltip after 2 seconds
-                setTimeout(() => {
-                  setActiveTooltip(null);
-                }, 2000);
-              }}
-            >
-              <View 
-                style={[
-                  styles.chartBar, 
-                  { 
-                    height, 
-                    backgroundColor: analytic.color,
-                    opacity: 0.7 + (index / analytic.data.length) * 0.3
-                  }
-                ]} 
-              />
-              {analytic.labels && (
-                <Text style={styles.chartLabel}>{analytic.labels[index]}</Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-        
-        {activeTooltip && activeTooltip.analyticId === analytic.id && (
-          <View 
-            style={[
-              styles.tooltip,
-              { 
-                left: activeTooltip.position.x,
-                top: activeTooltip.position.y - 40,
-                backgroundColor: colors.card,
-                borderColor: analytic.color
-              }
-            ]}
-          >
-            <Text style={[styles.tooltipValue, { color: analytic.color }]}>
-              {analytic.data[activeTooltip.index]}{analytic.title.includes('Weight') ? ' kg' : analytic.title.includes('Adherence') ? '%' : ''}
-            </Text>
-            <View style={[styles.tooltipArrow, { borderTopColor: colors.card }]} />
-          </View>
-        )}
-      </View>
-    );
-  };
-
   const handleViewRecordDetails = async (recordId: string) => {
     try {
       // Get the full record from the database
@@ -848,12 +1181,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     // Navigate to the AddHealthRecord screen with the record to edit
     setDetailsVisible(false);
     console.log('Editing record:', record.id, record.type);
-    navigation.navigate({
-      name: 'AddHealthRecord',
-      params: { 
-        petId: activePetId || '',
-        recordToEdit: record 
-      }
+    navigation.navigate('AddHealthRecord', { 
+      petId: activePetId || '',
+      recordToEdit: record 
     });
   };
   
@@ -882,12 +1212,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     // Navigate to the AddMedication screen with the medication to edit
     setMedicationDetailsVisible(false);
     console.log('Editing medication:', medication.id, medication.name);
-    navigation.navigate({
-      name: 'AddMedication',
-      params: { 
-        petId: activePetId || '',
-        medicationToEdit: medication 
-      }
+    navigation.navigate('AddMedication', { 
+      petId: activePetId || '',
+      medicationToEdit: medication 
     });
   };
   
@@ -901,8 +1228,133 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       case 'overview':
         return (
           <>
+            {/* Weight Trend Card */}
+            {activePet && (
+              <WeightTrendCard
+                pet={activePet}
+                weightRecords={weightRecords}
+                onPress={() => navigation.navigate('WeightTrend', { petId: activePet.id })}
+              />
+            )}
+
+            {/* Enhanced Vaccination Status Card */}
+            <TouchableOpacity 
+              style={[styles.enhancedVaccinationCard, { backgroundColor: colors.card }]}
+              onPress={() => {
+                // Navigate to records tab with vaccination filter
+                setActiveTab('records');
+                setRecordType('Vaccination');
+              }}
+            >
+              <View style={styles.vaccinationCardHeader}>
+                <View style={styles.vaccinationTitleSection}>
+                  <View style={[styles.vaccinationMainIcon, { 
+                    backgroundColor: healthSummary.nextVaccination === 'Overdue' ? '#EF444415' : 
+                                   healthSummary.nextVaccination === 'Due soon' ? '#F59E0B15' : '#10B98115' 
+                  }]}>
+                    <Ionicons 
+                      name="shield-checkmark-outline" 
+                      size={28} 
+                      color={healthSummary.nextVaccination === 'Overdue' ? '#EF4444' : 
+                             healthSummary.nextVaccination === 'Due soon' ? '#F59E0B' : '#10B981'} 
+                    />
+                  </View>
+                  <View style={styles.vaccinationTitleContent}>
+                    <Text style={[styles.vaccinationCardTitle, { color: colors.text }]}>Vaccination Status</Text>
+                    <View style={styles.vaccinationStatusRow}>
+                      <View style={[styles.vaccinationStatusBadge, { 
+                        backgroundColor: healthSummary.nextVaccination === 'Overdue' ? '#EF444415' : 
+                                       healthSummary.nextVaccination === 'Due soon' ? '#F59E0B15' : '#10B98115' 
+                      }]}>
+                        <Text style={[styles.vaccinationStatusText, { 
+                          color: healthSummary.nextVaccination === 'Overdue' ? '#EF4444' : 
+                                 healthSummary.nextVaccination === 'Due soon' ? '#F59E0B' : '#10B981' 
+                        }]}>
+                          {(() => {
+                            const vaccinationRecords = healthRecords.filter(r => r.type === 'vaccination');
+                            if (vaccinationRecords.length === 0) return 'No records';
+                            if (healthSummary.nextVaccination === 'Overdue') return 'Overdue';
+                            if (healthSummary.nextVaccination === 'Due soon') return 'Due soon';
+                            return 'Up to date';
+                          })()}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.text + '60'} />
+              </View>
+
+              <View style={styles.vaccinationCardContent}>
+                {(() => {
+                  const vaccinationRecords = healthRecords.filter(r => r.type === 'vaccination');
+                  if (vaccinationRecords.length > 0) {
+                    return (
+                      <>
+                        <View style={styles.vaccinationInfoRow}>
+                          <View style={styles.vaccinationInfoItem}>
+                            <Text style={[styles.vaccinationInfoLabel, { color: colors.text + '70' }]}>
+                              Latest Vaccination
+                            </Text>
+                                                         <Text style={[styles.enhancedVaccinationInfoValue, { color: colors.text }]}>
+                               {vaccinationRecords[0].title || 'Unknown vaccine'}
+                             </Text>
+                             <Text style={[styles.vaccinationInfoDate, { color: colors.text + '60' }]}>
+                               {vaccinationRecords[0].date}
+                             </Text>
+                           </View>
+                           {healthSummary.nextVaccination !== 'No record' && (
+                             <View style={styles.vaccinationInfoItem}>
+                               <Text style={[styles.vaccinationInfoLabel, { color: colors.text + '70' }]}>
+                                 Next Due
+                               </Text>
+                               <Text style={[styles.enhancedVaccinationInfoValue, { 
+                                 color: healthSummary.nextVaccination === 'Overdue' ? '#EF4444' : colors.text 
+                               }]}>
+                                 {healthSummary.nextVaccination}
+                               </Text>
+                             </View>
+                           )}
+                         </View>
+                         
+                         <View style={styles.vaccinationProgress}>
+                           <View style={styles.enhancedVaccinationProgressRow}>
+                             <Text style={[styles.enhancedVaccinationProgressLabel, { color: colors.text + '70' }]}>
+                               Total Vaccinations
+                             </Text>
+                            <Text style={[styles.vaccinationProgressCount, { color: colors.text }]}>
+                              {vaccinationRecords.length}
+                            </Text>
+                          </View>
+                          <View style={[styles.vaccinationProgressBar, { backgroundColor: colors.background }]}>
+                            <View style={[styles.vaccinationProgressFill, { 
+                              backgroundColor: healthSummary.nextVaccination === 'Overdue' ? '#EF4444' : 
+                                             healthSummary.nextVaccination === 'Due soon' ? '#F59E0B' : '#10B981',
+                              width: `${Math.min((vaccinationRecords.length / 5) * 100, 100)}%` 
+                            }]} />
+                          </View>
+                        </View>
+                      </>
+                    );
+                  } else {
+                    return (
+                      <View style={styles.vaccinationEmptyState}>
+                        <Text style={[styles.vaccinationEmptyText, { color: colors.text + '60' }]}>
+                          No vaccination records found
+                        </Text>
+                        <Text style={[styles.vaccinationEmptySubtext, { color: colors.text + '50' }]}>
+                          Tap to add your first vaccination record
+                        </Text>
+                      </View>
+                    );
+                  }
+                })()}
+              </View>
+            </TouchableOpacity>
+
+            {/* Other Health Metrics - excluding Weight and Vaccination Status since they have dedicated cards */}
             <View style={styles.healthMetricsContainer}>
-              {healthMetrics.map(metric => (
+              {healthMetrics.filter(metric => metric.name !== 'Vaccination Status' && metric.name !== 'Weight').map(metric => (
                 <View key={metric.id} style={[styles.metricCard, { backgroundColor: colors.card }]}>
                   <View style={[styles.metricIconContainer, { backgroundColor: colors.primary + '15' }]}>
                     <Ionicons name={metric.icon as any} size={24} color={colors.primary} />
@@ -929,69 +1381,54 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               ))}
             </View>
 
-            <View style={styles.healthAnalyticsContainer}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Health Analytics</Text>
-              <View style={[styles.analyticsCard, { backgroundColor: colors.card }]}>
-                {healthAnalytics.map(analytic => (
-                  <View key={analytic.id} style={styles.analyticItem}>
-                    <View style={styles.analyticHeader}>
-                      <Text style={[styles.analyticTitle, { color: colors.text }]}>{analytic.title}</Text>
-                      <View style={styles.analyticValueContainer}>
-                        <Text style={[styles.analyticValue, { color: colors.text }]}>{analytic.value}</Text>
-                        <View style={[
-                          styles.analyticChangeContainer, 
-                          { 
-                            backgroundColor: 
-                              analytic.trend === 'up' ? colors.success + '20' : 
-                              analytic.trend === 'down' ? colors.error + '20' : 
-                              colors.text + '20'
-                          }
-                        ]}>
-                          <Ionicons 
-                            name={
-                              analytic.trend === 'up' ? 'arrow-up' : 
-                              analytic.trend === 'down' ? 'arrow-down' : 'remove'
-                            } 
-                            size={12} 
-                            color={
-                              analytic.trend === 'up' ? colors.success : 
-                              analytic.trend === 'down' ? colors.error : 
-                              colors.text + '80'
-                            } 
-                          />
-                          <Text style={[
-                            styles.analyticChange, 
-                            { 
-                              color: 
-                                analytic.trend === 'up' ? colors.success : 
-                                analytic.trend === 'down' ? colors.error : 
-                                colors.text + '80'
-                            }
-                          ]}>
-                            {analytic.change}
+            {/* Health Recommendations Section */}
+            <View style={styles.healthRecommendationsContainer}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Health Recommendations</Text>
+              <View style={[styles.recommendationsCard, { backgroundColor: colors.card }]}>
+                {/* Weight recommendation */}
+                <View style={styles.recommendationItem}>
+                  <View style={[styles.recommendationIconContainer, { backgroundColor: '#4F46E520' }]}>
+                    <Ionicons name="fitness-outline" size={20} color="#4F46E5" />
+                  </View>
+                  <View style={styles.recommendationContent}>
+                    <Text style={[styles.recommendationTitle, { color: colors.text }]}>
+                      {recommendations.weight.title}
+                    </Text>
+                    <Text style={[styles.recommendationText, { color: colors.text + '80' }]}>
+                      {recommendations.weight.text}
                           </Text>
                         </View>
                       </View>
+
+                {/* Vaccination recommendation */}
+                <View style={styles.recommendationItem}>
+                  <View style={[styles.recommendationIconContainer, { backgroundColor: '#10B98120' }]}>
+                    <Ionicons name="shield-checkmark-outline" size={20} color="#10B981" />
                     </View>
-                    {renderChart(analytic)}
-                    <Text style={[styles.chartHint, { color: colors.text + '60' }]}>
-                      Tap on bars to see detailed information
+                  <View style={styles.recommendationContent}>
+                    <Text style={[styles.recommendationTitle, { color: colors.text }]}>
+                      {recommendations.vaccination.title}
+                    </Text>
+                    <Text style={[styles.recommendationText, { color: colors.text + '80' }]}>
+                      {recommendations.vaccination.text}
                     </Text>
                   </View>
-                ))}
-                
-                <TouchableOpacity 
-                  style={[styles.fullAnalyticsButton, { backgroundColor: colors.primary + '15' }]}
-                  onPress={() => navigation.navigate({
-                    name: 'FullAnalytics',
-                    params: { petId: activePetId || undefined }
-                  })}
-                >
-                  <Text style={[styles.fullAnalyticsButtonText, { color: colors.primary }]}>
-                    View Full Analytics
+                </View>
+
+                {/* Checkup recommendation */}
+                <View style={styles.recommendationItem}>
+                  <View style={[styles.recommendationIconContainer, { backgroundColor: '#F59E0B20' }]}>
+                    <Ionicons name="medkit-outline" size={20} color="#F59E0B" />
+                  </View>
+                  <View style={styles.recommendationContent}>
+                    <Text style={[styles.recommendationTitle, { color: colors.text }]}>
+                      {recommendations.checkup.title}
                   </Text>
-                  <Ionicons name="arrow-forward" size={16} color={colors.primary} />
-                </TouchableOpacity>
+                    <Text style={[styles.recommendationText, { color: colors.text + '80' }]}>
+                      {recommendations.checkup.text}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </View>
 
@@ -1025,36 +1462,75 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                     <Text style={[styles.summaryValue, { color: colors.text }]}>{healthSummary.nextVaccination}</Text>
                   </View>
                 </View>
+                
+                <View style={styles.summaryRow}>
+                  <View style={styles.summaryIconContainer}>
+                    <Ionicons name="documents-outline" size={24} color={colors.info} />
+                  </View>
+                  <View style={styles.summaryContent}>
+                    <Text style={[styles.summaryTitle, { color: colors.text }]}>Health Records Summary</Text>
+                    <Text style={[styles.summaryValue, { color: colors.text }]}>
+                      {healthSummary.recordsSummary}
+                    </Text>
+                  </View>
+                </View>
+
               </View>
             </View>
 
             <View style={styles.upcomingContainer}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Upcoming Health Events</Text>
               <View style={[styles.upcomingCard, { backgroundColor: colors.card }]}>
-                <View style={styles.upcomingItem}>
-                  <View style={[styles.upcomingIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                    <Ionicons name="medkit-outline" size={24} color={colors.primary} />
+                {healthRecords.filter(record => record.followUpNeeded && record.followUpDate).length > 0 ? (
+                  healthRecords
+                    .filter(record => record.followUpNeeded && record.followUpDate)
+                    .map(record => {
+                      const followUpDate = record.followUpDate ? new Date(record.followUpDate) : new Date();
+                      return (
+                        <View key={record.id} style={styles.upcomingItem}>
+                          <View style={[styles.upcomingIconContainer, { 
+                            backgroundColor: record.type.toLowerCase() === 'vaccination' ? '#4F46E5' + '15' :
+                              record.type.toLowerCase() === 'checkup' ? '#10B981' + '15' :
+                              record.type.toLowerCase() === 'surgery' ? '#EF4444' + '15' :
+                              record.type.toLowerCase() === 'dental' ? '#6366F1' + '15' : 
+                              colors.primary + '15' 
+                          }]}>
+                            <Ionicons name="medkit-outline" size={24} color={
+                              record.type.toLowerCase() === 'vaccination' ? '#4F46E5' :
+                              record.type.toLowerCase() === 'checkup' ? '#10B981' :
+                              record.type.toLowerCase() === 'surgery' ? '#EF4444' :
+                              record.type.toLowerCase() === 'dental' ? '#6366F1' : 
+                              colors.primary
+                            } />
                   </View>
                   <View style={styles.upcomingContent}>
-                    <Text style={[styles.upcomingTitle, { color: colors.text }]}>Heartworm Prevention</Text>
-                    <Text style={[styles.upcomingDate, { color: colors.text + '80' }]}>Due: May 1, 2024</Text>
+                            <Text style={[styles.upcomingTitle, { color: colors.text }]}>
+                              {record.title || record.type}
+                            </Text>
+                            <Text style={[styles.upcomingDate, { color: colors.text + '80' }]}>
+                              Due: {record.followUpDate ? format(followUpDate, 'MMMM d, yyyy') : 'Unknown date'}
+                            </Text>
                   </View>
-                  <TouchableOpacity style={[styles.upcomingButton, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.upcomingButtonText}>Complete</Text>
+                          <TouchableOpacity 
+                            style={[styles.upcomingButton, { backgroundColor: colors.primary }]}
+                            onPress={() => handleViewRecordDetails(record.id)}
+                          >
+                            <Text style={styles.upcomingButtonText}>View</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.upcomingItem}>
-                  <View style={[styles.upcomingIconContainer, { backgroundColor: colors.warning + '15' }]}>
-                    <Ionicons name="fitness-outline" size={24} color={colors.warning} />
+                      );
+                    })
+                ) : (
+                  <View style={styles.emptyUpcomingContainer}>
+                    <Ionicons name="calendar-outline" size={32} color={colors.text + '40'} />
+                    <Text style={[styles.emptyUpcomingText, { color: colors.text + '80' }]}>
+                      No upcoming health events
+                    </Text>
+                    <Text style={[styles.emptyUpcomingSubtext, { color: colors.text + '60' }]}>
+                      Add follow-up dates to health records to see them here
+                    </Text>
                   </View>
-                  <View style={styles.upcomingContent}>
-                    <Text style={[styles.upcomingTitle, { color: colors.text }]}>Annual Check-up</Text>
-                    <Text style={[styles.upcomingDate, { color: colors.text + '80' }]}>Due: September 15, 2024</Text>
-                  </View>
-                  <TouchableOpacity style={[styles.upcomingButton, { backgroundColor: colors.warning }]}>
-                    <Text style={styles.upcomingButtonText}>Schedule</Text>
-                  </TouchableOpacity>
-                </View>
+                )}
               </View>
             </View>
           </>
@@ -1073,10 +1549,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 style={[styles.addRecordButton, { backgroundColor: colors.primary }]}
                 onPress={() => {
                   if (activePetId) {
-                    navigation.navigate({
-                      name: 'AddHealthRecord',
-                      params: { petId: activePetId }
-                    });
+                    navigation.navigate('AddHealthRecord', { petId: activePetId });
                   } else {
                     alert('Please select a pet first');
                   }
@@ -1216,10 +1689,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                       style={[styles.noRecordsButton, { backgroundColor: colors.primary }]}
                       onPress={() => {
                         if (activePetId) {
-                          navigation.navigate({
-                            name: 'AddHealthRecord',
-                            params: { petId: activePetId }
-                          });
+                          navigation.navigate('AddHealthRecord', { petId: activePetId });
                         } else {
                           alert('Please select a pet first');
                         }
@@ -1240,17 +1710,14 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               <View style={styles.medicationsHeaderContent}>
                 <Text style={[styles.medicationsTitle, { color: colors.text }]}>Medications</Text>
                 <Text style={[styles.medicationsSubtitle, { color: colors.text + '80' }]}>
-                  Total: {medications.length} medications
+                  {medicationFilter === 'All' ? `Total: ${medications.length} medications` : `${medicationFilter}: ${medications.length} medications`}
                 </Text>
               </View>
               <TouchableOpacity
                 style={[styles.addMedicationButton, { backgroundColor: colors.primary }]}
                 onPress={() => {
                   if (activePetId) {
-                    navigation.navigate({
-                      name: 'AddMedication',
-                      params: { petId: activePetId }
-                    });
+                    navigation.navigate('AddMedication', { petId: activePetId });
                   } else {
                     alert('Please select a pet first');
                   }
@@ -1282,21 +1749,22 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 style={styles.medicationTypesScrollView}
                 contentContainerStyle={styles.medicationTypesContent}
               >
-                {['All', 'Active', 'Completed', 'Scheduled'].map(type => (
+                {['All', 'Active', 'Completed', 'Discontinued'].map(type => (
                   <TouchableOpacity
                     key={type}
                     style={[
                       styles.medicationTypeChip,
                       { 
-                        backgroundColor: type === 'All' ? colors.primary : colors.card,
+                        backgroundColor: type === medicationFilter ? colors.primary : colors.card,
                         borderColor: colors.border
                       }
                     ]}
+                    onPress={() => setMedicationFilter(type)}
                   >
                     <Text 
                       style={[
                         styles.medicationTypeChipText, 
-                        { color: type === 'All' ? 'white' : colors.text }
+                        { color: type === medicationFilter ? 'white' : colors.text }
                       ]}
                     >
                       {type}
@@ -1317,6 +1785,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 <TouchableOpacity 
                   key={medication.id} 
                   style={[styles.medicationCard, { backgroundColor: colors.card }]}
+                  onPress={() => handleViewMedicationDetails(medication.id)}
                 >
                   <View style={styles.medicationCardContent}>
                     <View style={[
@@ -1340,7 +1809,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                           { backgroundColor: medication.color + '15' }
                         ]}>
                           <Text style={[styles.medicationStatusText, { color: medication.color }]}>
-                            Active
+                            {/* Show actual medication status instead of hardcoded "Active" */}
+                            {medicationFilter === 'All' ? medication.status || 'Active' : medicationFilter}
                           </Text>
                         </View>
                       </View>
@@ -1380,10 +1850,28 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
 
                       <View style={styles.medicationFooter}>
                         <View style={styles.medicationNextDue}>
-                          <Ionicons name="time-outline" size={14} color={colors.text + '70'} />
-                          <Text style={[styles.medicationNextDueText, { color: colors.text + '70' }]}>
-                            Next dose: {medication.nextDue}
-                          </Text>
+                          {medication.nextDue === 'Completed' ? (
+                            <>
+                              <Ionicons name="checkmark-circle-outline" size={14} color={colors.success} />
+                              <Text style={[styles.medicationNextDueText, { color: colors.success }]}>
+                                {medication.nextDue}
+                              </Text>
+                            </>
+                          ) : medication.nextDue === 'Discontinued' ? (
+                            <>
+                              <Ionicons name="stop-circle-outline" size={14} color={colors.warning} />
+                              <Text style={[styles.medicationNextDueText, { color: colors.warning }]}>
+                                {medication.nextDue}
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Ionicons name="time-outline" size={14} color={colors.text + '70'} />
+                              <Text style={[styles.medicationNextDueText, { color: colors.text + '70' }]}>
+                                Next dose: {medication.nextDue}
+                              </Text>
+                            </>
+                          )}
                         </View>
                         <TouchableOpacity style={styles.medicationDetailsButton} onPress={() => handleViewMedicationDetails(medication.id)}>
                           <Text style={[styles.medicationDetailsButtonText, { color: colors.primary }]}>
@@ -1699,111 +2187,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 4,
   },
+  metricSecondary: {
+    fontSize: 12,
+    marginTop: 4,
+  },
   trendContainer: {
     marginTop: 8,
-  },
-  healthAnalyticsContainer: {
-    marginBottom: 24,
-  },
-  analyticsCard: {
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  analyticItem: {
-    marginBottom: 20,
-  },
-  analyticHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  analyticTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  analyticValueContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  analyticValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  analyticChangeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  analyticChange: {
-    fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 2,
-  },
-  chartContainer: {
-    flexDirection: 'row',
-    height: 80,
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    position: 'relative',
-  },
-  chartBarContainer: {
-    flex: 1,
-    height: '100%',
-    justifyContent: 'flex-end',
-    marginHorizontal: 2,
-    alignItems: 'center',
-  },
-  chartBar: {
-    width: '100%',
-    borderRadius: 4,
-  },
-  chartLabel: {
-    fontSize: 10,
-    marginTop: 4,
-    color: '#64748B',
-  },
-  tooltip: {
-    position: 'absolute',
-    padding: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    zIndex: 10,
-    alignItems: 'center',
-  },
-  tooltipValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  tooltipArrow: {
-    position: 'absolute',
-    bottom: -6,
-    width: 0,
-    height: 0,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 6,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-  },
-  chartHint: {
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 8,
-    fontStyle: 'italic',
   },
   healthSummaryContainer: {
     marginBottom: 24,
@@ -2221,19 +2610,41 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginRight: 4,
   },
-  fullAnalyticsButton: {
+  healthRecommendationsContainer: {
+    marginBottom: 24,
+  },
+  recommendationsCard: {
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  recommendationItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    marginTop: 8,
+    marginBottom: 16,
   },
-  fullAnalyticsButtonText: {
-    fontSize: 14,
+  recommendationIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  recommendationContent: {
+    flex: 1,
+  },
+  recommendationTitle: {
+    fontSize: 16,
     fontWeight: '600',
-    marginRight: 8,
+  },
+  recommendationText: {
+    fontSize: 14,
+    marginTop: 4,
   },
   recordTypesGradientLeft: {
     position: 'absolute',
@@ -2254,6 +2665,295 @@ const styles = StyleSheet.create({
   medicationRemindersContainer: {
     marginHorizontal: 16,
     marginTop: 8,
+  },
+  emptyUpcomingContainer: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  emptyUpcomingText: {
+    fontSize: 24,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  emptyUpcomingSubtext: {
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  vaccinationStatusCard: {
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  vaccinationHeader: {
+    marginBottom: 16,
+  },
+  vaccinationTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  vaccinationIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  vaccinationTitleContent: {
+    flex: 1,
+  },
+  vaccinationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  vaccinationSubtitle: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  vaccinationActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  vaccinationActionText: {
+    color: 'white',
+    fontWeight: '500',
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  vaccinationProgress: {
+    marginBottom: 16,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  progressLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  progressText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  progressBar: {
+    height: 8,
+    borderRadius: 4,
+  },
+  progressFill: {
+    height: '100%',
+  },
+  recentVaccinationInfo: {
+    marginBottom: 16,
+  },
+  recentVaccinationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  recentVaccinationLeft: {
+    flex: 1,
+  },
+  recentVaccinationLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  recentVaccinationValue: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  recentVaccinationDate: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  nextVaccinationInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  nextVaccinationLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  nextVaccinationValue: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  vaccinationRecommendations: {
+    marginBottom: 16,
+  },
+  recommendationsList: {
+    marginBottom: 16,
+  },
+  priorityIndicator: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  recommendationsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  recommendationName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  recommendationDescription: {
+    fontSize: 12,
+  },
+  vaccinationInfo: {
+    marginBottom: 16,
+  },
+  vaccinationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  vaccinationDetail: {
+    flex: 1,
+  },
+  vaccinationLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  vaccinationValue: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  vaccinationDate: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  // Enhanced Vaccination Card Styles
+  enhancedVaccinationCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  vaccinationCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  vaccinationTitleSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  vaccinationMainIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  vaccinationCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  vaccinationStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  vaccinationStatusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  vaccinationStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  vaccinationCardContent: {
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 16,
+  },
+  vaccinationInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  vaccinationInfoItem: {
+    flex: 1,
+    marginRight: 12,
+  },
+  vaccinationInfoLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  enhancedVaccinationInfoValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  vaccinationInfoDate: {
+    fontSize: 12,
+  },
+  enhancedVaccinationProgressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  enhancedVaccinationProgressLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  vaccinationProgressCount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  vaccinationProgressBar: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  vaccinationProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+    minWidth: 12,
+  },
+  vaccinationEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  vaccinationEmptyText: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  vaccinationEmptySubtext: {
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
 

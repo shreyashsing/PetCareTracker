@@ -1,6 +1,6 @@
 import { STORAGE_KEYS } from './constants';
 import { DataManager, BaseEntity } from './DataManager';
-import { Pet, Task, Meal, FoodItem, Medication, HealthRecord, ActivitySession, User } from '../../types/components';
+import { Pet, Task, Meal, FoodItem, Medication, HealthRecord, ActivitySession, User, WeightRecord } from '../../types/components';
 import { createEntityTables } from './migrations';
 
 /**
@@ -17,6 +17,7 @@ class FoodItemDataManager extends DataManager<FoodItem> {
       const { inventory } = item;
       return (
         item.petId === petId && 
+        !!inventory &&
         inventory.currentAmount <= inventory.lowStockThreshold
       );
     });
@@ -79,7 +80,7 @@ class FoodItemDataManager extends DataManager<FoodItem> {
     // First get the current food item
     const foodItem = await this.getById(id);
     
-    if (!foodItem) {
+    if (!foodItem || !foodItem.inventory) {
       return null;
     }
     
@@ -96,7 +97,6 @@ class FoodItemDataManager extends DataManager<FoodItem> {
     
     // Update the food item
     return this.update(id, {
-      ...foodItem,
       inventory: updatedInventory,
       lowStock: daysRemaining <= foodItem.inventory.lowStockThreshold
     });
@@ -281,6 +281,87 @@ class MedicationDataManager extends DataManager<Medication> {
     return this.update(id, {
       history: updatedHistory,
       inventory: updatedInventory
+    });
+  }
+
+  /**
+   * Update medication status and handle reminder settings
+   * @param id Medication ID
+   * @param status New status
+   * @returns Updated medication or null if not found
+   */
+  async updateStatus(id: string, status: Medication['status']): Promise<Medication | null> {
+    try {
+      const medication = await this.getById(id);
+      if (!medication) return null;
+      
+      // Prepare update data
+      const updateData: Partial<Medication> = { status };
+      
+      // Automatically disable reminders for non-active medications
+      if (status === 'completed' || status === 'discontinued') {
+        updateData.reminderSettings = {
+          ...medication.reminderSettings,
+          enabled: false
+        };
+        
+        console.log(`🔕 Automatically disabled reminders for ${status} medication: ${medication.name}`);
+      }
+      
+      return this.update(id, updateData);
+    } catch (error) {
+      console.error(`Error updating medication status:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Check and update expired medications
+   * @param petId Optional pet ID to check specific pet's medications
+   * @returns Array of medications that were updated
+   */
+  async checkAndUpdateExpiredMedications(petId?: string): Promise<Medication[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get all active medications
+    const medications = await this.find(medication => {
+      if (petId && medication.petId !== petId) return false;
+      return medication.status === 'active';
+    });
+    
+    const updatedMedications: Medication[] = [];
+    
+    for (const medication of medications) {
+      // Check if medication has an end date and it has passed
+      if (medication.duration.endDate && !medication.duration.indefinite) {
+        const endDate = new Date(medication.duration.endDate);
+        endDate.setHours(0, 0, 0, 0);
+        
+        if (endDate < today) {
+          // Medication should be marked as completed
+          const updatedMedication = await this.updateStatus(medication.id, 'completed');
+          if (updatedMedication) {
+            updatedMedications.push(updatedMedication);
+            console.log(`Automatically marked medication ${medication.name} as completed (end date: ${endDate.toDateString()})`);
+          }
+        }
+      }
+    }
+    
+    return updatedMedications;
+  }
+
+  /**
+   * Get medications by status
+   * @param status Medication status to filter by
+   * @param petId Optional pet ID to filter by specific pet
+   * @returns Array of medications with the specified status
+   */
+  async getByStatus(status: Medication['status'], petId?: string): Promise<Medication[]> {
+    return this.find(medication => {
+      if (petId && medication.petId !== petId) return false;
+      return medication.status === status;
     });
   }
 }
@@ -513,6 +594,71 @@ class HealthRecordDataManager extends DataManager<HealthRecord> {
       return followUpDate >= now && followUpDate <= future;
     });
   }
+  
+  /**
+   * Check and mark overdue health records
+   * @param petId Optional pet ID to filter by specific pet
+   * @returns Number of records marked as overdue
+   */
+  async checkAndMarkOverdueRecords(petId?: string): Promise<number> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get all health records that need follow-up and are not completed
+    const records = await this.find(record => {
+      if (petId && record.petId !== petId) return false;
+      return record.followUpNeeded === true && 
+             record.status !== 'completed' && 
+             record.followUpDate != null &&
+             !record.overdue; // Only records not already marked as overdue
+    });
+    
+    let markedCount = 0;
+    
+    for (const record of records) {
+      if (!record.followUpDate) continue;
+      
+      const followUpDate = new Date(record.followUpDate);
+      followUpDate.setHours(0, 0, 0, 0);
+      
+      // If follow-up date has passed, mark as overdue
+      if (followUpDate.getTime() < today.getTime()) {
+        try {
+          await this.update(record.id, {
+            overdue: true,
+            overdueDate: new Date()
+          });
+          markedCount++;
+          console.log(`Marked health record ${record.id} (${record.type}) as overdue`);
+        } catch (error) {
+          console.error(`Error marking health record ${record.id} as overdue:`, error);
+        }
+      }
+    }
+    
+    return markedCount;
+  }
+  
+  /**
+   * Get overdue health records (older than 2 days)
+   * @param petId Pet ID
+   * @returns Array of health records that are overdue for more than 2 days
+   */
+  async getOldOverdueRecords(petId: string): Promise<HealthRecord[]> {
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    twoDaysAgo.setHours(0, 0, 0, 0);
+    
+    return this.find(record => {
+      if (record.petId !== petId) return false;
+      if (!record.overdue || !record.followUpDate) return false;
+      
+      const followUpDate = new Date(record.followUpDate);
+      followUpDate.setHours(0, 0, 0, 0);
+      
+      return followUpDate.getTime() < twoDaysAgo.getTime();
+    });
+  }
 }
 
 /**
@@ -537,6 +683,94 @@ class ActivitySessionDataManager extends DataManager<ActivitySession> {
       })
       .slice(0, limit);
   }
+
+  /**
+   * Delete activity sessions older than a specified date
+   * @param olderThanDate Date threshold - sessions older than this will be deleted
+   * @returns Number of deleted activity sessions
+   */
+  async deleteOlderThan(olderThanDate: Date): Promise<number> {
+    try {
+      // Get all activity sessions
+      const allSessions = await this.getAll();
+      
+      // Filter sessions that are older than the specified date
+      const sessionsToDelete = allSessions.filter(session => {
+        const sessionDate = new Date(session.date);
+        return sessionDate < olderThanDate;
+      });
+      
+      // Delete each old session
+      let deleteCount = 0;
+      for (const session of sessionsToDelete) {
+        try {
+          await this.delete(session.id);
+          deleteCount++;
+        } catch (error) {
+          console.error(`Error deleting activity session ${session.id}:`, error);
+        }
+      }
+      
+      return deleteCount;
+    } catch (error) {
+      console.error('Error in deleteOlderThan:', error);
+      return 0;
+    }
+  }
+}
+
+/**
+ * Extended DataManager for WeightRecords with additional methods
+ */
+class WeightRecordDataManager extends DataManager<WeightRecord> {
+  /**
+   * Get weight records for a pet
+   * @param petId Pet ID
+   * @returns Array of weight records for the pet
+   */
+  async getByPetId(petId: string): Promise<WeightRecord[]> {
+    return this.find(record => record.petId === petId);
+  }
+
+  /**
+   * Get recent weight records for a pet
+   * @param petId Pet ID
+   * @param limit Maximum number of records to return
+   * @returns Array of recent weight records
+   */
+  async getRecentByPetId(petId: string, limit: number = 10): Promise<WeightRecord[]> {
+    const records = await this.getByPetId(petId);
+    
+    // Sort by date descending (most recent first)
+    return records
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit);
+  }
+
+  /**
+   * Get the latest weight record for a pet
+   * @param petId Pet ID
+   * @returns Latest weight record or null if none found
+   */
+  async getLatestByPetId(petId: string): Promise<WeightRecord | null> {
+    const records = await this.getRecentByPetId(petId, 1);
+    return records.length > 0 ? records[0] : null;
+  }
+
+  /**
+   * Get weight records within a date range
+   * @param petId Pet ID
+   * @param startDate Start date
+   * @param endDate End date
+   * @returns Array of weight records within the date range
+   */
+  async getByDateRange(petId: string, startDate: Date, endDate: Date): Promise<WeightRecord[]> {
+    return this.find(record => {
+      if (record.petId !== petId) return false;
+      const recordDate = new Date(record.date);
+      return recordDate >= startDate && recordDate <= endDate;
+    });
+  }
 }
 
 /**
@@ -552,6 +786,7 @@ export class UnifiedDatabaseManager {
   medications: MedicationDataManager;
   healthRecords: HealthRecordDataManager;
   activitySessions: ActivitySessionDataManager;
+  weightRecords: WeightRecordDataManager;
   users: DataManager<User>;
 
   constructor() {
@@ -563,6 +798,7 @@ export class UnifiedDatabaseManager {
     this.medications = new MedicationDataManager(STORAGE_KEYS.MEDICATIONS, 'medications');
     this.healthRecords = new HealthRecordDataManager(STORAGE_KEYS.HEALTH_RECORDS, 'health_records');
     this.activitySessions = new ActivitySessionDataManager(STORAGE_KEYS.ACTIVITY_SESSIONS, 'activity_sessions');
+    this.weightRecords = new WeightRecordDataManager(STORAGE_KEYS.WEIGHT_RECORDS, 'weight_records');
     this.users = new DataManager<User>(STORAGE_KEYS.USERS, 'users');
   }
 
@@ -591,6 +827,7 @@ export class UnifiedDatabaseManager {
           this.medications.tableExists(),
           this.healthRecords.tableExists(),
           this.activitySessions.tableExists(),
+          this.weightRecords.tableExists(),
           this.users.tableExists()
         ]),
         timeout(10000) // 10 seconds timeout
@@ -622,7 +859,8 @@ export class UnifiedDatabaseManager {
         this.foodItems.syncToSupabase(),
         this.medications.syncToSupabase(),
         this.healthRecords.syncToSupabase(),
-        this.activitySessions.syncToSupabase()
+        this.activitySessions.syncToSupabase(),
+        this.weightRecords.syncToSupabase()
       ]);
       
       console.log('All data synced successfully');
@@ -648,7 +886,8 @@ export class UnifiedDatabaseManager {
         this.foodItems.syncFromSupabase(userId),
         this.medications.syncFromSupabase(userId),
         this.healthRecords.syncFromSupabase(userId),
-        this.activitySessions.syncFromSupabase(userId)
+        this.activitySessions.syncFromSupabase(userId),
+        this.weightRecords.syncFromSupabase(userId)
       ]);
       
       console.log('All data loaded successfully');
@@ -673,7 +912,8 @@ export class UnifiedDatabaseManager {
         this.clearEntityType(this.foodItems),
         this.clearEntityType(this.medications),
         this.clearEntityType(this.healthRecords),
-        this.clearEntityType(this.activitySessions)
+        this.clearEntityType(this.activitySessions),
+        this.clearEntityType(this.weightRecords)
       ]);
       
       console.log('Database reset successfully');

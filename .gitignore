@@ -43,4 +43,6 @@ yarn-error.*
 
 # Local Netlify folder
 .netlify
+
+#android
 android/

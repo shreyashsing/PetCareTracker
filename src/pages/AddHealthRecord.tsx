@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { 
   Input, 
   Select, 
@@ -72,6 +74,15 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook - only for new records (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddHealthRecord',
+    formState,
+    setFormState,
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
+  });
   
   // Initialize from record data if in edit mode
   useEffect(() => {
@@ -224,27 +235,25 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
   };
   
   const handleSubmit = async () => {
-    const validationResult = validate();
-    // Get the effective pet ID - prefer the real one from AsyncStorage
-    const effectivePetId = realPetId || activePetId;
-    
-    if (!validationResult || !effectivePetId) {
-      console.log('Validation failed or no effective pet ID');
-      if (!validationResult) {
-        console.log('Validation errors:', errors);
-      }
-      if (!effectivePetId) {
-        console.log('Missing effective pet ID');
-      }
-      
-      // Show error to user
-      alert(`Cannot save record: ${!validationResult ? 'Please fix the form errors' : 'No pet selected'}`);
+    if (!validate()) {
       return;
     }
     
-    setIsLoading(true);
-    
     try {
+      setIsLoading(true);
+      
+      // Clear saved form state on successful submission
+      clearSavedState();
+
+      // Get the effective pet ID - prefer the real one from AsyncStorage
+      const effectivePetId = realPetId || activePetId;
+      
+      if (!effectivePetId) {
+        console.log('Missing effective pet ID');
+        alert('No pet selected');
+        return;
+      }
+      
       console.log('Using effective pet ID:', effectivePetId);
       
       // Define isVaccination early to use in baseRecord
@@ -365,8 +374,8 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         navigation.navigate('Health');
       }
     } catch (error) {
-      console.error('Error saving health record:', error);
-      alert(`Failed to save health record: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error submitting health record:', error);
+      Alert.alert('Error', 'Failed to save health record. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -383,241 +392,368 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView style={styles.scrollView}>
-      <LinearGradient
-          colors={[colors.primary, colors.primary + '80']}
-          style={styles.header}
-      >
-          <Text style={styles.headerTitle}>{isEditMode ? 'Edit' : 'Add'} Health Record</Text>
-          <Text style={styles.headerSubtitle}>
-            {isEditMode ? 'Update your pet\'s health information' : 'Record your pet\'s health information'}
-          </Text>
-      </LinearGradient>
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="health record"
+      />
       
-        <View style={[styles.form, { backgroundColor: colors.background }]}>
-          <Select
-            label="Record Type"
-            options={recordTypeOptions}
-            selectedValue={formState.type}
-            onValueChange={(value) => handleChange('type', value)}
-            containerStyle={styles.inputContainer}
-            error={errors.type}
-            touched={touched.type}
-          />
-          
-          <DatePicker
-            label="Date"
-            value={formState.date}
-            onChange={(date) => handleChange('date', date)}
-            mode="date"
-            error={errors.date}
-            containerStyle={styles.inputContainer}
-          />
-          
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Modern Header with Gradient */}
+        <LinearGradient
+          colors={[colors.primary, colors.primary + 'CC', colors.primary + '88']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
+        >
+          <View style={styles.headerContent}>
+            <View style={styles.headerIcon}>
+              <Ionicons name="heart-half" size={32} color="white" />
+            </View>
+            <Text style={styles.headerTitle}>{isEditMode ? 'Edit' : 'Add'} Health Record</Text>
+            <Text style={styles.headerSubtitle}>
+              {isEditMode ? 'Update your pet\'s health information' : 'Record your pet\'s health information'}
+            </Text>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.formContainer}>
+          {/* Record Type Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: colors.primary + '20' }]}>
+                <Ionicons name="medical" size={20} color={colors.primary} />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Record Type & Date</Text>
+            </View>
+
+            <Select
+              label="Record Type"
+              options={recordTypeOptions}
+              selectedValue={formState.type}
+              onValueChange={(value) => handleChange('type', value)}
+              containerStyle={styles.inputContainer}
+              error={errors.type}
+              touched={touched.type}
+            />
+            
+            <DatePicker
+              label="Date"
+              value={formState.date}
+              onChange={(date) => handleChange('date', date)}
+              mode="date"
+              error={errors.date}
+              containerStyle={styles.inputContainer}
+            />
+          </View>
+
           {formState.type === 'vaccination' ? (
             // Vaccination specific fields
             <>
-              <Input
-                label="Vaccine Name"
-                placeholder="Enter vaccine name"
-                value={formState.vaccineName}
-                onChangeText={(value) => handleChange('vaccineName', value)}
-                error={errors.vaccineName}
-                touched={touched.vaccineName}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <View style={styles.switchContainer}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>
-                  Next Due Date Required
-                </Text>
-                <Switch
-                  value={formState.nextDueDateNeeded}
-                  onValueChange={(value) => handleChange('nextDueDateNeeded', value)}
-                />
-              </View>
-              
-              {formState.nextDueDateNeeded && (
-                <DatePicker
-                  label="Next Due Date"
-                  value={formState.nextDueDate || new Date()}
-                  onChange={(date) => handleChange('nextDueDate', date)}
-                  mode="date"
-                  error={errors.nextDueDate}
+              {/* Vaccination Information Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#4ECDC420' }]}>
+                    <Ionicons name="shield-checkmark" size={20} color="#4ECDC4" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Vaccination Details</Text>
+                </View>
+
+                <Input
+                  label="Vaccine Name"
+                  placeholder="Enter vaccine name"
+                  value={formState.vaccineName}
+                  onChangeText={(value) => handleChange('vaccineName', value)}
+                  error={errors.vaccineName}
+                  touched={touched.vaccineName}
                   containerStyle={styles.inputContainer}
                 />
-              )}
-              
-              <Input
-                label="Veterinarian"
-                placeholder="Enter veterinarian name"
-                value={formState.veterinarian}
-                onChangeText={(value) => handleChange('veterinarian', value)}
-                error={errors.veterinarian}
-                touched={touched.veterinarian}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <Input
-                label="Clinic"
-                placeholder="Enter clinic name"
-                value={formState.clinic}
-                onChangeText={(value) => handleChange('clinic', value)}
-                error={errors.clinic}
-                touched={touched.clinic}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <Input
-                label="Notes"
-                placeholder="Additional details or observations"
-                value={formState.notes}
-                onChangeText={(value) => handleChange('notes', value)}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-                style={[styles.textArea, { backgroundColor: colors.background }]}
-                containerStyle={styles.inputContainer}
-              />
+                
+                <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+                  <View style={styles.switchContent}>
+                    <View style={styles.switchLabelContainer}>
+                      <Ionicons name="calendar-outline" size={20} color={colors.primary} style={styles.switchIcon} />
+                      <Text style={[styles.switchLabel, { color: colors.text }]}>
+                        Next Due Date Required
+                      </Text>
+                    </View>
+                    <Switch
+                      value={formState.nextDueDateNeeded}
+                      onValueChange={(value) => handleChange('nextDueDateNeeded', value)}
+                    />
+                  </View>
+                </View>
+                
+                {formState.nextDueDateNeeded && (
+                  <DatePicker
+                    label="Next Due Date"
+                    value={formState.nextDueDate || new Date()}
+                    onChange={(date) => handleChange('nextDueDate', date)}
+                    mode="date"
+                    error={errors.nextDueDate}
+                    containerStyle={styles.inputContainer}
+                  />
+                )}
+              </View>
+
+              {/* Healthcare Provider Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#9B59B620' }]}>
+                    <Ionicons name="business" size={20} color="#9B59B6" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Healthcare Provider</Text>
+                </View>
+
+                <Input
+                  label="Veterinarian"
+                  placeholder="Enter veterinarian name"
+                  value={formState.veterinarian}
+                  onChangeText={(value) => handleChange('veterinarian', value)}
+                  error={errors.veterinarian}
+                  touched={touched.veterinarian}
+                  containerStyle={styles.inputContainer}
+                />
+                
+                <Input
+                  label="Clinic"
+                  placeholder="Enter clinic name"
+                  value={formState.clinic}
+                  onChangeText={(value) => handleChange('clinic', value)}
+                  error={errors.clinic}
+                  touched={touched.clinic}
+                  containerStyle={styles.inputContainer}
+                />
+              </View>
+
+              {/* Additional Notes Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#95A5A620' }]}>
+                    <Ionicons name="create" size={20} color="#95A5A6" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Notes</Text>
+                </View>
+
+                <Input
+                  label="Notes"
+                  placeholder="Additional details or observations"
+                  value={formState.notes}
+                  onChangeText={(value) => handleChange('notes', value)}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  style={[styles.textArea, { backgroundColor: colors.background }]}
+                  containerStyle={styles.inputContainer}
+                />
+              </View>
             </>
           ) : (
             // Other record types fields
             <>
-              <Input
-                label="Title"
-                placeholder="Enter record title"
-                value={formState.title}
-                onChangeText={(value) => handleChange('title', value)}
-                error={errors.title}
-                touched={touched.title}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <Input
-                label="Veterinarian"
-                placeholder="Enter veterinarian name"
-                value={formState.veterinarian}
-                onChangeText={(value) => handleChange('veterinarian', value)}
-                error={errors.veterinarian}
-                touched={touched.veterinarian}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <Input
-                label="Clinic"
-                placeholder="Enter clinic name"
-                value={formState.clinic}
-                onChangeText={(value) => handleChange('clinic', value)}
-                error={errors.clinic}
-                touched={touched.clinic}
-                containerStyle={styles.inputContainer}
-              />
-              
-              {formState.type === 'checkup' && (
-                <>
-                  <Input
-                    label="Weight (kg)"
-                    placeholder="Enter weight"
-                    value={formState.weight}
-                    onChangeText={(value) => handleChange('weight', value)}
-                    keyboardType="numeric"
-                    error={errors.weight}
-                    touched={touched.weight}
-                    containerStyle={styles.inputContainer}
-                  />
-                
-                  <Input
-                    label="Temperature (°C)"
-                    placeholder="Enter temperature"
-                    value={formState.temperature}
-                    onChangeText={(value) => handleChange('temperature', value)}
-                    keyboardType="numeric"
-                    error={errors.temperature}
-                    touched={touched.temperature}
-                    containerStyle={styles.inputContainer}
-                  />
-                </>
-              )}
-              
-              <View style={styles.switchContainer}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>
-                  Follow-up Required
-                </Text>
-                <Switch
-                  value={formState.followUpNeeded}
-                  onValueChange={(value) => handleChange('followUpNeeded', value)}
-                />
-              </View>
-              
-              {formState.followUpNeeded && (
-                <DatePicker
-                  label="Follow-up Date"
-                  value={formState.followUpDate || new Date()}
-                  onChange={(date) => handleChange('followUpDate', date)}
-                  mode="date"
-                  error={errors.followUpDate}
+              {/* Record Information Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: colors.secondary + '20' }]}>
+                    <Ionicons name="document-text" size={20} color={colors.secondary} />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Record Information</Text>
+                </View>
+
+                <Input
+                  label="Title"
+                  placeholder="Enter record title"
+                  value={formState.title}
+                  onChangeText={(value) => handleChange('title', value)}
+                  error={errors.title}
+                  touched={touched.title}
                   containerStyle={styles.inputContainer}
                 />
-              )}
-              
-              <Select
-                label="Severity"
-                options={severityOptions}
-                selectedValue={formState.severity}
-                onValueChange={(value) => handleChange('severity', value as SeverityType)}
-                containerStyle={styles.inputContainer}
-              />
-              
-              <View style={styles.switchContainer}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>
-                  Completed
-                </Text>
-                <Switch
-                  value={formState.isCompleted}
-                  onValueChange={(value) => handleChange('isCompleted', value)}
+
+                <Select
+                  label="Severity"
+                  options={severityOptions}
+                  selectedValue={formState.severity}
+                  onValueChange={(value) => handleChange('severity', value as SeverityType)}
+                  containerStyle={styles.inputContainer}
+                />
+                
+                <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+                  <View style={styles.switchContent}>
+                    <View style={styles.switchLabelContainer}>
+                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} style={styles.switchIcon} />
+                      <Text style={[styles.switchLabel, { color: colors.text }]}>
+                        Completed
+                      </Text>
+                    </View>
+                    <Switch
+                      value={formState.isCompleted}
+                      onValueChange={(value) => handleChange('isCompleted', value)}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Healthcare Provider Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#9B59B620' }]}>
+                    <Ionicons name="business" size={20} color="#9B59B6" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Healthcare Provider</Text>
+                </View>
+
+                <Input
+                  label="Veterinarian"
+                  placeholder="Enter veterinarian name"
+                  value={formState.veterinarian}
+                  onChangeText={(value) => handleChange('veterinarian', value)}
+                  error={errors.veterinarian}
+                  touched={touched.veterinarian}
+                  containerStyle={styles.inputContainer}
+                />
+                
+                <Input
+                  label="Clinic"
+                  placeholder="Enter clinic name"
+                  value={formState.clinic}
+                  onChangeText={(value) => handleChange('clinic', value)}
+                  error={errors.clinic}
+                  touched={touched.clinic}
+                  containerStyle={styles.inputContainer}
                 />
               </View>
+
+              {formState.type === 'checkup' && (
+                /* Physical Measurements Section */
+                <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionIcon, { backgroundColor: '#FF6B6B20' }]}>
+                      <Ionicons name="fitness" size={20} color="#FF6B6B" />
+                    </View>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Physical Measurements</Text>
+                  </View>
+
+                  <View style={styles.rowContainer}>
+                    <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                      <Input
+                        label="Weight (kg)"
+                        placeholder="Enter weight"
+                        value={formState.weight}
+                        onChangeText={(value) => handleChange('weight', value)}
+                        keyboardType="numeric"
+                        error={errors.weight}
+                        touched={touched.weight}
+                      />
+                    </View>
+                    
+                    <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
+                      <Input
+                        label="Temperature (°C)"
+                        placeholder="Enter temperature"
+                        value={formState.temperature}
+                        onChangeText={(value) => handleChange('temperature', value)}
+                        keyboardType="numeric"
+                        error={errors.temperature}
+                        touched={touched.temperature}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
               
-              <Input
-                label="Notes"
-                placeholder="Additional details or observations"
-                value={formState.notes}
-                onChangeText={(value) => handleChange('notes', value)}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-                style={[styles.textArea, { backgroundColor: colors.background }]}
-                containerStyle={styles.inputContainer}
-              />
+              {/* Follow-up Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#FFA50020' }]}>
+                    <Ionicons name="time" size={20} color="#FFA500" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Follow-up</Text>
+                </View>
+
+                <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+                  <View style={styles.switchContent}>
+                    <View style={styles.switchLabelContainer}>
+                      <Ionicons name="calendar-outline" size={20} color={colors.primary} style={styles.switchIcon} />
+                      <Text style={[styles.switchLabel, { color: colors.text }]}>
+                        Follow-up Required
+                      </Text>
+                    </View>
+                    <Switch
+                      value={formState.followUpNeeded}
+                      onValueChange={(value) => handleChange('followUpNeeded', value)}
+                    />
+                  </View>
+                </View>
+                
+                {formState.followUpNeeded && (
+                  <DatePicker
+                    label="Follow-up Date"
+                    value={formState.followUpDate || new Date()}
+                    onChange={(date) => handleChange('followUpDate', date)}
+                    mode="date"
+                    error={errors.followUpDate}
+                    containerStyle={styles.inputContainer}
+                  />
+                )}
+              </View>
+
+              {/* Additional Notes Section */}
+              <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#95A5A620' }]}>
+                    <Ionicons name="create" size={20} color="#95A5A6" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Notes</Text>
+                </View>
+
+                <Input
+                  label="Notes"
+                  placeholder="Additional details or observations"
+                  value={formState.notes}
+                  onChangeText={(value) => handleChange('notes', value)}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  style={[styles.textArea, { backgroundColor: colors.background }]}
+                  containerStyle={styles.inputContainer}
+                />
+              </View>
             </>
           )}
         
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity 
-            style={[styles.button, styles.cancelButton, { borderColor: colors.border }]}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.button, styles.saveButton, { backgroundColor: colors.primary }]}
-            onPress={handleSubmit}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <View style={styles.loadingIndicator}>
-                <Ionicons name="sync" size={20} color="white" style={styles.spinner} />
-                  <Text style={styles.buttonText}>
+          {/* Action Buttons */}
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity 
+              style={[styles.button, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.background }]}
+              onPress={() => navigation.goBack()}
+            >
+              <Ionicons name="close" size={20} color={colors.text} style={styles.buttonIcon} />
+              <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.saveButton]}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <View style={styles.loadingIndicator}>
+                  <Ionicons name="sync" size={20} color="white" style={styles.spinner} />
+                  <Text style={[styles.buttonText, { marginLeft: 8 }]}>
                     {isEditMode ? 'Updating...' : 'Saving...'}
                   </Text>
-              </View>
-            ) : (
-                <Text style={styles.buttonText}>
-                  {isEditMode ? 'Update' : 'Save'}
-                </Text>
-            )}
-          </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={20} color="white" style={styles.buttonIcon} />
+                  <Text style={styles.buttonText}>
+                    {isEditMode ? 'Update' : 'Save'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -633,64 +769,141 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    padding: 20,
-    borderRadius: 10,
-    margin: 15,
-    marginBottom: 0,
+    paddingTop: 60,
+    paddingBottom: 40,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    marginBottom: 20,
+  },
+  headerContent: {
+    alignItems: 'center',
+  },
+  headerIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: 'white',
-    marginBottom: 5,
+    marginBottom: 8,
+    textAlign: 'center',
   },
   headerSubtitle: {
     fontSize: 16,
     color: 'white',
-    opacity: 0.8,
+    opacity: 0.9,
+    textAlign: 'center',
+    lineHeight: 22,
   },
-  form: {
-    padding: 15,
-    margin: 15,
-    borderRadius: 10,
+  formContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+  },
+  sectionCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    flex: 1,
   },
   inputContainer: {
-    marginBottom: 15,
+    marginBottom: 16,
   },
-  textArea: {
-    height: 100,
-    padding: 10,
-    borderRadius: 5,
+  rowContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
   },
-  switchContainer: {
+  switchCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  switchContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+  },
+  switchLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  switchIcon: {
+    marginRight: 12,
   },
   switchLabel: {
     fontSize: 16,
     fontWeight: '500',
   },
+  textArea: {
+    minHeight: 100,
+    padding: 12,
+    borderRadius: 8,
+    textAlignVertical: 'top',
+  },
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 20,
+    gap: 12,
   },
   button: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    flex: 0.48,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    flex: 1,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   cancelButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
   },
   saveButton: {
     backgroundColor: '#4A90E2',
+  },
+  buttonIcon: {
+    marginRight: 8,
   },
   buttonText: {
     fontSize: 16,
@@ -702,8 +915,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   spinner: {
-    marginRight: 10,
-    transform: [{ rotate: '0deg' }],
+    marginRight: 8,
   },
   noSelectionContainer: {
     flex: 1,

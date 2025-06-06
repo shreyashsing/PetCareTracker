@@ -5,6 +5,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { 
   Form, 
   Input, 
@@ -85,6 +87,15 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook - only for new food items (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddFoodItem',
+    formState,
+    setFormState,
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
+  });
   
   // Convert quantity when changing between units
   const convertQuantity = (value: number, fromUnit: string, toUnit: string): number => {
@@ -292,9 +303,16 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
     
-    setIsLoading(true);
+    if (isLoading) {
+      return;
+    }
     
     try {
+      setIsLoading(true);
+      
+      // Clear saved form state on successful submission
+      clearSavedState();
+
       // Get quantities from form
       const totalQuantity = parseFloat(formState.quantity);
       const dailyQuantity = parseFloat(formState.dailyFeedingQuantity);
@@ -444,6 +462,13 @@ const AddFoodItem: React.FC<AddFoodItemScreenProps> = ({ navigation, route }) =>
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="food item"
+      />
+      
       <LinearGradient
         colors={[colors.primary + '20', colors.secondary + '20', 'transparent']}
         style={styles.headerGradient}

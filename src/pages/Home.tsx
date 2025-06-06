@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   View, 
-  Text, 
+  Text,
   StyleSheet, 
   ScrollView, 
   Alert, 
@@ -33,6 +33,10 @@ import { useAuth } from '../providers/AuthProvider';
 import { useFocusEffect } from '@react-navigation/native';
 import { syncHealthRecordsForPet } from '../utils/healthRecordSync';
 import { addCacheBuster, refreshImageCache } from '../utils/imageCacheHelper';
+import { ResponsiveText, ButtonText } from '../components/ResponsiveText';
+import { createResponsiveButtonStyle } from '../utils/responsiveLayout';
+import { spacing } from '../utils/responsiveText';
+import { useAppStore } from '../store/AppStore';
 
 const { width } = Dimensions.get('window');
 
@@ -265,6 +269,9 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
   const { activePetId, setActivePetId } = useActivePet();
   const { colors } = useAppColors();
   const { user } = useAuth();
+  
+  // Navigation state management
+  const { updateCurrentRoute, navigationState } = useAppStore();
   const [activePet, setActivePet] = useState<Pet | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [meals, setMeals] = useState<Meal[]>([]);
@@ -593,15 +600,18 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
-  const loadHomeData = useCallback(async () => {
+  const loadHomeData = useCallback(async (silentReload = false) => {
     if (isLoadingRef.current) {
       console.log('Already loading data, skipping...');
       return;
     }
     
     isLoadingRef.current = true;
-    setLoading(true);
-    console.log('Loading home data...');
+    // Only show loading screen on initial load, not on silent reloads
+    if (!silentReload) {
+      setLoading(true);
+    }
+    console.log(`Loading home data... (silent: ${silentReload})`);
     
     try {
       // Always check the latest active pet ID from storage
@@ -812,7 +822,10 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
     } catch (error) {
       console.error('Error loading home data:', error);
     } finally {
-      setLoading(false);
+      // Only update loading state if not a silent reload
+      if (!silentReload) {
+        setLoading(false);
+      }
       isLoadingRef.current = false;
     }
   }, [activePetId, setActivePetId, user?.id, formatActivities]);
@@ -832,7 +845,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   // Load data on initial mount
   useEffect(() => {
-    loadHomeData();
+    loadHomeData(false); // Show loading screen on initial mount
     
     // Cleanup function
     return () => {
@@ -851,6 +864,10 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         
         console.log('Home screen focused, checking if data reload is needed');
         
+        // Update navigation state when Home screen comes into focus
+        console.log('[Home] Updating current route to Home');
+        updateCurrentRoute('Home');
+        
         // Check if we need to load data (not already loading and either first load or active pet changed)
         const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
         
@@ -860,8 +877,9 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         }
         
         // Always reload data when returning to Home screen to reflect any changes made in other screens
+        // Use silent reload to avoid showing loading screen during navigation
         console.log('Reloading home data to refresh activities and task status...');
-        await loadHomeData();
+        await loadHomeData(true);
       };
       
       loadData();
@@ -1460,7 +1478,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 
                 // Force reload data
                 if (userPets.length > 0) {
-                  loadHomeData();
+                  loadHomeData(false);
                 }
               } catch (error: any) {
                 console.error('Debug error:', error);
@@ -1491,6 +1509,15 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
         {activePet && (
           <>
             <View style={[styles.petCard, { backgroundColor: colors.card }]}>
+              {/* Edit Button */}
+              <TouchableOpacity 
+                style={[styles.editButton, { backgroundColor: colors.primary + '10' }]}
+                onPress={() => navigation.navigate('EditPet', { petId: activePet.id })}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="pencil" size={16} color={colors.primary} />
+              </TouchableOpacity>
+              
               <View style={styles.petCardContent}>
                 <Image
                   source={{ uri: activePet.image || 'https://via.placeholder.com/100' }}
@@ -1523,17 +1550,23 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                           { backgroundColor: colors.primary + '20' },
                         ]}
                       >
-                        <Text
-                          style={[
-                            styles.healthIndicatorText,
-                            { color: colors.primary },
-                          ]}
+                        <ResponsiveText
+                          variant="label"
+                          maxFontSizeMultiplier={1.2}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={true}
+                          minimumFontScale={0.8}
+                          style={{
+                            color: colors.primary,
+                            fontWeight: '600',
+                            textAlign: 'center'
+                          }}
                         >
                           {activePet.adoptionDate 
                             ? format(new Date(activePet.adoptionDate), 'MMM yyyy')
                             : 'Forever home'
                           }
-                        </Text>
+                        </ResponsiveText>
                       </View>
                       <Text style={[styles.petStatLabel, { color: colors.text + '60' }]}>Family since</Text>
                     </View>
@@ -1637,10 +1670,13 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                     No activities scheduled for today
                   </Text>
                   <TouchableOpacity
-                    style={[styles.addButton, { backgroundColor: colors.primary }]}
+                    style={[
+                      createResponsiveButtonStyle('primary', 'medium'),
+                      { backgroundColor: colors.primary }
+                    ]}
                     onPress={() => navigation.navigate('Schedule')}
                   >
-                    <Text style={styles.addButtonText}>Add Activity</Text>
+                    <ButtonText style={{ color: '#ffffff' }}>Add Activity</ButtonText>
                   </TouchableOpacity>
                 </View>
               )}
@@ -1751,27 +1787,63 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
                 <Text style={[styles.healthActionsTitle, { color: colors.text }]}>Quick Actions</Text>
                 <View style={styles.healthActionsGrid}>
                   <TouchableOpacity 
-                    style={[styles.healthActionButton, { backgroundColor: colors.primary + '15' }]}
+                    style={[styles.modernActionCard, { backgroundColor: colors.card }]}
                     onPress={() => navigation.navigate('AddHealthRecord', { petId: activePetId || '' })}
+                    activeOpacity={0.8}
                   >
-                    <Icon name="add-circle" size={24} color={colors.primary} />
-                    <Text style={[styles.healthActionText, { color: colors.primary }]}>Add Record</Text>
+                    <View style={[styles.actionIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                      <Icon name="add-circle" size={28} color={colors.primary} />
+                    </View>
+                    <ButtonText 
+                      style={[styles.quickActionText, { color: colors.text }]}
+                      maxFontSizeMultiplier={1.2}
+                      numberOfLines={2}
+                    >
+                      Add Record
+                    </ButtonText>
+                    <Text style={[styles.actionSubtext, { color: colors.text + '70' }]}>
+                      Health visit
+                    </Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity 
-                    style={[styles.healthActionButton, { backgroundColor: '#FF9800' + '15' }]}
+                    style={[styles.modernActionCard, { backgroundColor: colors.card }]}
                     onPress={() => navigation.navigate('AddMedication', { petId: activePetId || '' })}
+                    activeOpacity={0.8}
                   >
-                    <Icon name="medical" size={24} color="#FF9800" />
-                    <Text style={[styles.healthActionText, { color: '#FF9800' }]}>Add Medication</Text>
+                    <View style={[styles.actionIconContainer, { backgroundColor: '#FF9800' + '15' }]}>
+                      <Icon name="medical" size={28} color="#FF9800" />
+                    </View>
+                    <ButtonText 
+                      style={[styles.quickActionText, { color: colors.text }]}
+                      maxFontSizeMultiplier={1.2}
+                      numberOfLines={2}
+                    >
+                      Add Medication
+                    </ButtonText>
+                    <Text style={[styles.actionSubtext, { color: colors.text + '70' }]}>
+                      Medicine
+                    </Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity 
-                    style={[styles.healthActionButton, { backgroundColor: '#2196F3' + '15' }]}
+                    style={[styles.modernActionCard, { backgroundColor: colors.card }]}
                     onPress={() => navigation.navigate('Health')}
+                    activeOpacity={0.8}
                   >
-                    <Icon name="analytics" size={24} color="#2196F3" />
-                    <Text style={[styles.healthActionText, { color: '#2196F3' }]}>View Analytics</Text>
+                    <View style={[styles.actionIconContainer, { backgroundColor: '#2196F3' + '15' }]}>
+                      <Icon name="analytics" size={28} color="#2196F3" />
+                    </View>
+                    <ButtonText 
+                      style={[styles.quickActionText, { color: colors.text }]}
+                      maxFontSizeMultiplier={1.2}
+                      numberOfLines={2}
+                    >
+                      View Analytics
+                    </ButtonText>
+                    <Text style={[styles.actionSubtext, { color: colors.text + '70' }]}>
+                      Insights
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1815,17 +1887,31 @@ const styles = StyleSheet.create({
   },
   petCard: {
     borderRadius: 16,
-    padding: 16,
+    padding: 20,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     marginBottom: 16,
+    position: 'relative',
+    minHeight: 140,
+  },
+  editButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
   },
   petCardContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 8,
   },
   petImage: {
     width: 80,
@@ -1833,20 +1919,23 @@ const styles = StyleSheet.create({
     borderRadius: 40,
   },
   petInfo: {
-    marginLeft: 16,
+    marginLeft: 20,
     flex: 1,
+    paddingRight: 40,
   },
   petName: {
     fontSize: 18,
     fontWeight: 'bold',
+    marginBottom: 2,
   },
   petBreed: {
     fontSize: 14,
     marginTop: 2,
+    marginBottom: 4,
   },
   petStatsRow: {
     flexDirection: 'row',
-    marginTop: 8,
+    marginTop: 12,
     alignItems: 'center',
   },
   petStat: {
@@ -1869,6 +1958,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+    minWidth: 0, // Allow shrinking if needed
+    flexShrink: 1, // Allow container to shrink
+    alignItems: 'center', // Center the text
+    justifyContent: 'center',
   },
   healthIndicatorText: {
     fontSize: 12,
@@ -1877,7 +1970,8 @@ const styles = StyleSheet.create({
   cardActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 16,
+    marginTop: 20,
+    paddingTop: 4,
   },
   cardAction: {
     flexDirection: 'row',
@@ -2478,6 +2572,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
+  },
+  modernActionCard: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    flex: 1,
+    marginHorizontal: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  actionIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  actionSubtext: {
+    fontSize: 12,
+    textAlign: 'center',
+    opacity: 0.7,
+  },
+  quickActionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 4,
   },
 });
 

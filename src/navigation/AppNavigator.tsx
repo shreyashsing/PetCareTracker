@@ -15,6 +15,7 @@ import StorageDiagnostic from '../pages/debug/StorageDiagnostic';
 import DebugMenu from '../pages/debug/DebugMenu';
 import { isImagePickerActive } from '../utils/imageUpload';
 import { notificationService } from '../services/notifications';
+import { useAppStore } from '../store/AppStore';
 
 // Create a type specifically for the App root navigator
 type AppRootStackParamList = {
@@ -33,6 +34,18 @@ const NavigationContent = () => {
   const [checkingPets, setCheckingPets] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0); // Add a refresh key to force re-render
   const [lastRoute, setLastRoute] = useState<string | null>(null);
+  
+  // Navigation state management
+  const { 
+    updateCurrentRoute, 
+    setAppState, 
+    shouldRestoreNavigation, 
+    setShouldRestoreNavigation,
+    loadStateFromStorage,
+    navigationState,
+    isRestoringNavigation,
+    setIsRestoringNavigation
+  } = useAppStore();
   
   // Check if user has any pets
   const checkUserPets = useCallback(async () => {
@@ -72,6 +85,9 @@ const NavigationContent = () => {
   // Listen for app state changes to re-check pets when app comes to foreground
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      // Update app state in store
+      setAppState(nextAppState);
+      
       if (nextAppState === 'active') {
         // Force re-check when app comes to foreground, but only if image picker isn't active
         console.log('[AppNavigator] App became active, checking if re-check is needed');
@@ -80,7 +96,47 @@ const NavigationContent = () => {
           console.log('[AppNavigator] Image picker active, skipping re-check');
         } else {
           console.log('[AppNavigator] Re-checking pets');
-        setRefreshKey(prev => prev + 1);
+          setRefreshKey(prev => prev + 1);
+          
+          // Handle navigation restoration
+          if (shouldRestoreNavigation && navigationRef.current && !isRestoringNavigation) {
+            console.log('[AppNavigator] Should restore navigation. Current route:', navigationState.currentRoute);
+            console.log('[AppNavigator] Navigation ready:', navigationRef.current?.isReady());
+            
+            // Set restoration flag immediately to prevent conflicts
+            setIsRestoringNavigation(true);
+            
+            setTimeout(() => {
+              const targetRoute = navigationState.currentRoute;
+              const routeParams = navigationState.currentParams;
+              
+              console.log('[AppNavigator] Attempting to restore navigation to:', targetRoute, routeParams);
+              
+              try {
+                if (targetRoute && targetRoute !== 'Home' && navigationRef.current?.isReady()) {
+                  // Navigate directly to the target route
+                  console.log('[AppNavigator] Restoring directly to target route:', targetRoute);
+                  
+                  if (routeParams) {
+                    navigationRef.current.navigate(targetRoute as any, routeParams);
+                  } else {
+                    navigationRef.current.navigate(targetRoute as any);
+                  }
+                  console.log('[AppNavigator] Navigation restored successfully to:', targetRoute);
+                } else {
+                  console.log('[AppNavigator] Not restoring - target route is Home or invalid:', targetRoute);
+                }
+              } catch (error) {
+                console.error('[AppNavigator] Error restoring navigation:', error);
+              } finally {
+                // Clear restoration flags
+                setShouldRestoreNavigation(false);
+                setIsRestoringNavigation(false);
+              }
+            }, 500); // Reduced delay for faster restoration
+          } else {
+            console.log('[AppNavigator] Not restoring navigation. Should restore:', shouldRestoreNavigation, 'Nav ready:', navigationRef.current?.isReady(), 'Is restoring:', isRestoringNavigation);
+          }
         }
       }
     };
@@ -90,6 +146,20 @@ const NavigationContent = () => {
     return () => {
       subscription.remove();
     };
+  }, [setAppState, shouldRestoreNavigation, navigationState, setShouldRestoreNavigation]);
+
+  // Get current route name from navigation state
+  const getCurrentRouteName = useCallback((state: any): string | undefined => {
+    if (!state) return undefined;
+    
+    const route = state.routes[state.index];
+    
+    // If this route has nested state (like tab navigators or stack navigators)
+    if (route?.state) {
+      return getCurrentRouteName(route.state);
+    }
+    
+    return route?.name;
   }, []);
 
   // Track changes in navigation state
@@ -97,10 +167,10 @@ const NavigationContent = () => {
     if (!state) return;
     
     try {
-      const currentRouteName = state.routes[state.index]?.name;
+      const currentRouteName = getCurrentRouteName(state);
       
       if (currentRouteName && lastRoute !== currentRouteName) {
-        console.log(`[AppNavigator] Navigation changed: ${lastRoute || 'none'} -> ${currentRouteName}`);
+        console.log(`[AppNavigator] Navigation changed: ${lastRoute || 'none'} -> ${currentRouteName}${isRestoringNavigation ? ' (during restoration)' : ''}`);
         
         // If image picker is active, prevent certain navigation changes
         if (isImagePickerActive && 
@@ -111,12 +181,14 @@ const NavigationContent = () => {
           return;
         }
         
+        // Update navigation state in store (the store will handle restoration conflicts)
+        updateCurrentRoute(currentRouteName);
         setLastRoute(currentRouteName);
       }
     } catch (error) {
       console.error('[AppNavigator] Error handling navigation state change:', error);
     }
-  }, [lastRoute]);
+  }, [lastRoute, getCurrentRouteName, updateCurrentRoute, isRestoringNavigation]);
 
   useEffect(() => {
     if (navigationRef.current) {
@@ -128,7 +200,21 @@ const NavigationContent = () => {
     }
   }, [navigationRef.current]);
 
-  if (isLoading || checkingPets) {
+  // Load navigation state on app start
+  useEffect(() => {
+    const initializeNavigationState = async () => {
+      try {
+        await loadStateFromStorage();
+        console.log('[AppNavigator] Navigation state loaded from storage');
+      } catch (error) {
+        console.error('[AppNavigator] Error loading navigation state:', error);
+      }
+    };
+    
+    initializeNavigationState();
+  }, [loadStateFromStorage]);
+
+  if (isLoading || (checkingPets && !shouldRestoreNavigation)) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" />

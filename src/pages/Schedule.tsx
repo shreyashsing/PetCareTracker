@@ -16,6 +16,8 @@ import Footer from '../components/layout/Footer';
 import { notificationService } from '../services/notifications';
 import { supabase } from '../services/supabase';
 import { Task } from '../types/components';
+import { ResponsiveText, ButtonText } from '../components/ResponsiveText';
+import { createResponsiveButtonStyle } from '../utils/responsiveLayout';
 
 type ScheduleScreenProps = NativeStackScreenProps<MainStackParamList, 'Schedule'>;
 
@@ -426,11 +428,14 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
             </Text>
           </View>
           <TouchableOpacity 
-            style={[styles.addButton, { backgroundColor: colors.primary }]}
+            style={[
+              createResponsiveButtonStyle('primary', 'medium'),
+              { backgroundColor: colors.primary }
+            ]}
             onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
           >
             <Ionicons name="add" size={20} color="white" />
-            <Text style={styles.addButtonText}>Add Task</Text>
+            <ButtonText style={{ color: 'white', marginLeft: 4 }}>Add Task</ButtonText>
           </TouchableOpacity>
         </View>
       </LinearGradient>
@@ -538,10 +543,13 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                 <Ionicons name="calendar-outline" size={48} color={colors.text + '40'} />
                 <Text style={[styles.emptyStateText, { color: colors.text }]}>No tasks scheduled for today</Text>
                 <TouchableOpacity 
-                  style={[styles.emptyStateButton, { backgroundColor: colors.primary }]}
+                  style={[
+                    createResponsiveButtonStyle('primary', 'medium'),
+                    { backgroundColor: colors.primary }
+                  ]}
                   onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
                 >
-                  <Text style={styles.emptyStateButtonText}>Add a Task</Text>
+                  <ButtonText style={{ color: 'white' }}>Add a Task</ButtonText>
                 </TouchableOpacity>
               </View>
             )}
@@ -608,10 +616,13 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
                 <Ionicons name="calendar-outline" size={48} color={colors.text + '40'} />
                 <Text style={[styles.emptyStateText, { color: colors.text }]}>No upcoming events</Text>
                 <TouchableOpacity 
-                  style={[styles.emptyStateButton, { backgroundColor: colors.primary }]}
+                  style={[
+                    createResponsiveButtonStyle('primary', 'medium'),
+                    { backgroundColor: colors.primary }
+                  ]}
                   onPress={() => navigation.navigate('AddTask', { petId: activePetId || undefined })}
                 >
-                  <Text style={styles.emptyStateButtonText}>Schedule an Event</Text>
+                  <ButtonText style={{ color: 'white' }}>Schedule an Event</ButtonText>
                 </TouchableOpacity>
               </View>
             )}

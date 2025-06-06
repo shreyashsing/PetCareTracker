@@ -5,6 +5,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { 
   Input, 
   Select, 
@@ -55,6 +57,15 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook - only for new meals (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddMeal',
+    formState,
+    setFormState,
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
+  });
   
   // Load meal data if editing an existing meal
   useEffect(() => {
@@ -215,33 +226,32 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   };
   
   const handleSubmit = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      return;
+    }
+    
+    if (isLoading) {
+      return;
+    }
     
     setIsLoading(true);
     
     try {
-      const success = await saveMeal();
+      // Clear saved form state on successful submission
+      clearSavedState();
+
+      const result = await saveMeal();
       
-      if (success) {
-        // Show success toast
-        toast({
-          title: isEditMode ? 'Meal updated' : 'Meal added',
-          description: isEditMode ? 
-            'Your pet\'s meal has been updated successfully' : 
-            'Your pet\'s meal has been added successfully'
-        });
-        
-        // Navigate back with refresh flag
-        navigation.navigate({
-          name: 'Feeding',
-          params: { refresh: true }
-        });
-      } else {
-        Alert.alert('Error', 'Failed to save meal. Please try again.');
+      if (result) {
+        Alert.alert(
+          'Success', 
+          isEditMode ? 'Meal updated successfully!' : 'Meal added successfully!',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
       }
     } catch (error) {
-      console.error('Error in meal submission:', error);
-      Alert.alert('Error', 'An unexpected error occurred.');
+      console.error('Error submitting meal:', error);
+      Alert.alert('Error', 'Failed to save meal. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -300,6 +310,13 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="meal"
+      />
+      
       <LinearGradient
         colors={[colors.primary + '20', colors.secondary + '20', 'transparent']}
         style={styles.headerGradient}

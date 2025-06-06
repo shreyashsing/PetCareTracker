@@ -5,6 +5,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { 
   Input, 
   Select, 
@@ -64,6 +66,15 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook - only for new medications (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddMedication',
+    formState,
+    setFormState,
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
+  });
   
   // Initialize from medication data if in edit mode
   useEffect(() => {
@@ -233,50 +244,39 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       const specificTimesCount = formState.reminderTimes?.length || 0;
       
       if (specificTimesCount === 1 && timesPerDay > 1) {
-        const confirmed = await new Promise<boolean>((resolve) => {
+        const warnings = validateMedicationTimes();
+        if (warnings.length > 0) {
           Alert.alert(
-            'Time Configuration Notice',
-            `You've set the frequency to ${timesPerDay}x per day but only specified 1 reminder time. The app will automatically generate ${timesPerDay - 1} additional reminder times between 8:00 AM and 10:00 PM.\n\nDo you want to continue?`,
+            'Reminder Times',
+            warnings[0],
             [
-              { text: 'Cancel', onPress: () => resolve(false) },
-              { text: 'Continue', onPress: () => resolve(true) }
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Continue', onPress: () => submitForm() },
             ]
           );
-        });
-        
-        if (!confirmed) return;
-      } else if (specificTimesCount > 0 && specificTimesCount < timesPerDay) {
-        const confirmed = await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            'Time Configuration Notice',
-            `You've set the frequency to ${timesPerDay}x per day but only specified ${specificTimesCount} reminder time(s). The app will automatically generate ${timesPerDay - specificTimesCount} additional reminder times.\n\nDo you want to continue?`,
-            [
-              { text: 'Cancel', onPress: () => resolve(false) },
-              { text: 'Continue', onPress: () => resolve(true) }
-            ]
-          );
-        });
-        
-        if (!confirmed) return;
+          return;
+        }
       }
     }
     
-    // Prevent multiple submissions
-    if (isLoading) {
-      return;
-    }
-    
-    // Get effective pet ID - either from editMode or from AsyncStorage
-    const effectivePetId = realPetId || activePetId;
-    
-    if (!effectivePetId) {
-      Alert.alert('Error', 'No active pet selected. Please select a pet first.');
-      return;
-    }
-    
-    setIsLoading(true);
-    
+    submitForm();
+  };
+  
+  const submitForm = async () => {
     try {
+      setIsLoading(true);
+      
+      // Clear saved form state on successful submission
+      clearSavedState();
+
+      // Get effective pet ID - either from editMode or from AsyncStorage
+      const effectivePetId = realPetId || activePetId;
+      
+      if (!effectivePetId) {
+        Alert.alert('Error', 'No active pet selected. Please select a pet first.');
+        return;
+      }
+      
       console.log('Using effective pet ID:', effectivePetId);
       
       // Create medication record
@@ -386,8 +386,8 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error) {
-      console.error('Error saving medication:', error);
-      Alert.alert('Error', `Failed to save medication: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error submitting medication:', error);
+      Alert.alert('Error', 'Failed to save medication. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -404,166 +404,246 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView style={styles.scrollView}>
-      <LinearGradient
-          colors={[colors.primary, colors.primary + '80']}
-          style={styles.header}
-      >
-          <Text style={styles.headerTitle}>{isEditMode ? 'Edit' : 'Add'} Medication</Text>
-          <Text style={styles.headerSubtitle}>
-            {isEditMode ? 'Update your pet\'s medication' : 'Track your pet\'s medication schedule'}
-          </Text>
-      </LinearGradient>
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="medication"
+      />
       
-        <View style={[styles.form, { backgroundColor: colors.background }]}>
-          <Input
-            label="Medication Name"
-            placeholder="Enter medication name"
-            value={formState.name}
-            onChangeText={(value) => handleChange('name', value)}
-            error={errors.name}
-            touched={touched.name}
-            containerStyle={styles.inputContainer}
-          />
-          
-          <Select
-            label="Medication Type"
-            options={medicationTypeOptions}
-            selectedValue={formState.type}
-            onValueChange={(value) => handleChange('type', value)}
-            error={errors.type}
-            touched={touched.type}
-            containerStyle={styles.inputContainer}
-          />
-          
-          <View style={styles.rowContainer}>
-            <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
-          <Input
-                label="Dosage Amount"
-                placeholder="Enter amount"
-                value={formState.dosageAmount}
-                onChangeText={(value) => handleChange('dosageAmount', value)}
-                keyboardType="numeric"
-                error={errors.dosageAmount}
-                touched={touched.dosageAmount}
-              />
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Modern Header with Gradient */}
+        <LinearGradient
+          colors={[colors.primary, colors.primary + 'CC', colors.primary + '88']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
+        >
+          <View style={styles.headerContent}>
+            <View style={styles.headerIcon}>
+              <Ionicons name="medical" size={32} color="white" />
             </View>
-            
-            <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
-              <Select
-                label="Unit"
-                options={dosageUnitOptions}
-                selectedValue={formState.dosageUnit}
-                onValueChange={(value) => handleChange('dosageUnit', value)}
-                error={errors.dosageUnit}
-                touched={touched.dosageUnit}
-              />
-            </View>
-          </View>
-          
-          <View style={styles.rowContainer}>
-            <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
-              <Input
-                label="Times Per"
-                placeholder="Enter frequency"
-                value={formState.frequencyTimes}
-                onChangeText={(value) => handleChange('frequencyTimes', value)}
-                keyboardType="numeric"
-                error={errors.frequencyTimes}
-                touched={touched.frequencyTimes}
-          />
-            </View>
-            
-            <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
-          <Select
-                label="Period"
-                options={frequencyPeriodOptions}
-                selectedValue={formState.frequencyPeriod}
-                onValueChange={(value) => handleChange('frequencyPeriod', value)}
-                error={errors.frequencyPeriod}
-                touched={touched.frequencyPeriod}
-          />
-            </View>
-          </View>
-          
-          <DatePicker
-            label="Start Date"
-            value={formState.startDate}
-            onChange={(date) => handleChange('startDate', date)}
-            mode="date"
-            error={errors.startDate}
-            containerStyle={styles.inputContainer}
-          />
-          
-          <View style={styles.switchContainer}>
-            <Text style={[styles.switchLabel, { color: colors.text }]}>
-              Ongoing Treatment
+            <Text style={styles.headerTitle}>{isEditMode ? 'Edit' : 'Add'} Medication</Text>
+            <Text style={styles.headerSubtitle}>
+              {isEditMode ? 'Update your pet\'s medication details' : 'Track your pet\'s medication schedule'}
             </Text>
-            <Switch
-              value={formState.isOngoing}
-              onValueChange={(value) => handleChange('isOngoing', value)}
-              />
+          </View>
+        </LinearGradient>
+
+        <View style={styles.formContainer}>
+          {/* Basic Information Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: colors.primary + '20' }]}>
+                <Ionicons name="information-circle" size={20} color={colors.primary} />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
             </View>
-            
-          {!formState.isOngoing && (
-            <DatePicker
-              label="End Date"
-              value={formState.endDate || new Date()}
-              onChange={(date) => handleChange('endDate', date)}
-              mode="date"
-              error={errors.endDate}
+
+            <Input
+              label="Medication Name"
+              placeholder="Enter medication name"
+              value={formState.name}
+              onChangeText={(value) => handleChange('name', value)}
+              error={errors.name}
+              touched={touched.name}
               containerStyle={styles.inputContainer}
             />
-          )}
-          
-          <View style={styles.switchContainer}>
-            <Text style={[styles.switchLabel, { color: colors.text }]}>
-              Enable Reminders
-            </Text>
-            <Switch
-              value={formState.reminderEnabled}
-              onValueChange={(value) => handleChange('reminderEnabled', value)}
+            
+            <Select
+              label="Medication Type"
+              options={medicationTypeOptions}
+              selectedValue={formState.type}
+              onValueChange={(value) => handleChange('type', value)}
+              error={errors.type}
+              touched={touched.type}
+              containerStyle={styles.inputContainer}
             />
+          </View>
+
+          {/* Dosage Information Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: colors.secondary + '20' }]}>
+                <Ionicons name="flask" size={20} color={colors.secondary} />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Dosage Information</Text>
             </View>
-          
-          <Input
-            label="Notes"
-            placeholder="Additional instructions or notes"
-            value={formState.notes}
-            onChangeText={(value) => handleChange('notes', value)}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            style={[styles.textArea, { backgroundColor: colors.background }]}
-            containerStyle={styles.inputContainer}
-          />
+
+            <View style={styles.rowContainer}>
+              <View style={[styles.inputContainer, { flex: 1.5, marginRight: 12 }]}>
+                <Input
+                  label="Dosage Amount"
+                  placeholder="Enter amount"
+                  value={formState.dosageAmount}
+                  onChangeText={(value) => handleChange('dosageAmount', value)}
+                  keyboardType="numeric"
+                  error={errors.dosageAmount}
+                  touched={touched.dosageAmount}
+                />
+              </View>
+              
+              <View style={[styles.inputContainer, { flex: 1, marginLeft: 0 }]}>
+                <Select
+                  label="Unit"
+                  options={dosageUnitOptions}
+                  selectedValue={formState.dosageUnit}
+                  onValueChange={(value) => handleChange('dosageUnit', value)}
+                  error={errors.dosageUnit}
+                  touched={touched.dosageUnit}
+                />
+              </View>
+            </View>
+            
+            <View style={styles.rowContainer}>
+              <View style={[styles.inputContainer, { flex: 1.5, marginRight: 12 }]}>
+                <Input
+                  label="Times Per"
+                  placeholder="Enter frequency"
+                  value={formState.frequencyTimes}
+                  onChangeText={(value) => handleChange('frequencyTimes', value)}
+                  keyboardType="numeric"
+                  error={errors.frequencyTimes}
+                  touched={touched.frequencyTimes}
+                />
+              </View>
+              
+              <View style={[styles.inputContainer, { flex: 1, marginLeft: 0 }]}>
+                <Select
+                  label="Period"
+                  options={frequencyPeriodOptions}
+                  selectedValue={formState.frequencyPeriod}
+                  onValueChange={(value) => handleChange('frequencyPeriod', value)}
+                  error={errors.frequencyPeriod}
+                  touched={touched.frequencyPeriod}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Schedule Information Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF6B6B20' }]}>
+                <Ionicons name="calendar" size={20} color="#FF6B6B" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Schedule Information</Text>
+            </View>
+
+            <DatePicker
+              label="Start Date"
+              value={formState.startDate}
+              onChange={(date) => handleChange('startDate', date)}
+              mode="date"
+              error={errors.startDate}
+              containerStyle={styles.inputContainer}
+            />
+            
+            <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+              <View style={styles.switchContent}>
+                <View style={styles.switchLabelContainer}>
+                  <Ionicons name="infinite" size={20} color={colors.primary} style={styles.switchIcon} />
+                  <Text style={[styles.switchLabel, { color: colors.text }]}>
+                    Ongoing Treatment
+                  </Text>
+                </View>
+                <Switch
+                  value={formState.isOngoing}
+                  onValueChange={(value) => handleChange('isOngoing', value)}
+                />
+              </View>
+            </View>
+              
+            {!formState.isOngoing && (
+              <DatePicker
+                label="End Date"
+                value={formState.endDate || new Date()}
+                onChange={(date) => handleChange('endDate', date)}
+                mode="date"
+                error={errors.endDate}
+                containerStyle={styles.inputContainer}
+              />
+            )}
+          </View>
+
+          {/* Reminders Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#4ECDC420' }]}>
+                <Ionicons name="notifications" size={20} color="#4ECDC4" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Reminders</Text>
+            </View>
+
+            <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+              <View style={styles.switchContent}>
+                <View style={styles.switchLabelContainer}>
+                  <Ionicons name="alarm" size={20} color={colors.primary} style={styles.switchIcon} />
+                  <Text style={[styles.switchLabel, { color: colors.text }]}>
+                    Enable Reminders
+                  </Text>
+                </View>
+                <Switch
+                  value={formState.reminderEnabled}
+                  onValueChange={(value) => handleChange('reminderEnabled', value)}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Notes Section */}
+          <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#95A5A620' }]}>
+                <Ionicons name="create" size={20} color="#95A5A6" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Notes</Text>
+            </View>
+
+            <Input
+              label="Notes"
+              placeholder="Additional instructions or notes"
+              value={formState.notes}
+              onChangeText={(value) => handleChange('notes', value)}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+              style={[styles.textArea, { backgroundColor: colors.background }]}
+              containerStyle={styles.inputContainer}
+            />
+          </View>
         
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity 
-            style={[styles.button, styles.cancelButton, { borderColor: colors.border }]}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.button, styles.saveButton, { backgroundColor: colors.primary }]}
-            onPress={handleSubmit}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <View style={styles.loadingIndicator}>
-                <Ionicons name="sync" size={20} color="white" style={styles.spinner} />
-                  <Text style={styles.buttonText}>
+          {/* Action Buttons */}
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity 
+              style={[styles.button, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.background }]}
+              onPress={() => navigation.goBack()}
+            >
+              <Ionicons name="close" size={20} color={colors.text} style={styles.buttonIcon} />
+              <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.saveButton]}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <View style={styles.loadingIndicator}>
+                  <Ionicons name="sync" size={20} color="white" style={styles.spinner} />
+                  <Text style={[styles.buttonText, { marginLeft: 8 }]}>
                     {isEditMode ? 'Updating...' : 'Saving...'}
                   </Text>
-              </View>
-            ) : (
-                <Text style={styles.buttonText}>
-                  {isEditMode ? 'Update' : 'Save'}
-                </Text>
-            )}
-          </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={20} color="white" style={styles.buttonIcon} />
+                  <Text style={styles.buttonText}>
+                    {isEditMode ? 'Update' : 'Save'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -579,69 +659,141 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    padding: 20,
-    borderRadius: 10,
-    margin: 15,
-    marginBottom: 0,
+    paddingTop: 60,
+    paddingBottom: 40,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    marginBottom: 20,
+  },
+  headerContent: {
+    alignItems: 'center',
+  },
+  headerIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: 'white',
-    marginBottom: 5,
+    marginBottom: 8,
+    textAlign: 'center',
   },
   headerSubtitle: {
     fontSize: 16,
     color: 'white',
-    opacity: 0.8,
+    opacity: 0.9,
+    textAlign: 'center',
+    lineHeight: 22,
   },
-  form: {
-    padding: 15,
-    margin: 15,
-    borderRadius: 10,
+  formContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+  },
+  sectionCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    flex: 1,
   },
   inputContainer: {
-    marginBottom: 15,
+    marginBottom: 16,
   },
   rowContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 15,
+    alignItems: 'flex-start',
+    marginBottom: 16,
   },
-  textArea: {
-    height: 100,
-    padding: 10,
-    borderRadius: 5,
+  switchCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
   },
-  switchContainer: {
+  switchContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+  },
+  switchLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  switchIcon: {
+    marginRight: 12,
   },
   switchLabel: {
     fontSize: 16,
     fontWeight: '500',
   },
+  textArea: {
+    minHeight: 100,
+    padding: 12,
+    borderRadius: 8,
+    textAlignVertical: 'top',
+  },
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 20,
+    gap: 12,
   },
   button: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    flex: 0.48,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    flex: 1,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   cancelButton: {
-    borderWidth: 1,
+    borderWidth: 1.5,
   },
   saveButton: {
     backgroundColor: '#4A90E2',
+  },
+  buttonIcon: {
+    marginRight: 8,
   },
   buttonText: {
     fontSize: 16,
@@ -653,8 +805,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   spinner: {
-    marginRight: 10,
-    transform: [{ rotate: '0deg' }],
+    marginRight: 8,
   },
   noSelectionContainer: {
     flex: 1,
@@ -663,8 +814,9 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   noSelectionText: {
-    fontSize: 16,
     textAlign: 'center',
+    marginTop: 50,
+    fontSize: 16,
   },
 });
 

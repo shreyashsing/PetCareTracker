@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -9,25 +9,29 @@ import {
   RefreshControl,
   FlatList,
   Image,
+  Alert,
   Dimensions,
   TextInput,
-  Switch,
-  Alert
+  Switch
 } from 'react-native';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
-import { format } from 'date-fns';
 import { TopNavBar } from '../components';
 import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { MainStackParamList } from '../types/navigation';
+import { format, isToday, isYesterday, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 import { Meal, FoodItem, Pet } from '../types/components';
-import {unifiedDatabaseManager} from "../services/db";
+import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
+import { AsyncStorageService } from '../services/db/asyncStorage';
+import { formatDate } from '../utils/helpers';
 import { useFocusEffect } from '@react-navigation/native';
 import Footer from '../components/layout/Footer';
 import { notificationService } from '../services/notifications';
 import { useToast } from '../hooks/use-toast';
+import { ResponsiveText, ButtonText } from '../components/ResponsiveText';
+import { createResponsiveButtonStyle } from '../utils/responsiveLayout';
 
 type FeedingScreenProps = NativeStackScreenProps<MainStackParamList, 'Feeding'>;
 
@@ -48,6 +52,7 @@ type TabType = 'today' | 'history' | 'inventory';
 const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors } = useAppColors();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [todayMeals, setTodayMeals] = useState<SimpleMeal[]>([]);
@@ -69,7 +74,6 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     completedMealsCount: 0,
     completionRate: 0
   });
-  const { toast } = useToast();
 
   // Show mock meal while waiting
   const addMockMeal = useCallback(() => {
@@ -1208,11 +1212,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   
                   <View style={styles.summaryRight}>
                     <TouchableOpacity 
-                      style={[styles.addMealButton, {backgroundColor: colors.primary}]}
+                      style={[
+                        createResponsiveButtonStyle('primary', 'medium'),
+                        { backgroundColor: colors.primary }
+                      ]}
                       onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}
                     >
                       <Ionicons name="add" size={24} color="white" />
-                      <Text style={styles.addMealText}>Log Meal</Text>
+                      <ButtonText style={{ color: 'white', marginLeft: 8 }}>Log Meal</ButtonText>
                     </TouchableOpacity>
                   </View>
                 </View>

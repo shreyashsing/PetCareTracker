@@ -26,6 +26,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { Pet } from '../types/components';
 import {unifiedDatabaseManager} from "../services/db";
 import { useAuth } from '../providers/AuthProvider';
@@ -102,6 +104,15 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook (disabled for edit mode since we're editing existing data)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'EditPet',
+    formState,
+    setFormState,
+    enabled: !loadingPet, // Only enable after we've loaded the pet data
+    debounceMs: 2000
+  });
   
   // Options for dropdown selects
   const petTypeOptions = [
@@ -415,6 +426,9 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       
       console.log(`Pet ${updatedPet.name} updated successfully`);
       
+      // Clear any saved form state since update was successful
+      clearSavedState();
+      
       // Navigate to Home screen and show success message
       Alert.alert(
         'Success',
@@ -501,7 +515,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               ) : (
                 <View style={styles.imagePickerContent}>
                   <View style={[styles.imagePickerIconContainer, { backgroundColor: colors.primary + '20' }]}>
-                    <Ionicons name="paw" size={28} color={colors.primary} />
+                    <Ionicons name="camera" size={32} color={colors.primary} />
                   </View>
                   <Text style={[styles.imagePickerText, { color: colors.text }]}>Update Pet Photo</Text>
                   <Text style={[styles.imagePickerSubtext, { color: colors.text + '60' }]}>
@@ -514,8 +528,22 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
         </LinearGradient>
         
         <View style={styles.formContainer}>
+          {/* Form State Notification */}
+          <FormStateNotification
+            visible={wasRestored}
+            onDismiss={dismissRestoreNotification}
+            formName="pet profile"
+          />
+          
           <Form>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
+            {/* Basic Information Section */}
+            <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                  <Ionicons name="paw" size={20} color={colors.primary} />
+                </View>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
+              </View>
             
             <FormRow>
               <Input
@@ -587,16 +615,24 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               </View>
             </FormRow>
             
-            <FormRow style={styles.rowSpacing}>
-              <Input
-                label="Color"
-                value={formState.color}
-                onChangeText={(value) => handleChange('color', value)}
-                placeholder="Enter color/markings"
-              />
-            </FormRow>
+              <FormRow style={styles.rowSpacing}>
+                <Input
+                  label="Color"
+                  value={formState.color}
+                  onChangeText={(value) => handleChange('color', value)}
+                  placeholder="Enter color/markings"
+                />
+              </FormRow>
+            </View>
             
-            <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 24 }]}>Health Information</Text>
+            {/* Health Information Section */}
+            <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionIconContainer, { backgroundColor: '#4CAF50' + '15' }]}>
+                  <Ionicons name="medical" size={20} color="#4CAF50" />
+                </View>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Health Information</Text>
+              </View>
             
             <FormRow style={styles.rowSpacing}>
               <Switch
@@ -645,38 +681,56 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               />
             </FormRow>
             
+              <FormRow style={styles.rowSpacing}>
+                <Input
+                  label="Allergies"
+                  value={formState.allergies}
+                  onChangeText={(value) => handleChange('allergies', value)}
+                  placeholder="Enter allergies (comma separated)"
+                  multiline
+                />
+              </FormRow>
+            </View>
+            
+            {/* Additional Information Section */}
+            <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionIconContainer, { backgroundColor: '#FF9800' + '15' }]}>
+                  <Ionicons name="information-circle" size={20} color="#FF9800" />
+                </View>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Information</Text>
+              </View>
+            
             <FormRow style={styles.rowSpacing}>
-              <Input
-                label="Allergies"
-                value={formState.allergies}
-                onChangeText={(value) => handleChange('allergies', value)}
-                placeholder="Enter allergies (comma separated)"
-                multiline
-              />
+              <View style={styles.datePickerContainer}>
+                <DatePicker
+                  label="Adoption Date"
+                  value={formState.adoptionDate || new Date()}
+                  onChange={(value) => handleChange('adoptionDate', value)}
+                />
+              </View>
             </FormRow>
             
-            <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 24 }]}>Additional Information</Text>
+              <FormRow style={styles.rowSpacing}>
+                <Input
+                  label="Notes"
+                  value={formState.notes || ''}
+                  onChangeText={(value) => handleChange('notes', value)}
+                  placeholder="Enter any additional notes about your pet"
+                  multiline
+                  numberOfLines={4}
+                />
+              </FormRow>
+            </View>
             
-            <FormRow style={styles.rowSpacing}>
-              <DatePicker
-                label="Adoption Date"
-                value={formState.adoptionDate || new Date()}
-                onChange={(value) => handleChange('adoptionDate', value)}
-              />
-            </FormRow>
-            
-            <FormRow style={styles.rowSpacing}>
-              <Input
-                label="Notes"
-                value={formState.notes || ''}
-                onChangeText={(value) => handleChange('notes', value)}
-                placeholder="Enter any additional notes about your pet"
-                multiline
-                numberOfLines={4}
-              />
-            </FormRow>
-            
-            <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 24 }]}>Veterinarian Information</Text>
+            {/* Veterinarian Information Section */}
+            <View style={[styles.sectionCard, { backgroundColor: colors.card }]}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionIconContainer, { backgroundColor: '#2196F3' + '15' }]}>
+                  <Ionicons name="medical-outline" size={20} color="#2196F3" />
+                </View>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Veterinarian Information</Text>
+              </View>
             
             <FormRow style={styles.rowSpacing}>
               <Input
@@ -712,31 +766,45 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               />
             </FormRow>
             
-            <FormRow style={styles.rowSpacing}>
-              <Input
-                label="Phone"
-                value={formState.veterinarian.phone}
-                onChangeText={(value) => 
-                  setFormState(prev => ({
-                    ...prev, 
-                    veterinarian: {
-                      ...prev.veterinarian,
-                      phone: value
-                    }
-                  }))
-                }
-                placeholder="Enter phone number"
-                keyboardType="phone-pad"
-              />
-            </FormRow>
+              <FormRow style={styles.rowSpacing}>
+                <Input
+                  label="Phone"
+                  value={formState.veterinarian.phone}
+                  onChangeText={(value) => 
+                    setFormState(prev => ({
+                      ...prev, 
+                      veterinarian: {
+                        ...prev.veterinarian,
+                        phone: value
+                      }
+                    }))
+                  }
+                  placeholder="Enter phone number"
+                  keyboardType="phone-pad"
+                />
+              </FormRow>
+            </View>
             
             <View style={styles.submitButtonContainer}>
-              <Button
-                title={isLoading ? 'Updating...' : 'Update Pet'}
+              <TouchableOpacity
+                style={[
+                  styles.submitButton, 
+                  { backgroundColor: colors.primary },
+                  isLoading && styles.submitButtonDisabled
+                ]}
                 onPress={handleSubmit}
                 disabled={isLoading}
-                isLoading={isLoading}
-              />
+                activeOpacity={0.8}
+              >
+                {isLoading ? (
+                  <View style={styles.submitButtonContent}>
+                    <ActivityIndicator size="small" color="white" style={styles.submitButtonLoader} />
+                    <Text style={styles.submitButtonText}>Updating...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.submitButtonText}>Update Pet</Text>
+                )}
+              </TouchableOpacity>
             </View>
           </Form>
         </View>
@@ -753,12 +821,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollViewContent: {
-    paddingBottom: 40,
+    paddingBottom: 60,
   },
   headerGradient: {
-    padding: 16,
-    paddingTop: 40,
-    paddingBottom: 30,
+    padding: 20,
+    paddingTop: 50,
+    paddingBottom: 40,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
   },
   header: {
     flexDirection: 'row',
@@ -784,39 +854,52 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   imagePickerButton: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
     overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 4,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+    borderWidth: 4,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
   },
   petImage: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
   },
   editPhotoButtonContainer: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    bottom: 12,
+    left: '50%',
+    marginLeft: -22,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   editPhotoButton: {
-    padding: 8,
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   imagePickerContent: {
     alignItems: 'center',
@@ -840,15 +923,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   formContainer: {
-    padding: 16,
+    padding: 20,
+    paddingTop: 24,
+  },
+  sectionCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 16,
+    flex: 1,
   },
   rowSpacing: {
-    marginBottom: 12,
+    marginBottom: 16,
+  },
+  datePickerContainer: {
+    flex: 1,
+    minHeight: 60,
+    maxHeight: 80,
   },
   halfInput: {
     flex: 1,
@@ -867,7 +980,38 @@ const styles = StyleSheet.create({
   },
   submitButtonContainer: {
     marginTop: 32,
-    marginBottom: 16,
+    marginBottom: 32,
+    paddingHorizontal: 0,
+  },
+  submitButton: {
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 56,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  submitButtonDisabled: {
+    opacity: 0.7,
+  },
+  submitButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  submitButtonLoader: {
+    marginRight: 8,
+  },
+  submitButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,

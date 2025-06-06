@@ -5,6 +5,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { 
   Input, 
   Select, 
@@ -62,6 +64,15 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
     recurrence: 'once',
     isCompleted: false,
     reminderEnabled: true,
+  });
+
+  // Form state persistence hook - only for new tasks (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddTask',
+    formState,
+    setFormState,
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
   });
 
   // Check if navigated from Exercise screen
@@ -199,9 +210,14 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
   const handleSubmit = async () => {
     if (!validateForm()) return;
 
-    setIsLoading(true);
-    
+    if (isLoading) return;
+
     try {
+      setIsLoading(true);
+      
+      // Clear saved form state on successful submission
+      clearSavedState();
+
       // Ensure dates are properly formatted
       const dueDate = new Date(formState.dueDate);
       const dueTime = new Date(formState.dueTime);
@@ -330,6 +346,13 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="task"
+      />
+      
       <LinearGradient
         colors={[colors.primary, colors.secondary]}
         start={{ x: 0, y: 0 }}

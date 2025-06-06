@@ -18,8 +18,13 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "background-fetch",
+          "remote-notification",
+          "background-fetch",
           "remote-notification"
         ]
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "android": {
@@ -32,8 +37,12 @@
       "permissions": [
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.WAKE_LOCK",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK",
         "android.permission.VIBRATE"
-      ]
+      ],
+      "runtimeVersion": "1.0.0"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -62,6 +71,9 @@
         "projectId": "f0d9faf1-7d2a-4369-aa93-85be27c920d0"
       }
     },
-    "owner": "shreyash1313"
+    "owner": "shreyash1313",
+    "updates": {
+      "url": "https://u.expo.dev/f0d9faf1-7d2a-4369-aa93-85be27c920d0"
+    }
   }
 }

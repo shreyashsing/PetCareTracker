@@ -1,13 +1,15 @@
 import React from 'react';
 import { 
   TouchableOpacity, 
-  Text, 
   StyleSheet, 
   ActivityIndicator, 
   StyleProp,
   ViewStyle,
   TextStyle
 } from 'react-native';
+import { ResponsiveText } from '../components/ResponsiveText';
+import { createResponsiveButtonStyle, responsiveTextStyles } from '../utils/responsiveLayout';
+import { typography, spacing, responsiveBorderRadius } from '../utils/responsiveText';
 
 interface ButtonProps {
   title: string;
@@ -32,6 +34,9 @@ const Button: React.FC<ButtonProps> = ({
   textStyle,
   fullWidth = false,
 }) => {
+  // Get responsive button style
+  const responsiveButtonStyle = createResponsiveButtonStyle(variant, size);
+  
   // Determine which style to use based on variant prop
   const getButtonStyle = () => {
     switch (variant) {
@@ -64,40 +69,23 @@ const Button: React.FC<ButtonProps> = ({
     }
   };
   
-  // Determine which size style to use
-  const getSizeStyle = () => {
+  // Get text variant based on button size
+  const getTextVariant = () => {
     switch (size) {
       case 'small':
-        return styles.smallButton;
-      case 'medium':
-        return styles.mediumButton;
+        return 'buttonSmall' as const;
       case 'large':
-        return styles.largeButton;
+        return 'buttonLarge' as const;
       default:
-        return styles.mediumButton;
-    }
-  };
-  
-  // Determine which text size style to use
-  const getTextSizeStyle = () => {
-    switch (size) {
-      case 'small':
-        return styles.smallText;
-      case 'medium':
-        return styles.mediumText;
-      case 'large':
-        return styles.largeText;
-      default:
-        return styles.mediumText;
+        return 'buttonMedium' as const;
     }
   };
   
   return (
     <TouchableOpacity
       style={[
-        styles.button,
+        responsiveButtonStyle,
         getButtonStyle(),
-        getSizeStyle(),
         fullWidth && styles.fullWidth,
         disabled && styles.disabledButton,
         style,
@@ -112,28 +100,28 @@ const Button: React.FC<ButtonProps> = ({
           color={variant === 'outline' ? '#4F46E5' : '#ffffff'} 
         />
       ) : (
-        <Text 
+        <ResponsiveText 
+          variant={getTextVariant()}
           style={[
+            responsiveTextStyles.buttonText,
             styles.text, 
             getTextStyle(), 
-            getTextSizeStyle(),
             disabled && styles.disabledText,
             textStyle
           ]}
+          maxFontSizeMultiplier={1.2} // Limit scaling for buttons
+          numberOfLines={1}
+          adjustsFontSizeToFit={true}
+          minimumFontScale={0.9}
         >
           {title}
-        </Text>
+        </ResponsiveText>
       )}
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
-  button: {
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   primaryButton: {
     backgroundColor: '#4F46E5',
   },
@@ -147,18 +135,6 @@ const styles = StyleSheet.create({
   },
   dangerButton: {
     backgroundColor: '#EF4444',
-  },
-  smallButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  mediumButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  largeButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 14,
   },
   text: {
     fontWeight: '600',
@@ -174,15 +150,6 @@ const styles = StyleSheet.create({
   },
   dangerText: {
     color: '#FFFFFF',
-  },
-  smallText: {
-    fontSize: 12,
-  },
-  mediumText: {
-    fontSize: 14,
-  },
-  largeText: {
-    fontSize: 16,
   },
   disabledButton: {
     backgroundColor: '#E5E7EB',

@@ -26,6 +26,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppColors } from '../hooks/useAppColors';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 import { Pet } from '../types/components';
 import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
@@ -113,6 +115,15 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Form state persistence hook
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddPet',
+    formState,
+    setFormState,
+    enabled: true,
+    debounceMs: 2000
+  });
   
   const petTypeOptions = [
     { label: 'Dog', value: 'dog' },
@@ -303,11 +314,20 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
   };
   
   const handleSubmit = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      return;
+    }
     
-    setIsLoading(true);
+    if (isLoading) {
+      return;
+    }
     
     try {
+      setIsLoading(true);
+      
+      // Clear saved form state on successful submission
+      clearSavedState();
+
       // Ensure user is logged in
       if (!user) {
         throw new Error("User not authenticated");
@@ -421,8 +441,8 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
         }
       }
     } catch (error) {
-      console.error('Error adding pet:', error);
-      Alert.alert('Error', 'There was a problem adding your pet. Please try again.');
+      console.error('Error submitting pet:', error);
+      Alert.alert('Error', 'Failed to save pet. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -430,66 +450,65 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
   
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollViewContent}
-      >
+      {/* Form State Restoration Notification */}
+      <FormStateNotification 
+        visible={wasRestored}
+        onDismiss={dismissRestoreNotification}
+        formName="pet profile"
+      />
+      
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollViewContent} showsVerticalScrollIndicator={false}>
+        {/* Modern Header with Gradient */}
         <LinearGradient
-          colors={[colors.primary + '30', colors.background]}
-          style={styles.headerGradient}
+          colors={[colors.primary, colors.primary + 'CC', colors.primary + '88']}
           start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerGradient}
         >
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Add a New Pet</Text>
-            <Text style={[styles.subtitle, { color: colors.text + '80' }]}>
-              Fill in your pet's details and add a photo
-            </Text>
+            <View style={styles.headerIcon}>
+              <Ionicons name="paw" size={32} color="white" />
+            </View>
+            <Text style={styles.headerTitle}>Add a New Pet</Text>
+            <Text style={styles.headerSubtitle}>Fill in your pet's details and add a photo</Text>
           </View>
-          
-          <View style={styles.imagePickerContainer}>
-            <TouchableOpacity 
-              style={[styles.imagePickerButton, { backgroundColor: colors.card }]} 
+        </LinearGradient>
+
+        <View style={styles.content}>
+          {/* Photo Section */}
+          <View style={[styles.photoSection, { backgroundColor: colors.card }]}>
+            <TouchableOpacity
+              style={[styles.photoUploadContainer, { backgroundColor: colors.background }]}
               onPress={showImagePicker}
               disabled={imageLoading}
             >
-              {imageLoading ? (
-                <ActivityIndicator size="large" color={colors.primary} />
-              ) : formState.image ? (
-                <>
-                  <Image 
-                    source={{ uri: formState.image }} 
-                    style={styles.petImage} 
-                    resizeMode="cover"
-                  />
-                  <View style={styles.removePhotoButtonContainer}>
-                    <TouchableOpacity 
-                      style={styles.removePhotoButton}
-                      onPress={() => handleChange('image', undefined)}
-                    >
-                      <Ionicons name="trash-outline" size={28} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                </>
+              {formState.image ? (
+                <Image source={{ uri: formState.image }} style={styles.petImage} />
               ) : (
-                <View style={styles.imagePickerContent}>
-                  <View style={[styles.imagePickerIconContainer, { backgroundColor: colors.primary + '20' }]}>
-                    <Ionicons name="paw" size={28} color={colors.primary} />
+                <View style={styles.photoPlaceholder}>
+                  <View style={[styles.photoIcon, { backgroundColor: colors.primary + '20' }]}>
+                    <Ionicons name="camera" size={32} color={colors.primary} />
                   </View>
-                  <Text style={[styles.imagePickerText, { color: colors.text }]}>Add Pet Photo</Text>
-                  <Text style={[styles.imagePickerSubtext, { color: colors.text + '60' }]}>
-                    Tap to upload
-                  </Text>
+                  <Text style={[styles.photoText, { color: colors.text }]}>Add Pet Photo</Text>
+                  <Text style={[styles.photoSubtext, { color: colors.text + '80' }]}>Tap to upload</Text>
+                </View>
+              )}
+              {imageLoading && (
+                <View style={styles.loadingOverlay}>
+                  <ActivityIndicator size="large" color={colors.primary} />
                 </View>
               )}
             </TouchableOpacity>
           </View>
-        </LinearGradient>
-        
-        <View style={styles.formContainer}>
+
+          {/* Basic Information Section */}
           <View style={[styles.formSection, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: colors.primary + '20' }]}>
+                <Ionicons name="information-circle" size={20} color={colors.primary} />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
+            </View>
             
             <Input
               label="Pet Name"
@@ -530,7 +549,41 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               touched={touched.size}
               containerStyle={styles.inputContainer}
             />
-            
+
+            <View style={styles.rowContainer}>
+              <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                <Input
+                  label="Color"
+                  placeholder="Enter color"
+                  value={formState.color}
+                  onChangeText={(value) => handleChange('color', value)}
+                  error={errors.color}
+                  touched={touched.color}
+                />
+              </View>
+              
+              <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
+                <Select
+                  label="Gender"
+                  options={genderOptions}
+                  selectedValue={formState.gender}
+                  onValueChange={(value) => handleChange('gender', value)}
+                  error={errors.gender}
+                  touched={touched.gender}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Dates Section */}
+          <View style={[styles.formSection, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF6B6B20' }]}>
+                <Ionicons name="calendar" size={20} color="#FF6B6B" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Important Dates</Text>
+            </View>
+
             <DatePicker
               label="Birth Date"
               value={formState.birthDate || new Date()}
@@ -548,27 +601,17 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               error={errors.adoptionDate}
               containerStyle={styles.inputContainer}
             />
-            
-            <Select
-              label="Gender"
-              options={genderOptions}
-              selectedValue={formState.gender}
-              onValueChange={(value) => handleChange('gender', value)}
-              error={errors.gender}
-              touched={touched.gender}
-              containerStyle={styles.inputContainer}
-            />
+          </View>
 
-            <Input
-              label="Color"
-              placeholder="Enter color"
-              value={formState.color}
-              onChangeText={(value) => handleChange('color', value)}
-              error={errors.color}
-              touched={touched.color}
-              containerStyle={styles.inputContainer}
-            />
-            
+          {/* Physical Information Section */}
+          <View style={[styles.formSection, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: colors.secondary + '20' }]}>
+                <Ionicons name="fitness" size={20} color={colors.secondary} />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Physical Information</Text>
+            </View>
+
             <FormRow>
               <View style={[styles.formRowItem, { flex: 2 }]}>
                 <Input
@@ -605,13 +648,29 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               touched={touched.status}
               containerStyle={styles.inputContainer}
             />
-            
-            <Switch
-              label="Microchipped"
-              value={formState.microchipped}
-              onValueChange={(value) => handleChange('microchipped', value)}
-              containerStyle={styles.switchContainer}
-            />
+          </View>
+
+          {/* Medical Information Section */}
+          <View style={[styles.formSection, { backgroundColor: colors.card }]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#4ECDC420' }]}>
+                <Ionicons name="medical" size={20} color="#4ECDC4" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Medical Information</Text>
+            </View>
+
+            <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+              <View style={styles.switchContent}>
+                <View style={styles.switchLabelContainer}>
+                  <Ionicons name="radio-button-on" size={20} color={colors.primary} style={styles.switchIcon} />
+                  <Text style={[styles.switchLabel, { color: colors.text }]}>Microchipped</Text>
+                </View>
+                <Switch
+                  value={formState.microchipped}
+                  onValueChange={(value) => handleChange('microchipped', value)}
+                />
+              </View>
+            </View>
             
             {formState.microchipped && (
               <Input
@@ -625,12 +684,18 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
               />
             )}
             
-            <Switch
-              label="Neutered/Spayed"
-              value={formState.neutered}
-              onValueChange={(value) => handleChange('neutered', value)}
-              containerStyle={styles.switchContainer}
-            />
+            <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+              <View style={styles.switchContent}>
+                <View style={styles.switchLabelContainer}>
+                  <Ionicons name="cut" size={20} color={colors.primary} style={styles.switchIcon} />
+                  <Text style={[styles.switchLabel, { color: colors.text }]}>Neutered/Spayed</Text>
+                </View>
+                <Switch
+                  value={formState.neutered}
+                  onValueChange={(value) => handleChange('neutered', value)}
+                />
+              </View>
+            </View>
 
             <Input
               label="Medical Conditions"
@@ -657,8 +722,14 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             />
           </View>
           
+          {/* Veterinarian Information Section */}
           <View style={[styles.formSection, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Veterinarian Information</Text>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#9B59B620' }]}>
+                <Ionicons name="people" size={20} color="#9B59B6" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Veterinarian Information</Text>
+            </View>
             
             <Input
               label="Veterinarian Name"
@@ -692,8 +763,14 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             />
           </View>
           
+          {/* Additional Information Section */}
           <View style={[styles.formSection, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Information</Text>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#95A5A620' }]}>
+                <Ionicons name="create" size={20} color="#95A5A6" />
+              </View>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Additional Information</Text>
+            </View>
             
             <Input
               label="Notes"
@@ -708,20 +785,33 @@ const AddPet: React.FC<AddPetScreenProps> = ({ navigation }) => {
             />
           </View>
           
+          {/* Action Buttons */}
           <View style={styles.buttonContainer}>
-            <Button
-              title="Cancel"
+            <TouchableOpacity
+              style={[styles.button, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.background }]}
               onPress={() => navigation.goBack()}
-              variant="outline"
-              style={styles.cancelButton}
-            />
+            >
+              <Ionicons name="close" size={20} color={colors.text} style={styles.buttonIcon} />
+              <Text style={[styles.buttonText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
             
-            <Button
-              title={isLoading ? 'Saving...' : 'Save Pet'}
+            <TouchableOpacity
+              style={[styles.button, styles.saveButton]}
               onPress={handleSubmit}
               disabled={isLoading}
-              style={styles.saveButton}
-            />
+            >
+              {isLoading ? (
+                <View style={styles.loadingIndicator}>
+                  <ActivityIndicator size="small" color="white" />
+                  <Text style={[styles.buttonText, { marginLeft: 8 }]}>Saving...</Text>
+                </View>
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={20} color="white" style={styles.buttonIcon} />
+                  <Text style={styles.buttonText}>Save Pet</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -741,141 +831,204 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   headerGradient: {
-    paddingTop: 20,
+    paddingTop: 60,
     paddingBottom: 40,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
+    marginBottom: 20,
   },
   header: {
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-  },
-  imagePickerContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 20,
   },
-  imagePickerButton: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    overflow: 'hidden',
+  headerIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: 'white',
+    opacity: 0.9,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  content: {
+    paddingHorizontal: 20,
+  },
+  photoSection: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  photoUploadContainer: {
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#E0E0E0',
+    borderStyle: 'dashed',
     position: 'relative',
   },
-  imagePickerContent: {
-    alignItems: 'center',
-  },
-  imagePickerIconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  imagePickerText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  imagePickerSubtext: {
-    fontSize: 12,
-  },
   petImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 70,
+    width: 156,
+    height: 156,
+    borderRadius: 78,
   },
-  removePhotoButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
+  photoPlaceholder: {
     alignItems: 'center',
   },
-  removePhotoButtonContainer: {
+  photoIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  photoText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  photoSubtext: {
+    fontSize: 14,
+  },
+  loadingOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 80,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    borderRadius: 70,
-  },
-  formContainer: {
-    flex: 1,
-    marginTop: -30,
-    paddingHorizontal: 16,
   },
   formSection: {
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+    padding: 20,
+    marginBottom: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 16,
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-    paddingTop: 12,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  cancelButton: {
     flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  saveButton: {
-    flex: 2,
-    flexDirection: 'row',
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  formRowItem: {
-    marginHorizontal: 4,
   },
   inputContainer: {
     marginBottom: 16,
   },
-  switchContainer: {
+  rowContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     marginBottom: 16,
+  },
+  formRowItem: {
+    marginHorizontal: 4,
+  },
+  switchCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  switchContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  switchLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  switchIcon: {
+    marginRight: 12,
+  },
+  switchLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  textArea: {
+    minHeight: 100,
+    padding: 12,
+    borderRadius: 8,
+    textAlignVertical: 'top',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+    gap: 12,
+    marginBottom: 20,
+  },
+  button: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    flex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cancelButton: {
+    borderWidth: 1.5,
+  },
+  saveButton: {
+    backgroundColor: '#4A90E2',
+  },
+  buttonIcon: {
+    marginRight: 8,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
+  loadingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });
 

@@ -38,6 +38,7 @@
     "@reduxjs/toolkit": "^2.6.1",
     "@supabase/supabase-js": "^2.49.4",
     "@tanstack/react-query": "^5.72.0",
+    "@types/react": "18.3.12",
     "axios": "^1.8.4",
     "base-64": "^1.0.0",
     "date-fns": "^4.1.0",
@@ -58,6 +59,7 @@
     "expo-secure-store": "^14.0.1",
     "expo-status-bar": "~2.0.1",
     "expo-task-manager": "~12.0.6",
+    "expo-updates": "~0.27.4",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "^7.55.0",
@@ -75,8 +77,7 @@
     "react-native-web": "~0.19.13",
     "react-redux": "^9.2.0",
     "zod": "^3.24.2",
-    "zustand": "^5.0.4",
-    "@types/react": "18.3.12"
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",

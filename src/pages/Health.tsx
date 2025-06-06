@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -82,7 +82,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [healthMetrics, setHealthMetrics] = useState<HealthMetric[]>([]);
   const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [syncingRecords, setSyncingRecords] = useState(false);
   const [recordType, setRecordType] = useState<string>('All');
   const [medicationFilter, setMedicationFilter] = useState<string>('All'); // Add medication filter state
@@ -117,6 +117,10 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   // New state for medication details modal
   const [selectedMedication, setSelectedMedication] = useState<DbMedication | null>(null);
   const [medicationDetailsVisible, setMedicationDetailsVisible] = useState(false);
+  
+  // Add ref to track initial mount and loading state
+  const isInitialMount = useRef(true);
+  const isLoadingRef = useRef(false);
 
   // Calculate health status and statistics
   const calculateHealthMetrics = (
@@ -513,9 +517,23 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   };
 
   // Add a function to load data (reusing the code from the useEffect)
-  const loadHealthData = async () => {
+  const loadHealthData = async (silentReload = false) => {
+    // Prevent multiple simultaneous loads
+    if (isLoadingRef.current) {
+      console.log('Already loading health data, skipping...');
+      return;
+    }
+    
     try {
-      setLoading(true);
+      isLoadingRef.current = true;
+      
+      // Only show loading screen on initial load, not on silent reloads
+      if (!silentReload) {
+        setLoading(true);
+      }
+      
+      console.log(`Loading health data... (silent: ${silentReload})`);
+      
       
       // Get active pet ID from context first, then AsyncStorage if needed
       let currentPetId = activePetId;
@@ -536,20 +554,33 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
           console.log('Successfully loaded pet:', pet.name, pet.id);
           setActivePet(pet);
           
-          // Try to sync health records with Supabase
-          try {
-            setSyncingRecords(true);
-            console.log('Syncing health records with Supabase...');
-            const syncResult = await syncHealthRecordsForPet(currentPetId);
-            console.log('Health records sync result:', syncResult);
-            
-            if (syncResult.syncedRecords > 0) {
-              console.log(`Successfully synced ${syncResult.syncedRecords} health records`);
+          // Try to sync health records with Supabase (only during non-silent reloads)
+          if (!silentReload) {
+            try {
+              setSyncingRecords(true);
+              console.log('Syncing health records with Supabase...');
+              const syncResult = await syncHealthRecordsForPet(currentPetId);
+              console.log('Health records sync result:', syncResult);
+              
+              if (syncResult.syncedRecords > 0) {
+                console.log(`Successfully synced ${syncResult.syncedRecords} health records`);
+              }
+            } catch (syncError) {
+              console.error('Error syncing health records:', syncError);
+            } finally {
+              setSyncingRecords(false);
             }
-          } catch (syncError) {
-            console.error('Error syncing health records:', syncError);
-          } finally {
-            setSyncingRecords(false);
+          } else {
+            // Silent background sync without showing loading state
+            try {
+              console.log('Silent background sync of health records...');
+              const syncResult = await syncHealthRecordsForPet(currentPetId);
+              if (syncResult.syncedRecords > 0) {
+                console.log(`Silently synced ${syncResult.syncedRecords} health records`);
+              }
+            } catch (syncError) {
+              console.error('Error in silent sync:', syncError);
+            }
           }
           
           // Load health records
@@ -995,21 +1026,29 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     } catch (error) {
       console.error('Error loading health data:', error);
     } finally {
+      // Always ensure loading is false after any load operation
       setLoading(false);
+      isLoadingRef.current = false;
     }
   };
 
-  // When the user navigates to this screen or when the active pet changes, reload data
+  // Only load data on initial mount - let useFocusEffect handle navigation
   useEffect(() => {
-    console.log('→→→ Health screen focused - reloading data');
-    loadHealthData();
-  }, [activePetId]);
+    if (isInitialMount.current) {
+
+      loadHealthData(true); // Use silent load even on initial mount to prevent loading screen
+      // Set this to false AFTER the loadHealthData call to prevent medication filter from triggering
+      setTimeout(() => {
+        isInitialMount.current = false;
+      }, 100);
+    }
+  }, []); // Empty dependency array for initial mount only
   
-  // Reload data when medication filter changes
+  // Reload data when medication filter changes (but not on initial mount)
   useEffect(() => {
-    if (medicationFilter) {
+    if (medicationFilter && !isInitialMount.current) {
       console.log('→→→ Medication filter changed to:', medicationFilter);
-      loadHealthData();
+      loadHealthData(false); // Show loading screen when filter changes
     }
   }, [medicationFilter]);
 
@@ -1019,117 +1058,27 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       console.log('→→→ Health screen focused - reloading data');
       console.log('→→→ Current active pet ID from context:', activePetId);
       
-      // Reload all health records to verify what's in the database
-      async function verifyRecords() {
-        try {
-          // Always check latest activePetId from AsyncStorage
-          const storedActivePetId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-          console.log('→→→ Currently active pet ID from storage:', storedActivePetId);
-          
-          // Get ALL records from the database regardless of pet ID
-          const allRecords = await unifiedDatabaseManager.healthRecords.getAll();
-          console.log('→→→ ALL health records in database:', allRecords.length);
-          
-          // Log ALL vaccination records in the database regardless of pet ID
-          const allVaccinations = allRecords.filter(r => 
-            r.type === 'vaccination' || 
-            (typeof r.type === 'string' && r.type.toLowerCase().includes('vacc'))
-          );
-          
-          console.log('→→→ ALL vaccination records in DB:', allVaccinations.length);
-          if (allVaccinations.length > 0) {
-            console.log('→→→ ALL vaccination details:', JSON.stringify(allVaccinations.map(v => ({
-              id: v.id,
-              petId: v.petId,
-              type: v.type,
-              title: v.title
-            })), null, 2));
-          }
-          
-          // If stored active pet ID is different from context, we should update
-          if (storedActivePetId && storedActivePetId !== activePetId) {
-            console.log('→→→ Active pet ID in storage differs from context - need to refresh');
-          }
-          
-          if (storedActivePetId) {
-            console.log('→→→ Getting records for active pet:', storedActivePetId);
-            const allRecords = await unifiedDatabaseManager.healthRecords.getAll();
-            const petRecords = allRecords.filter(record => record.petId === storedActivePetId);
-            console.log('→→→ Filtered pet health records:', petRecords.length);
-            
-            // Log vaccination records specifically for this pet
-            const vaccinations = petRecords.filter(r => r.type === 'vaccination');
-            console.log('→→→ Vaccination records for active pet:', vaccinations.length);
-            if (vaccinations.length > 0) {
-              console.log('→→→ Vaccination details:', JSON.stringify(vaccinations.map(v => ({
-                id: v.id,
-                type: v.type,
-                title: v.title
-              })), null, 2));
-            }
-            
-            // Log records with follow-up dates
-            const recordsWithFollowUp = petRecords.filter(r => r.followUpNeeded && r.followUpDate);
-            console.log('→→→ Records with follow-up dates:', recordsWithFollowUp.length);
-            if (recordsWithFollowUp.length > 0) {
-              console.log('→→→ Follow-up details:', JSON.stringify(recordsWithFollowUp.map(r => ({
-                id: r.id,
-                type: r.type,
-                title: r.title,
-                followUpDate: r.followUpDate
-              })), null, 2));
-            }
-          }
-        } catch (error) {
-          console.error('Error verifying records:', error);
-        }
-      }
-      
-      verifyRecords();
-      loadHealthData();
+
+      // Use silent reload to avoid showing loading screen during navigation
+      loadHealthData(true);
       
       return () => {
         // Clean up if needed
       };
-    }, [activePetId])
+    }, []) // Remove activePetId dependency to prevent double-triggering
   );
   
-  // Log information about follow-up records after loading
-  useEffect(() => {
-    if (healthRecords.length > 0) {
-      const recordsWithFollowUp = healthRecords.filter(record => record.followUpNeeded && record.followUpDate);
-      console.log('RECORDS WITH FOLLOW-UP:', recordsWithFollowUp.length);
-      console.log('FOLLOW-UP DETAILS:', JSON.stringify(recordsWithFollowUp.map(r => ({
-        id: r.id,
-        type: r.type,
-        title: r.title,
-        followUpDate: r.followUpDate,
-        valid: r.followUpDate && r.followUpDate.trim() !== ''
-      })), null, 2));
-    }
-  }, [healthRecords]);
+
 
   // Filter health records based on selected type
   const filteredHealthRecords = healthRecords.filter(record => {
     if (recordType === 'All') {
-      console.log(`Including record ${record.id} (${record.type}) because filter is 'All'`);
       return true;
     }
     
     // Make more robust comparisons using String methods
     const recordTypeStr = String(record.type).toLowerCase().trim();
     const filterTypeStr = String(recordType).toLowerCase().trim();
-    
-    console.log(`Comparing record ${record.id} - recordType: "${recordTypeStr}" with filter: "${filterTypeStr}"`);
-    
-    // Extra debugging for vaccination records
-    if (recordTypeStr === 'vaccination' || filterTypeStr === 'vaccination') {
-      console.log(`VACCINATION DEBUG - Record ID: ${record.id}`);
-      console.log(`VACCINATION DEBUG - Record type: "${recordTypeStr}"`);
-      console.log(`VACCINATION DEBUG - Filter type: "${filterTypeStr}"`);
-      console.log(`VACCINATION DEBUG - Match?: ${recordTypeStr === filterTypeStr}`);
-      console.log(`VACCINATION DEBUG - Includes?: ${recordTypeStr.includes(filterTypeStr)}`);
-    }
     
     // More flexible matching to handle potential type issues
     const exactMatch = recordTypeStr === filterTypeStr;
@@ -1188,8 +1137,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   };
   
   const handleRecordDeleted = () => {
-    // Refresh the records list
-    loadHealthData();
+    // Refresh the records list silently
+    loadHealthData(true);
   };
   
   const handleViewMedicationDetails = async (medicationId: string) => {
@@ -1219,8 +1168,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   };
   
   const handleMedicationDeleted = () => {
-    // Refresh the medications list
-    loadHealthData();
+    // Refresh the medications list silently
+    loadHealthData(true);
   };
 
   const renderTabContent = () => {

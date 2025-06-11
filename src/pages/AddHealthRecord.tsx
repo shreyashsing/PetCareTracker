@@ -38,6 +38,7 @@ interface FormState {
   followUpNeeded: boolean;
   severity: SeverityType;
   isCompleted: boolean;
+  reminderEnabled: boolean;
   // Vaccination specific fields
   vaccineName: string;
   nextDueDate?: Date;
@@ -66,6 +67,7 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
     followUpNeeded: false,
     severity: 'low',
     isCompleted: true,
+    reminderEnabled: true,
     // Vaccination specific fields
     vaccineName: '',
     nextDueDate: undefined,
@@ -113,6 +115,7 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         vaccineName: record.type === 'vaccination' ? record.title : '',
         nextDueDate: record.followUpDate && record.type === 'vaccination' ? new Date(record.followUpDate) : undefined,
         nextDueDateNeeded: record.followUpNeeded && record.type === 'vaccination',
+        reminderEnabled: true,
       };
       
       console.log('Provider info in edit mode:', {
@@ -355,10 +358,13 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
           followUpDate: formState.type === 'vaccination' ? formState.nextDueDate : formState.followUpDate,
         };
         
-        // Only schedule notifications if follow-up is needed and date is set
-        if (savedRecord.followUpNeeded && savedRecord.followUpDate) {
+        // Only schedule notifications if follow-up is needed, date is set, and reminders are enabled
+        if (savedRecord.followUpNeeded && savedRecord.followUpDate && formState.reminderEnabled) {
           await notificationService.scheduleHealthRecordNotifications(savedRecord);
           console.log('✅ Health record follow-up notifications scheduled successfully');
+        } else if (isEditMode && recordId) {
+          // Cancel existing notifications if reminders are disabled
+          await notificationService.cancelHealthRecordNotifications(recordId);
         }
       } catch (notificationError) {
         console.error('Error scheduling health record notifications:', notificationError);
@@ -486,14 +492,31 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
                 </View>
                 
                 {formState.nextDueDateNeeded && (
-                  <DatePicker
-                    label="Next Due Date"
-                    value={formState.nextDueDate || new Date()}
-                    onChange={(date) => handleChange('nextDueDate', date)}
-                    mode="date"
-                    error={errors.nextDueDate}
-                    containerStyle={styles.inputContainer}
-                  />
+                  <>
+                    <DatePicker
+                      label="Next Due Date"
+                      value={formState.nextDueDate || new Date()}
+                      onChange={(date) => handleChange('nextDueDate', date)}
+                      mode="date"
+                      error={errors.nextDueDate}
+                      containerStyle={styles.inputContainer}
+                    />
+                    
+                    <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+                      <View style={styles.switchContent}>
+                        <View style={styles.switchLabelContainer}>
+                          <Ionicons name="notifications-outline" size={20} color={colors.primary} style={styles.switchIcon} />
+                          <Text style={[styles.switchLabel, { color: colors.text }]}>
+                            Enable Vaccination Reminders
+                          </Text>
+                        </View>
+                        <Switch
+                          value={formState.reminderEnabled}
+                          onValueChange={(value) => handleChange('reminderEnabled', value)}
+                        />
+                      </View>
+                    </View>
+                  </>
                 )}
               </View>
 
@@ -688,14 +711,31 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
                 </View>
                 
                 {formState.followUpNeeded && (
-                  <DatePicker
-                    label="Follow-up Date"
-                    value={formState.followUpDate || new Date()}
-                    onChange={(date) => handleChange('followUpDate', date)}
-                    mode="date"
-                    error={errors.followUpDate}
-                    containerStyle={styles.inputContainer}
-                  />
+                  <>
+                    <DatePicker
+                      label="Follow-up Date"
+                      value={formState.followUpDate || new Date()}
+                      onChange={(date) => handleChange('followUpDate', date)}
+                      mode="date"
+                      error={errors.followUpDate}
+                      containerStyle={styles.inputContainer}
+                    />
+                    
+                    <View style={[styles.switchCard, { backgroundColor: colors.background }]}>
+                      <View style={styles.switchContent}>
+                        <View style={styles.switchLabelContainer}>
+                          <Ionicons name="notifications-outline" size={20} color={colors.primary} style={styles.switchIcon} />
+                          <Text style={[styles.switchLabel, { color: colors.text }]}>
+                            Enable Follow-up Reminders
+                          </Text>
+                        </View>
+                        <Switch
+                          value={formState.reminderEnabled}
+                          onValueChange={(value) => handleChange('reminderEnabled', value)}
+                        />
+                      </View>
+                    </View>
+                  </>
                 )}
               </View>
 

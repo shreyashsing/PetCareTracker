@@ -18,7 +18,7 @@ class FoodItemDataManager extends DataManager<FoodItem> {
       return (
         item.petId === petId && 
         !!inventory &&
-        inventory.currentAmount <= inventory.lowStockThreshold
+        inventory.daysRemaining <= inventory.lowStockThreshold
       );
     });
   }
@@ -84,22 +84,104 @@ class FoodItemDataManager extends DataManager<FoodItem> {
       return null;
     }
     
-    // Calculate days remaining based on new amount and daily feeding amount
-    const daysRemaining = Math.floor(newAmount / foodItem.inventory.dailyFeedingAmount);
+    // Get units for proper conversion
+    const inventoryUnit = foodItem.inventory.unit;
+    const dailyFeedingUnit = foodItem.inventory.dailyFeedingUnit;
+    const dailyFeedingAmount = foodItem.inventory.dailyFeedingAmount;
+    
+    if (!dailyFeedingAmount || dailyFeedingAmount <= 0) {
+      console.error("Daily feeding amount is invalid:", dailyFeedingAmount);
+      return null;
+    }
+    
+    // Convert daily feeding amount to inventory unit for proper calculation
+    let normalizedDailyAmount = dailyFeedingAmount;
+    
+    // Improved unit conversion system using centralized conversion through grams
+    const UNIT_TO_G: Record<string, number> = {
+      'kg': 1000,
+      'lb': 453.592,
+      'oz': 28.3495,
+      'cups': 226.796, // Approximate for dry dog food
+      'g': 1,
+      'packages': 500, // Approximate default
+      'cans': 400, // Approximate default
+    };
+    
+    const G_TO_UNIT: Record<string, number> = {
+      'kg': 0.001,
+      'lb': 0.00220462,
+      'oz': 0.035274,
+      'cups': 0.00440925, // Approximate for dry dog food
+      'g': 1,
+      'packages': 0.002, // Approximate default
+      'cans': 0.0025, // Approximate default
+    };
+    
+    // If units differ, convert daily feeding amount to inventory unit
+    if (inventoryUnit !== dailyFeedingUnit) {
+      // First convert to grams, then to target unit
+      if (UNIT_TO_G[dailyFeedingUnit] && G_TO_UNIT[inventoryUnit]) {
+        const inGrams = dailyFeedingAmount * UNIT_TO_G[dailyFeedingUnit];
+        normalizedDailyAmount = inGrams * G_TO_UNIT[inventoryUnit];
+        
+        console.log(`Converting ${dailyFeedingAmount}${dailyFeedingUnit} to ${normalizedDailyAmount.toFixed(4)}${inventoryUnit}`);
+      } else {
+        console.warn(`Could not convert between ${dailyFeedingUnit} and ${inventoryUnit}. Using unconverted values.`);
+      }
+    }
+    
+    // Now calculate days remaining with normalized units
+    const daysRemaining = normalizedDailyAmount > 0 
+      ? Math.floor(newAmount / normalizedDailyAmount) 
+      : 9999; // Prevent division by zero
+    
+    console.log(`Calculating days remaining: ${newAmount}${inventoryUnit} / ${normalizedDailyAmount}${inventoryUnit} = ${daysRemaining} days`);
+    
+    // Check if we're crossing below the low stock threshold
+    const isLowStock = daysRemaining <= foodItem.inventory.lowStockThreshold;
+    const wasLowStock = foodItem.inventory.reorderAlert || false;
     
     // Update the inventory with the new amount and days remaining
     const updatedInventory = {
       ...foodItem.inventory,
       currentAmount: newAmount,
       daysRemaining,
-      reorderAlert: daysRemaining <= foodItem.inventory.lowStockThreshold
+      reorderAlert: isLowStock
     };
     
     // Update the food item
-    return this.update(id, {
+    const updatedFoodItem = await this.update(id, {
       inventory: updatedInventory,
-      lowStock: daysRemaining <= foodItem.inventory.lowStockThreshold
+      lowStock: isLowStock
     });
+    
+    // If inventory has just become low (crossing the threshold), send an immediate notification
+    if (isLowStock && !wasLowStock && updatedFoodItem) {
+      try {
+        // We'll use the event system instead of direct import to avoid circular dependency
+        // The notification will be triggered when the app checks inventory status,
+        // which happens automatically when the UI refreshes after this update
+        console.log(`Low stock detected for ${foodItem.name} - notification will be shown on next UI refresh`);
+        
+        // Flag the item for notification on next check
+        // Use a type assertion to work around TypeScript constraints
+        const notificationInventory = {
+          ...updatedInventory,
+          reorderAlert: true,
+          pendingNotification: true // This is a dynamic property not in the type definition
+        };
+        
+        await this.update(id, {
+          inventory: notificationInventory as any,
+          lowStock: true
+        });
+      } catch (error) {
+        console.error('Failed to flag item for notification:', error);
+      }
+    }
+    
+    return updatedFoodItem;
   }
 }
 
@@ -307,6 +389,15 @@ class MedicationDataManager extends DataManager<Medication> {
         
         console.log(`🔕 Automatically disabled reminders for ${status} medication: ${medication.name}`);
       }
+      // Automatically re-enable reminders when reactivating medication
+      else if (status === 'active' && medication.reminderSettings && !medication.reminderSettings.enabled) {
+        updateData.reminderSettings = {
+          ...medication.reminderSettings,
+          enabled: true
+        };
+        
+        console.log(`🔔 Automatically re-enabled reminders for reactivated medication: ${medication.name}`);
+      }
       
       return this.update(id, updateData);
     } catch (error) {
@@ -363,6 +454,81 @@ class MedicationDataManager extends DataManager<Medication> {
       if (petId && medication.petId !== petId) return false;
       return medication.status === status;
     });
+  }
+
+  /**
+   * Clean up medications that have been completed or discontinued for 2 days
+   * @returns Number of deleted medications
+   */
+  async cleanupOldCompletedMedications(): Promise<number> {
+    try {
+      console.log('Starting cleanup of old completed/discontinued medications');
+      
+      // Get all completed or discontinued medications
+      const nonActiveMedications = await this.find(medication => 
+        medication.status === 'completed' || medication.status === 'discontinued'
+      );
+      
+      console.log(`Found ${nonActiveMedications.length} completed/discontinued medications`);
+      
+      if (nonActiveMedications.length === 0) {
+        return 0;
+      }
+      
+      // Get current date
+      const now = new Date();
+      const twoDaysAgo = new Date(now);
+      twoDaysAgo.setDate(now.getDate() - 2);
+      
+      // To determine when a medication was marked as completed/discontinued,
+      // we need to check its last update time or look at history entries
+      
+      // Track medications to delete
+      const medicationsToDelete = [];
+      
+      for (const medication of nonActiveMedications) {
+        // Check if the medication has a history with completion info
+        let completionDate: Date | null = null;
+        
+        if (medication.history && medication.history.length > 0) {
+          // Sort history by date (newest first)
+          const sortedHistory = [...medication.history].sort((a, b) => 
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+          );
+          
+          // Use the date of the most recent history entry as an approximate completion date
+          completionDate = new Date(sortedHistory[0].date);
+        } else {
+          // If no history, use end date (if available)
+          completionDate = medication.duration.endDate ? new Date(medication.duration.endDate) : null;
+        }
+        
+        // If we couldn't determine a completion date, use a conservative approach
+        // and only delete medications where we're sure they've been completed for 2+ days
+        if (completionDate && completionDate < twoDaysAgo) {
+          medicationsToDelete.push(medication);
+        }
+      }
+      
+      console.log(`Found ${medicationsToDelete.length} medications to delete (older than 2 days)`);
+      
+      // Delete each qualified medication
+      let deleteCount = 0;
+      for (const medication of medicationsToDelete) {
+        try {
+          await this.delete(medication.id);
+          deleteCount++;
+        } catch (error) {
+          console.error(`Error deleting medication ${medication.id} (${medication.name}):`, error);
+        }
+      }
+      
+      console.log(`Successfully deleted ${deleteCount} old medications`);
+      return deleteCount;
+    } catch (error) {
+      console.error('Error cleaning up old medications:', error);
+      return 0;
+    }
   }
 }
 

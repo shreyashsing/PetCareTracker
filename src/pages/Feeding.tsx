@@ -12,7 +12,9 @@ import {
   Alert,
   Dimensions,
   TextInput,
-  Switch
+  Switch,
+  Animated,
+  Easing
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
@@ -47,7 +49,7 @@ interface SimpleMeal {
   foodName?: string; // Add foodName field
 }
 
-type TabType = 'today' | 'history' | 'inventory';
+type TabType = 'today' | 'inventory';
 
 const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
@@ -59,21 +61,13 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   const [recentMeals, setRecentMeals] = useState<SimpleMeal[]>([]);
   const [totalCaloriesToday, setTotalCaloriesToday] = useState(0);
   const [activeTab, setActiveTab] = useState<TabType>('today');
-  const [historyPeriod, setHistoryPeriod] = useState<'week' | 'month' | 'year'>('week');
-  const [chartData, setChartData] = useState<number[]>([]);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [historyMeals, setHistoryMeals] = useState<SimpleMeal[]>([]);
   const [foodInventory, setFoodInventory] = useState<FoodItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [chartLabels, setChartLabels] = useState<string[]>([]);
-  const [metrics, setMetrics] = useState({
-    avgCalories: 0,
-    maxCalories: 0,
-    trendPercentage: 0,
-    mealsCount: 0,
-    completedMealsCount: 0,
-    completionRate: 0
-  });
+  
+  // Create animated values for chart bars
+  const barAnimations = useMemo(() => {
+    return Array(7).fill(0).map(() => new Animated.Value(0));
+  }, []);
 
   // Show mock meal while waiting
   const addMockMeal = useCallback(() => {
@@ -95,7 +89,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   }, []);
 
   // Function to format meal data for display
-  const formatMealForDisplay = useCallback((meal: Meal): SimpleMeal => {
+  const formatMealForDisplay = useCallback(async (meal: Meal): Promise<SimpleMeal> => {
     if (!meal) {
       console.log('Error: Meal object is null or undefined');
       return {
@@ -134,8 +128,22 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     } else if (meal.foods && Array.isArray(meal.foods) && meal.foods.length > 0 && meal.foods[0]) {
       const firstFood = meal.foods[0];
       amountDisplay = `${firstFood.amount || 0} ${firstFood.unit || 'cups'}`;
-      // Get food name from the first food item
-      foodName = firstFood.foodItemId || undefined;
+      
+      // Get actual food name from the database instead of just using the ID
+      if (firstFood.foodItemId) {
+        try {
+          const foodItem = await unifiedDatabaseManager.foodItems.getById(firstFood.foodItemId);
+          if (foodItem && foodItem.name) {
+            foodName = foodItem.name;
+          } else {
+            // Fallback to ID if name can't be retrieved
+            foodName = firstFood.foodItemId;
+          }
+        } catch (error) {
+          console.error('Error fetching food name:', error);
+          foodName = firstFood.foodItemId;
+        }
+      }
     }
     
     return {
@@ -180,8 +188,8 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         return isSameDay;
       });
       
-      // Format meals for display
-      const formattedMeals = mealsToday.map(formatMealForDisplay);
+      // Format meals for display - await Promise.all since formatMealForDisplay is now async
+      const formattedMeals = await Promise.all(mealsToday.map(meal => formatMealForDisplay(meal)));
       
       // Sort by time
       formattedMeals.sort((a, b) => {
@@ -209,10 +217,13 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         return mealDate < today && mealDate >= threeDaysAgo;
       });
       
-      // Format recent meals
-      const formattedRecentMeals = recentMealsData
-        .map(formatMealForDisplay)
-        .sort((a, b) => b.time.localeCompare(a.time)); // Most recent first
+      // Format recent meals - await Promise.all since formatMealForDisplay is now async
+      const formattedRecentMeals = await Promise.all(
+        recentMealsData.map(meal => formatMealForDisplay(meal))
+      );
+      
+      // Sort by time
+      formattedRecentMeals.sort((a, b) => b.time.localeCompare(a.time)); // Most recent first
       
       setRecentMeals(formattedRecentMeals);
       
@@ -235,6 +246,143 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     loadMeals();
   }, [loadMeals]);
 
+  // Function to deduct amount from inventory when meal is completed
+  const deductFromInventory = useCallback(async (foodItemId: string, amountUsed: number, unitUsed: string = 'g') => {
+    try {
+      const foodItem = await unifiedDatabaseManager.foodItems.getById(foodItemId);
+      if (!foodItem) {
+        console.error('Food item not found for inventory deduction');
+        return;
+      }
+
+      const currentAmount = foodItem.inventory?.currentAmount ?? foodItem.current_amount ?? 0;
+      const foodUnit = foodItem.inventory?.unit ?? foodItem.unit ?? 'g';
+      
+      // Convert meal amount to inventory unit
+      let convertedAmountUsed = amountUsed;
+      
+      // Convert between units
+      const convertBetweenUnits = (value: number, fromUnit: string, toUnit: string): number => {
+        // Early return if units are the same
+        if (fromUnit === toUnit) return value;
+        
+        // Conversion factors
+        const UNIT_TO_G: Record<string, number> = {
+          'kg': 1000,
+          'lb': 453.592,
+          'oz': 28.3495,
+          'cups': 226.796, // Approximate for dry dog food
+          'g': 1,
+          'packages': 500, // Approximate default
+          'cans': 400, // Approximate default
+        };
+        
+        const G_TO_UNIT: Record<string, number> = {
+          'kg': 0.001,
+          'lb': 0.00220462,
+          'oz': 0.035274,
+          'cups': 0.00440925, // Approximate for dry dog food
+          'g': 1,
+          'packages': 0.002, // Approximate default
+          'cans': 0.0025, // Approximate default
+        };
+        
+        // First convert to grams, then to target unit
+        const inGrams = value * (UNIT_TO_G[fromUnit] || 1);
+        return inGrams * (G_TO_UNIT[toUnit] || 1);
+      };
+      
+      // Convert meal amount to inventory unit
+      convertedAmountUsed = convertBetweenUnits(amountUsed, unitUsed, foodUnit);
+      
+      console.log(`Converting meal amount: ${amountUsed}${unitUsed} = ${convertedAmountUsed.toFixed(2)}${foodUnit}`);
+      
+      
+      const newAmount = Math.max(0, currentAmount - convertedAmountUsed);
+      
+      console.log(`Deducted ${amountUsed}g (${convertedAmountUsed.toFixed(2)}${foodUnit}) from ${foodItem.name}. New amount: ${newAmount}${foodUnit}`);
+      
+      // Get daily feeding amount and unit for proper days remaining calculation
+      const dailyFeedingAmount = foodItem.inventory?.dailyFeedingAmount ?? foodItem.daily_feeding_amount ?? 1;
+      const dailyFeedingUnit = foodItem.inventory?.dailyFeedingUnit ?? foodItem.daily_feeding_unit ?? 'g';
+      
+      // Convert daily feeding amount to the same unit as the inventory if needed
+      let normalizedDailyAmount = dailyFeedingAmount;
+      
+      // If units differ, try to convert
+      if (foodUnit !== dailyFeedingUnit) {
+        // Convert to grams first (common unit) then to inventory unit
+        const UNIT_TO_G: Record<string, number> = {
+          'kg': 1000,
+          'lb': 453.592,
+          'oz': 28.3495,
+          'cups': 226.796, // Approximate for dry dog food
+          'g': 1,
+          'packages': 500, // Approximate default
+          'cans': 400, // Approximate default
+        };
+        
+        const G_TO_UNIT: Record<string, number> = {
+          'kg': 0.001,
+          'lb': 0.00220462,
+          'oz': 0.035274,
+          'cups': 0.00440925, // Approximate for dry dog food
+          'g': 1,
+          'packages': 0.002, // Approximate default
+          'cans': 0.0025, // Approximate default
+        };
+        
+        // Convert daily amount to grams, then to inventory unit
+        const inGrams = dailyFeedingAmount * (UNIT_TO_G[dailyFeedingUnit] || 1);
+        normalizedDailyAmount = inGrams * (G_TO_UNIT[foodUnit] || 1);
+        
+        console.log(`Converting daily feeding: ${dailyFeedingAmount}${dailyFeedingUnit} = ${normalizedDailyAmount.toFixed(2)}${foodUnit}`);
+      }
+      
+      // Calculate days remaining with normalized units
+      const daysRemaining = normalizedDailyAmount > 0 
+        ? Math.floor(newAmount / normalizedDailyAmount) 
+        : 9999;
+      
+      console.log(`Days remaining for ${foodItem.name}: ${daysRemaining} (using ${normalizedDailyAmount}${foodUnit}/day)`);
+      
+      // Check if we need to create a low stock alert
+      const shouldAlert = daysRemaining <= 7;
+      console.log(`Should alert for ${foodItem.name}? ${shouldAlert}`);
+      
+      // Update inventory in database
+      await unifiedDatabaseManager.foodItems.update(foodItemId, {
+        inventory: {
+          ...foodItem.inventory,
+          currentAmount: newAmount,
+          daysRemaining,
+          reorderAlert: shouldAlert
+        } as any
+      });
+      
+      // If there's a low stock alert, schedule a notification
+      if (shouldAlert) {
+        await notificationService.scheduleInventoryAlert({
+          ...foodItem,
+          inventory: {
+            ...foodItem.inventory,
+            currentAmount: newAmount,
+            daysRemaining,
+            reorderAlert: true
+          } as any
+        });
+        }
+      
+    } catch (error) {
+      console.error('Error deducting from inventory:', error);
+      toast({
+        title: 'Warning',
+        description: 'Could not update inventory automatically',
+        variant: 'destructive'
+      });
+    }
+  }, [toast]);
+
   // Toggle meal completion status
   const toggleMealCompletion = useCallback(async (mealId: string, isCompleted: boolean) => {
     try {
@@ -253,28 +401,47 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         
         // If the meal is completed, cancel its notifications
         await notificationService.cancelMealNotifications(mealId);
-      } else {
-        await unifiedDatabaseManager.meals.update(mealId, { ...meal, completed: false });
         
-        // If un-completing a meal scheduled for the future, we might want to
-        // schedule notifications again
-        const mealTime = new Date(meal.time);
-        if (mealTime > new Date()) {
-          try {
-            await notificationService.scheduleMealNotifications(meal);
-          } catch (notifError) {
-            console.error('Error re-scheduling meal notifications:', notifError);
-          }
+        // If the meal has a linked food item, deduct from inventory
+      if (meal.foods && meal.foods.length > 0) {
+          for (const food of meal.foods) {
+            if (food.foodItemId) {
+              await deductFromInventory(food.foodItemId, food.amount || 0, food.unit || 'g');
+            }
         }
       }
+      } else {
+        // Update the meal without completed status
+        await unifiedDatabaseManager.meals.update(mealId, { ...meal, completed: false });
+        
+        // If completion is toggled off, reschedule notifications
+            await notificationService.scheduleMealNotifications(meal);
+      }
       
-      // Refresh meal data
-      await loadMeals();
+      // Show toast
+      toast({
+        title: isCompleted ? '✅ Meal Completed' : '🔄 Meal Restored',
+        description: isCompleted ? 'Meal marked as completed' : 'Meal marked as incomplete',
+        variant: 'default',
+      });
+      
+      // Refresh the data
+      loadMeals();
+      
+      // Use navigation to refresh the screen, which will trigger useFocusEffect
+      // The timestamp ensures the parameter is always different
+      navigation.setParams({ mealCompleted: Date.now() });
       
     } catch (error) {
       console.error('Error toggling meal completion:', error);
+      
+      toast({
+        title: '❌ Error',
+        description: 'Failed to update meal status',
+        variant: 'destructive',
+      });
     }
-  }, [loadMeals]);
+  }, [loadMeals, deductFromInventory, toast, navigation]);
 
   // Delete a meal
   const handleDeleteMeal = useCallback(async (mealId: string) => {
@@ -323,491 +490,52 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     }
   }, [loadMeals, toast]);
 
-  // Reload meals data when screen comes into focus or refresh param changes
-  useFocusEffect(
-    useCallback(() => {
-      loadMeals();
-    }, [loadMeals, route.params?.refresh])
-  );
-
-  // Calculate metrics based on meal data
-  const calculateMetrics = useCallback(
-    (dataPoints: number[], meals: Meal[], period: 'week' | 'month' | 'year') => {
-      // Average calories per day/week/month
-      const avgCalories = Math.round(dataPoints.reduce((sum, val) => sum + val, 0) / dataPoints.filter(val => val > 0).length || 1);
-      
-      // Maximum calories in a day/week/month
-      const maxCalories = Math.max(...dataPoints);
-      
-      // Calculate trend percentage
-      let trendPercentage = 0;
-      
-      if (dataPoints.length > 1) {
-        // For simplicity, compare first half to second half
-        const halfIndex = Math.floor(dataPoints.length / 2);
-        const firstHalfSum = dataPoints.slice(0, halfIndex).reduce((sum, val) => sum + val, 0) || 1;
-        const secondHalfSum = dataPoints.slice(halfIndex).reduce((sum, val) => sum + val, 0);
-        
-        trendPercentage = Math.round((secondHalfSum - firstHalfSum) / firstHalfSum * 100);
-      }
-      
-      // Total meals in period
-      let mealsCount = 0;
-      let completedMealsCount = 0;
-      
-      // Get time period boundaries
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      let periodStartDate: Date;
-      
-      if (period === 'week') {
-        periodStartDate = new Date(today);
-        periodStartDate.setDate(today.getDate() - 6);
-      } else if (period === 'month') {
-        periodStartDate = new Date(today);
-        periodStartDate.setMonth(today.getMonth() - 1);
-      } else {
-        periodStartDate = new Date(today);
-        periodStartDate.setFullYear(today.getFullYear() - 1);
-      }
-      
-      meals.forEach(meal => {
-        if (!meal.date) return;
-        
-        try {
-          const mealDate = new Date(meal.date);
-          
-          // Skip invalid dates
-          if (isNaN(mealDate.getTime())) {
-            console.log('Skip invalid date in metrics calculation:', meal.date);
-            return;
-          }
-          
-          mealDate.setHours(0, 0, 0, 0);
-          
-          if (mealDate >= periodStartDate && mealDate <= today) {
-            mealsCount++;
-            if (meal.completed) {
-              completedMealsCount++;
-            }
-          }
-        } catch (e) {
-          console.error('Error processing meal date for metrics:', e, 'Meal date was:', meal.date);
-        }
-      });
-      
-      const completionRate = mealsCount > 0 ? Math.round((completedMealsCount / mealsCount) * 100) : 0;
-      
-      setMetrics({
-        avgCalories,
-        maxCalories,
-        trendPercentage,
-        mealsCount,
-        completedMealsCount,
-        completionRate
-      });
-    },
-    []
-  );
-  
-  // Generate chart data based on meals and selected period
-  const generateChartData = useCallback((meals: Meal[], period: 'week' | 'month' | 'year') => {
-    console.log('Generating chart data for period:', period, 'with meals count:', meals.length);
-    
-    // If no meals, set empty data and return
-    if (!meals.length) {
-      setChartLabels([]);
-      setChartData([]);
-      setMetrics({
-        avgCalories: 0,
-        maxCalories: 0,
-        trendPercentage: 0,
-        mealsCount: 0,
-        completedMealsCount: 0,
-        completionRate: 0
-      });
-      return;
-    }
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    let labels: string[] = [];
-    let datasets: number[] = [];
-    
-    if (period === 'week') {
-      // Daily data for the past week
-      labels = Array(7).fill(0).map((_, index) => {
-        const date = new Date(today);
-        date.setDate(today.getDate() - (6 - index));
-        return format(date, 'EEE');
-      });
-      
-      datasets = Array(7).fill(0);
-      
-      // Check if meal date is within the past 7 days
-      meals.forEach(meal => {
-        if (!meal.date) return;
-        
-        try {
-          const mealDate = new Date(meal.date);
-          
-          // Skip invalid dates
-          if (isNaN(mealDate.getTime())) {
-            console.log('Skip invalid date in chart data:', meal.date);
-            return;
-          }
-          
-          mealDate.setHours(0, 0, 0, 0);
-          
-          // Check if meal date is within the past 7 days
-          if (mealDate >= new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000) && mealDate <= today) {
-            // Calculate day index (0-6) relative to today
-            const dayDiff = Math.floor((today.getTime() - mealDate.getTime()) / (24 * 60 * 60 * 1000));
-            const reverseIndex = 6 - dayDiff;
-            
-            console.log('Adding meal for day:', labels[reverseIndex], 'calories:', meal.totalCalories || meal.calories || 0);
-            
-            // Add meal calories to the appropriate day
-            if (reverseIndex >= 0 && reverseIndex < 7) {
-              datasets[reverseIndex] += meal.totalCalories || meal.calories || 0;
-            }
-          }
-        } catch (e) {
-          console.error('Error processing meal date for chart:', e, 'Meal date was:', meal.date);
-        }
-      });
-      
-    } else if (period === 'month') {
-      // Weekly data for the past month
-      labels = ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
-      datasets = [0, 0, 0, 0];
-      
-      const oneMonthAgo = new Date(today);
-      oneMonthAgo.setMonth(today.getMonth() - 1);
-      
-      meals.forEach(meal => {
-        if (!meal.date) return;
-        
-        try {
-          const mealDate = new Date(meal.date);
-          
-          // Skip invalid dates
-          if (isNaN(mealDate.getTime())) {
-            console.log('Skip invalid date in month chart:', meal.date);
-            return;
-          }
-          
-          mealDate.setHours(0, 0, 0, 0);
-          
-          // Check if meal date is within the past month
-          if (mealDate >= oneMonthAgo && mealDate <= today) {
-            // Calculate which week the meal belongs to (0-3)
-            const daysSinceMonthStart = Math.floor((today.getTime() - mealDate.getTime()) / (24 * 60 * 60 * 1000));
-            const weekIndex = Math.min(3, Math.floor(daysSinceMonthStart / 7));
-            
-            console.log('Adding meal for week:', labels[3 - weekIndex], 'calories:', meal.totalCalories || meal.calories || 0);
-            
-            // Add meal calories to the appropriate week (reversed for display)
-            datasets[3 - weekIndex] += meal.totalCalories || meal.calories || 0;
-          }
-        } catch (e) {
-          console.error('Error processing meal date for month chart:', e, 'Meal date was:', meal.date);
-        }
-      });
-      
-    } else if (period === 'year') {
-      // Monthly data for the past year
-      labels = Array(6).fill(0).map((_, index) => {
-        const date = new Date(today);
-        date.setMonth(today.getMonth() - (5 - index));
-        return format(date, 'MMM');
-      });
-      
-      datasets = Array(6).fill(0);
-      
-      const oneYearAgo = new Date(today);
-      oneYearAgo.setFullYear(today.getFullYear() - 1);
-      
-      meals.forEach(meal => {
-        if (!meal.date) return;
-        
-        try {
-          const mealDate = new Date(meal.date);
-          
-          // Skip invalid dates
-          if (isNaN(mealDate.getTime())) {
-            console.log('Skip invalid date in year chart:', meal.date);
-            return;
-          }
-          
-          mealDate.setHours(0, 0, 0, 0);
-          
-          // Only consider the last 6 months for the chart
-          const sixMonthsAgo = new Date(today);
-          sixMonthsAgo.setMonth(today.getMonth() - 5);
-          
-          // Check if meal date is within the past 6 months
-          if (mealDate >= sixMonthsAgo && mealDate <= today) {
-            // Calculate month difference
-            const monthDiff = (today.getMonth() - mealDate.getMonth() + 12) % 12;
-            
-            // Only consider the last 6 months
-            if (monthDiff < 6) {
-              // Add meal calories to the appropriate month (reversed for display)
-              const reverseIndex = 5 - monthDiff;
-              console.log('Adding meal for month:', labels[reverseIndex], 'calories:', meal.totalCalories || meal.calories || 0);
-              datasets[reverseIndex] += meal.totalCalories || meal.calories || 0;
-            }
-          }
-        } catch (e) {
-          console.error('Error processing meal date for year chart:', e, 'Meal date was:', meal.date);
-        }
-      });
-    }
-    
-    console.log('Chart data:', datasets);
-    setChartLabels(labels);
-    setChartData(datasets);
-    
-    // Calculate metrics
-    calculateMetrics(datasets, meals, period);
-    
-  }, [calculateMetrics]);
-
-  // Function to convert date string to relative description
-  const getRelativeDateString = (dateString: string): string => {
-    if (!dateString) return 'Unknown date';
-    
-    try {
-      // Check if dateString is in a valid format before parsing
-      if (!/^\d{4}-\d{2}-\d{2}/.test(dateString)) {
-        console.log('Invalid date format in ID:', dateString);
-        return 'Unknown date';
-      }
-      
-      const mealDate = new Date(dateString);
-      
-      // Validate that the parsed date is valid
-      if (isNaN(mealDate.getTime())) {
-        console.log('Invalid date value after parsing:', dateString);
-        return 'Unknown date';
-      }
-      
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      
-      const twoDaysAgo = new Date(today);
-      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-      
-      const threeDaysAgo = new Date(today);
-      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-      
-      // Store the time before setting hours to 0
-      const mealDateTime = new Date(mealDate).setHours(0, 0, 0, 0);
-      
-      if (mealDateTime === today.getTime()) {
-        return 'Today';
-      } else if (mealDateTime === yesterday.getTime()) {
-        return 'Yesterday';
-      } else if (mealDateTime === twoDaysAgo.getTime()) {
-        return '2 days ago';
-      } else if (mealDateTime === threeDaysAgo.getTime()) {
-        return '3 days ago';
-      } else {
-        return format(new Date(mealDateTime), 'MMM d, yyyy');
-      }
-    } catch (e) {
-      console.error('Error parsing date:', e, 'Value was:', dateString);
-      return 'Unknown date';
-    }
-  };
-
-  // Function to get meal date from various possible sources
-  const getMealDate = useCallback((meal: Meal | SimpleMeal): string => {
-    try {
-      // First try to extract from meal notes (might contain date info)
-      if (meal.notes) {
-        // Look for date in format YYYY-MM-DD
-        const dateMatch = meal.notes.match(/(\d{4}-\d{2}-\d{2})/);
-        if (dateMatch && dateMatch[1]) {
-          return getRelativeDateString(dateMatch[1]);
-        }
-      }
-      
-      // Then try to extract from ID (format: YYYY-MM-DD-UUID or similar)
-      if (meal.id && meal.id.includes('-')) {
-        const parts = meal.id.split('-');
-        if (parts.length >= 3) {
-          // Check if first part looks like a year (4 digits)
-          if (/^\d{4}$/.test(parts[0])) {
-            // Try to form a date string YYYY-MM-DD
-            const dateStr = `${parts[0]}-${parts[1]}-${parts[2]}`;
-            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-              return getRelativeDateString(dateStr);
-            }
-          }
-          
-          // Special format: First 10 chars might be the date (YYYY-MM-DD)
-          const possibleDate = meal.id.substring(0, 10);
-          if (/^\d{4}-\d{2}-\d{2}$/.test(possibleDate)) {
-            return getRelativeDateString(possibleDate);
-          }
-        }
-      }
-      
-      // Fallback - use created date if available
-      return "Recent meal";
-    } catch (e) {
-      console.error('Error extracting meal date:', e, 'Meal:', meal.id);
-      return "Recent meal";
-    }
-  }, [getRelativeDateString]);
-
-  // Load history data
-  const loadHistoryData = useCallback(async () => {
-    if (!activePetId) {
-      console.log('No active pet ID available for loadHistoryData');
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      console.log('Loading history data for period:', historyPeriod, 'and pet ID:', activePetId);
-      
-      // Fetch all meals and filter for active pet
-      const allMealsData = await unifiedDatabaseManager.meals.getAll();
-      const allMeals = allMealsData.filter(meal => meal.petId === activePetId);
-      console.log('Fetched meals count:', allMeals.length);
-      
-      // Debug meal data
-      if (allMeals.length > 0) {
-        console.log('First meal sample:', JSON.stringify({
-          id: allMeals[0].id,
-          date: allMeals[0].date,
-          time: allMeals[0].time,
-          type: allMeals[0].type
-        }));
-      }
-      
-      // Get current date and calculate date ranges based on selected period
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      // Calculate start date based on selected period
-      let startDate = new Date(today);
-      if (historyPeriod === 'week') {
-        startDate.setDate(today.getDate() - 7);
-      } else if (historyPeriod === 'month') {
-        startDate.setMonth(today.getMonth() - 1);
-      } else if (historyPeriod === 'year') {
-        startDate.setFullYear(today.getFullYear() - 1);
-      }
-      
-      // Filter meals within the selected period
-      const mealsInPeriod = allMeals.filter(meal => {
-        if (!meal.date) return false;
-        
-        try {
-          const mealDate = new Date(meal.date);
-          
-          // Skip invalid dates
-          if (isNaN(mealDate.getTime())) {
-            console.log('Skip invalid date in meal filtering:', meal.date);
-            return false;
-          }
-          
-          return mealDate >= startDate && mealDate <= today;
-        } catch (e) {
-          console.error('Error filtering meal date:', e, 'Meal date was:', meal.date);
-          return false;
-        }
-      });
-      
-      console.log('Meals in selected period:', mealsInPeriod.length);
-      
-      // Format the meals for display
-      const formattedMeals = mealsInPeriod
-        .map(formatMealForDisplay)
-        .sort((a, b) => {
-          // Sort by date, most recent first
-          try {
-            // Try to extract date parts from ID (assuming format: YYYY-MM-DD-something)
-            let dateA = new Date();
-            let dateB = new Date();
-            
-            if (a.id && a.id.includes('-')) {
-              const dateStringA = a.id.split('-')[0];
-              if (/^\d{4}-\d{2}-\d{2}/.test(dateStringA)) {
-                dateA = new Date(dateStringA);
-                if (isNaN(dateA.getTime())) {
-                  dateA = new Date(); // Fallback to current date
-                }
-              }
-            }
-            
-            if (b.id && b.id.includes('-')) {
-              const dateStringB = b.id.split('-')[0];
-              if (/^\d{4}-\d{2}-\d{2}/.test(dateStringB)) {
-                dateB = new Date(dateStringB);
-                if (isNaN(dateB.getTime())) {
-                  dateB = new Date(); // Fallback to current date
-                }
-              }
-            }
-            
-            return dateB.getTime() - dateA.getTime();
-          } catch (e) {
-            console.error('Error sorting meals by date:', e);
-            return 0; // Preserve original order if there's an error
-          }
-        });
-      
-      setHistoryMeals(formattedMeals);
-      
-      // Calculate chart data based on period
-      generateChartData(allMeals, historyPeriod);
-      
-    } catch (error) {
-      console.error('Error loading history data:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [activePetId, historyPeriod, formatMealForDisplay, generateChartData]);
-
-  // Reload meals data when screen comes into focus or refresh param changes
-  useFocusEffect(
-    useCallback(() => {
-      loadMeals();
-    }, [loadMeals, route.params?.refresh])
-  );
-
   // Load inventory data
   const loadInventoryData = useCallback(async () => {
     if (!activePetId) return;
-    
-    try {
-      // Fetch all food items and filter for active pet
-      const allFoodItems = await unifiedDatabaseManager.foodItems.getAll();
-      const inventory = allFoodItems.filter(item => item.petId === activePetId);
-      setFoodInventory(inventory);
+        
+        try {
+      const inventoryData = await unifiedDatabaseManager.foodItems.getAll();
+      const petInventory = inventoryData.filter(item => item.petId === activePetId);
+      setFoodInventory(petInventory);
     } catch (error) {
-      console.error('Error loading inventory data:', error);
+      console.error('Error loading food inventory:', error);
     }
   }, [activePetId]);
-  
-  // Reload inventory data when screen comes into focus or refresh param changes
+
+  // Reload meals data when screen comes into focus or refresh param changes
   useFocusEffect(
     useCallback(() => {
+      loadMeals();
       if (activeTab === 'inventory') {
         loadInventoryData();
       }
-    }, [loadInventoryData, route.params?.refresh, activeTab])
+    }, [loadMeals, loadInventoryData, activeTab, route.params?.refresh, route.params?.mealCompleted])
   );
+      
+  // Animate chart bars when data changes for today's view
+  useEffect(() => {
+    // Reset animations
+    barAnimations.forEach(anim => anim.setValue(0));
+      
+    // Animate each bar with a staggered delay
+    const animations = barAnimations.map((anim, index) => {
+      return Animated.timing(anim, {
+        toValue: 1,
+        duration: 800,
+        delay: index * 100,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false // Height animations need JS driver
+            });
+    });
+    
+    Animated.parallel(animations).start();
+  }, [barAnimations]);
+  
+  // Effects to load data when screen gains focus
+  useEffect(() => {
+        loadInventoryData();
+  }, [loadInventoryData]);
 
   // Function to get icon for food category
   const getFoodCategoryIcon = (category: string): keyof typeof Ionicons.glyphMap => {
@@ -863,6 +591,65 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       </TouchableOpacity>
     </View>
   ));
+  
+  // Animated chart bar component
+  const ChartBar = React.memo(({ 
+    value, 
+    index, 
+    maxValue,
+    animValue,
+    isSelected,
+    onPress
+  }: { 
+    value: number; 
+    index: number; 
+    maxValue: number;
+    animValue: Animated.Value;
+    isSelected: boolean;
+    onPress: () => void;
+  }) => {
+    const barHeight = animValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0%', `${(value / (maxValue || 1)) * 80}%`]
+    });
+    
+    const barWidth = isSelected ? '75%' : '60%';
+    const barScale = isSelected ? 1.05 : 1;
+    
+    return (
+      <TouchableOpacity
+        activeOpacity={0.7}
+        style={styles.chartColumn}
+        onPress={onPress}
+      >
+        {isSelected && (
+          <View style={[styles.chartTooltip, {backgroundColor: colors.card}]}>
+            <Text style={[styles.chartTooltipText, {color: colors.text}]}>
+              {value} cal
+            </Text>
+          </View>
+        )}
+        
+        <Animated.View 
+          style={[
+            styles.chartBarContainer,
+            {
+              transform: [{ scale: barScale }],
+              height: barHeight,
+              width: barWidth,
+            }
+          ]}
+        >
+          <LinearGradient
+            colors={[colors.primary + '80', colors.primary]}
+            style={styles.chartBar}
+            start={[0, 0]}
+            end={[0, 1]}
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    );
+  });
 
   // Meal card component
   const MealCard = React.memo(({ meal }: { meal: SimpleMeal }) => (
@@ -940,72 +727,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
     </View>
   ));
 
-  // Recent meal row component
-  const RecentMealRow = React.memo(({ meal }: { meal: SimpleMeal }) => (
-    <TouchableOpacity 
-      style={[styles.recentMealRow, {backgroundColor: colors.card}]}
-      onPress={() => navigation.navigate('AddMeal', { 
-          petId: activePetId || undefined,
-          mealId: meal.id 
-      })}
-    >
-      <View style={styles.recentMealContent}>
-        <View style={styles.recentMealHeader}>
-          <Text style={[styles.recentMealTitle, {color: colors.text}]}>{meal.title}</Text>
-          <Text style={[styles.recentMealTime, {color: colors.text + '80'}]}>{meal.time}</Text>
-        </View>
-        {meal.foodName && (
-          <Text style={[styles.recentMealFoodName, {color: colors.text + '90'}]}>
-            {meal.foodName}
-          </Text>
-        )}
-        <Text style={[styles.recentMealDetail, {color: colors.text + '60'}]}>
-          {meal.amount} • {meal.calories} calories
-        </Text>
-      </View>
-      {meal.completed ? (
-        <View style={[styles.completedBadge, {backgroundColor: colors.success + '20'}]}>
-          <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-          <Text style={[styles.completedText, {color: colors.success}]}>Fed</Text>
-        </View>
-      ) : (
-        <View style={[styles.incompleteBadge, {backgroundColor: colors.warning + '20'}]}>
-          <Ionicons name="time-outline" size={16} color={colors.warning} />
-          <Text style={[styles.incompletedText, {color: colors.warning}]}>Missed</Text>
-        </View>
-      )}
-    </TouchableOpacity>
-  ));
-
   // Update tab selection and load appropriate data
   const handleTabChange = useCallback((tab: TabType) => {
     setActiveTab(tab);
     
-    if (tab === 'history') {
-      loadHistoryData();
-    } else if (tab === 'inventory') {
+    if (tab === 'inventory') {
       loadInventoryData();
     }
-  }, [loadHistoryData, loadInventoryData]);
-
-  // Effect to reload data when history period changes
-  useEffect(() => {
-    if (activeTab === 'history') {
-      loadHistoryData();
-    }
-  }, [historyPeriod, loadHistoryData]);
-
-  // Reload meals data when screen comes into focus or refresh param changes
-  useFocusEffect(
-    useCallback(() => {
-      loadMeals();
-      if (activeTab === 'history') {
-        loadHistoryData();
-      } else if (activeTab === 'inventory') {
-        loadInventoryData();
-      }
-    }, [loadMeals, loadHistoryData, loadInventoryData, activeTab, route.params?.refresh])
-  );
+  }, [loadInventoryData]);
 
   // Function to check inventory and trigger alerts for low stock
   const checkInventoryAlerts = useCallback(async () => {
@@ -1133,28 +862,6 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
         <TouchableOpacity 
           style={[
             styles.tab, 
-            activeTab === 'history' && [styles.activeTab, {borderBottomColor: colors.primary}]
-          ]}
-          onPress={() => handleTabChange('history')}
-        >
-          <Ionicons 
-            name="time-outline" 
-            size={20} 
-            color={activeTab === 'history' ? colors.primary : colors.text + '80'} 
-          />
-          <Text 
-            style={[
-              styles.tabText, 
-              {color: activeTab === 'history' ? colors.primary : colors.text + '80'}
-            ]}
-          >
-            History
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[
-            styles.tab, 
             activeTab === 'inventory' && [styles.activeTab, {borderBottomColor: colors.primary}]
           ]}
           onPress={() => handleTabChange('inventory')}
@@ -1262,249 +969,6 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                   <Text style={[styles.learnMoreText, {color: colors.primary}]}>Learn More</Text>
                 </TouchableOpacity>
               </View>
-            </>
-          )}
-
-          {activeTab === 'history' && (
-            <>
-              <View style={styles.historyFilters}>
-                <Text style={[styles.historyFilterLabel, {color: colors.text}]}>Time period:</Text>
-                <View style={styles.periodButtonsContainer}>
-                  <TouchableOpacity 
-                    style={[
-                      styles.periodButton, 
-                      historyPeriod === 'week' && {backgroundColor: colors.primary},
-                      historyPeriod !== 'week' && {backgroundColor: colors.card}
-                    ]}
-                    onPress={() => setHistoryPeriod('week')}
-                  >
-                    <Text style={[
-                      styles.periodButtonText, 
-                      {color: historyPeriod === 'week' ? 'white' : colors.text}
-                    ]}>Week</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    style={[
-                      styles.periodButton, 
-                      historyPeriod === 'month' && {backgroundColor: colors.primary},
-                      historyPeriod !== 'month' && {backgroundColor: colors.card}
-                    ]}
-                    onPress={() => setHistoryPeriod('month')}
-                  >
-                    <Text style={[
-                      styles.periodButtonText, 
-                      {color: historyPeriod === 'month' ? 'white' : colors.text}
-                    ]}>Month</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    style={[
-                      styles.periodButton, 
-                      historyPeriod === 'year' && {backgroundColor: colors.primary},
-                      historyPeriod !== 'year' && {backgroundColor: colors.card}
-                    ]}
-                    onPress={() => setHistoryPeriod('year')}
-                  >
-                    <Text style={[
-                      styles.periodButtonText, 
-                      {color: historyPeriod === 'year' ? 'white' : colors.text}
-                    ]}>Year</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              
-              {/* Analytics Card */}
-              <View style={[styles.analyticsCard, {backgroundColor: colors.card}]}>
-                <Text style={[styles.analyticsTitle, {color: colors.text}]}>
-                  {historyPeriod === 'week' ? 'Weekly' : 
-                   historyPeriod === 'month' ? 'Monthly' : 'Yearly'} Feeding Summary
-                </Text>
-                
-                {/* Calorie Metrics */}
-                <View style={styles.metricsSummary}>
-                  <View style={[styles.metricSummaryItem, {borderRightWidth: 1, borderRightColor: colors.border}]}>
-                    <Text style={[styles.metricSummaryValue, {color: colors.primary}]}>
-                      {metrics.avgCalories}
-                    </Text>
-                    <Text style={[styles.metricSummaryLabel, {color: colors.text}]}>
-                      Avg. Calories
-                    </Text>
-                    <Text style={[styles.metricSummarySubtext, {color: colors.text + '60'}]}>
-                      {historyPeriod === 'week' ? 'per day' : 
-                      historyPeriod === 'month' ? 'per week' : 'per month'}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.metricSummaryItem}>
-                    <Text style={[styles.metricSummaryValue, {color: colors.primary}]}>
-                      {metrics.completionRate}%
-                    </Text>
-                    <Text style={[styles.metricSummaryLabel, {color: colors.text}]}>
-                      Completion Rate
-                    </Text>
-                    <Text style={[styles.metricSummarySubtext, {color: colors.text + '60'}]}>
-                      {metrics.completedMealsCount}/{metrics.mealsCount} meals completed
-                    </Text>
-                  </View>
-                </View>
-                
-                {/* Simple Chart Visualization */}
-                <View style={styles.chartContainer}>
-                  <View style={styles.chartYAxis}>
-                    <Text style={[styles.chartYLabel, {color: colors.text + '60'}]}>Calories</Text>
-                  </View>
-                  <View style={styles.chartContent}>
-                    {chartData.map((value, index) => (
-                      <View key={index} style={styles.chartColumn}>
-                        <View 
-                          style={[
-                            styles.chartBar, 
-                            {
-                              height: `${(value / (Math.max(...chartData) || 1)) * 80}%`,
-                              backgroundColor: colors.primary
-                            }
-                          ]} 
-                        />
-                        <Text style={[styles.chartLabel, {color: colors.text + '80'}]}>
-                          {chartLabels[index]}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-                
-                <View style={styles.metricsContainer}>
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricValue, {color: colors.text}]}>
-                      {metrics.maxCalories}
-                    </Text>
-                    <Text style={[styles.metricLabel, {color: colors.text + '80'}]}>
-                      Max Calories
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.metricItem}>
-                    <Text style={[
-                      styles.metricValue, 
-                      {color: metrics.trendPercentage >= 0 ? colors.success : colors.warning}
-                    ]}>
-                      {metrics.trendPercentage > 0 ? '+' : ''}{metrics.trendPercentage}%
-                    </Text>
-                    <Text style={[styles.metricLabel, {color: colors.text + '80'}]}>
-                      Trend
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricValue, {color: colors.text}]}>
-                      {metrics.mealsCount}
-                    </Text>
-                    <Text style={[styles.metricLabel, {color: colors.text + '80'}]}>
-                      Total Meals
-                    </Text>
-                  </View>
-                </View>
-              </View>
-              
-              {/* History Records */}
-              <View style={styles.historyContainer}>
-                <View style={styles.historyHeader}>
-                  <Text style={[styles.historyTitle, {color: colors.text}]}>
-                    Feeding History
-                  </Text>
-                  
-                  <TouchableOpacity style={styles.historyFilterButton}>
-                    <Ionicons name="options-outline" size={18} color={colors.primary} />
-                    <Text style={[styles.historyFilterButtonText, {color: colors.primary}]}>Filter</Text>
-                  </TouchableOpacity>
-                </View>
-                
-                {historyMeals.length > 0 ? (
-                  historyMeals.map((meal, index) => {
-                    // Safely extract date from meal ID
-                    let dateString = 'Unknown date';
-                    try {
-                      if (meal.id && meal.id.includes('-')) {
-                        dateString = getMealDate(meal);
-                      } else {
-                        dateString = `Meal ${index + 1}`;
-                      }
-                    } catch (e) {
-                      console.error('Error processing meal ID:', e);
-                      dateString = `Meal ${index + 1}`;
-                    }
-                    
-                    return (
-                      <View key={meal.id || index} style={[styles.historyItem, {backgroundColor: colors.card}]}>
-                        <View style={styles.historyItemLeft}>
-                          <Text style={[styles.historyDate, {color: colors.text}]}>
-                            {dateString}
-                          </Text>
-                          <View style={styles.historyMealDetails}>
-                            <Text style={[styles.historyMealType, {color: colors.text + '80'}]}>
-                              {meal.title}
-                            </Text>
-                            <Text style={[styles.historyMealTime, {color: colors.text + '60'}]}>
-                              {meal.time}
-                            </Text>
-                          </View>
-                        </View>
-                        
-                        <View style={styles.historyItemRight}>
-                          <Text style={[styles.historyAmount, {color: colors.text}]}>
-                            {meal.amount}
-                          </Text>
-                          <Text style={[styles.historyCalories, {color: colors.text + '80'}]}>
-                            {meal.calories} calories
-                          </Text>
-                          {meal.completed ? (
-                            <View style={[styles.historyBadge, {backgroundColor: colors.success + '20'}]}>
-                              <Ionicons name="checkmark-circle" size={12} color={colors.success} />
-                              <Text style={[styles.historyBadgeText, {color: colors.success}]}>
-                                Completed
-                              </Text>
-                            </View>
-                          ) : (
-                            <View style={[styles.historyBadge, {backgroundColor: colors.warning + '20'}]}>
-                              <Ionicons name="close-circle" size={12} color={colors.warning} />
-                              <Text style={[styles.historyBadgeText, {color: colors.warning}]}>
-                                Missed
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })
-                ) : (
-                  <View style={styles.noHistoryContainer}>
-                    <Ionicons name="time-outline" size={60} color={colors.text + '40'} />
-                    <Text style={[styles.noHistoryText, {color: colors.text}]}>
-                      No feeding history for this period
-                    </Text>
-                    <TouchableOpacity 
-                      style={[styles.createHistoryButton, {backgroundColor: colors.primary}]}
-                      onPress={() => navigation.navigate('AddMeal', { petId: activePetId || undefined })}
-                    >
-                      <Text style={styles.createHistoryButtonText}>Add Meal</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-              
-              {/* Analytics Button */}
-              {historyMeals.length > 0 && (
-                <TouchableOpacity 
-                  style={[styles.analyticsButton, {backgroundColor: colors.primary}]}
-                  onPress={() => navigation.navigate('FullAnalytics', { petId: activePetId || undefined })}
-                >
-                  <Ionicons name="analytics-outline" size={20} color="white" />
-                  <Text style={styles.analyticsButtonText}>
-                    View Detailed Analytics
-                  </Text>
-                </TouchableOpacity>
-              )}
             </>
           )}
 
@@ -1827,70 +1291,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  recentMealsContainer: {
-    marginBottom: 20,
-  },
-  recentMealRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    marginBottom: 8,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  recentMealContent: {
-    flex: 1,
-  },
-  recentMealHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  recentMealTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  recentMealTime: {
-    fontSize: 13,
-  },
-  recentMealFoodName: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 2,
-  },
-  recentMealDetail: {
-    fontSize: 13,
-  },
-  completedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  completedText: {
-    fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
-  incompleteBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  incompletedText: {
-    fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
   emptyStateContainer: {
     padding: 24,
     borderRadius: 12,
@@ -2019,12 +1419,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   chartContainer: {
-    height: 220,
+    height: 250,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-around',
     marginBottom: 20,
     paddingLeft: 8,
+    backgroundColor: 'rgba(0,0,0,0.01)',
+    borderRadius: 12,
+    padding: 16,
+    position: 'relative',
+    overflow: 'hidden',
   },
   chartContent: {
     flex: 12,
@@ -2032,12 +1437,27 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-around',
     height: '100%',
+    position: 'relative',
+  },
+  chartGrid: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    justifyContent: 'space-between',
+    paddingTop: '18%',
+  },
+  chartGridLine: {
+    width: '100%',
+    height: 1,
+    borderBottomWidth: 1,
+    borderStyle: 'dashed',
   },
   chartYAxis: {
     width: 40,
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 8,
   },
   chartYLabel: {
     fontSize: 12,
@@ -2050,11 +1470,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     height: '90%',
     justifyContent: 'flex-end',
+    position: 'relative',
+  },
+  chartBarContainer: {
+    width: '60%',
+    minHeight: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   chartBar: {
-    width: '60%',
+    width: '100%',
+    height: '100%',
     borderRadius: 8,
-    minHeight: 4,
+  },
+  chartTooltip: {
+    position: 'absolute',
+    top: -30,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  chartTooltipText: {
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   chartLabel: {
     marginTop: 8,
@@ -2316,6 +1764,7 @@ const styles = StyleSheet.create({
   metricSummaryItem: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 8,
   },
   inventoryItemActions: {
@@ -2330,20 +1779,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 4
   },
   metricSummaryValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 4,
   },
   metricSummaryLabel: {
     fontSize: 14,
-    fontWeight: '500',
     marginBottom: 2,
   },
   metricSummarySubtext: {
     fontSize: 12,
-    textAlign: 'center',
+    opacity: 0.7,
   },
-  // mealFoodName and recentMealFoodName are defined elsewhere
 });
 
 export default React.memo(Feeding); 

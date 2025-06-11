@@ -209,7 +209,10 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
               </Text>
               <TouchableOpacity 
                 style={[styles.addButton, { backgroundColor: colors.primary }]}
-                onPress={() => navigation.navigate('AddActivity')}
+                onPress={() => navigation.navigate({ 
+                  name: 'AddActivity', 
+                  params: {} 
+                })}
               >
                 <Ionicons name="add" size={20} color="white" />
                 <Text style={styles.addButtonText}>Add Activity</Text>
@@ -246,6 +249,11 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
                   <TouchableOpacity 
                     key={activity.id}
                     style={[styles.activityCard, { backgroundColor: colors.card }]}
+                    onPress={() => navigation.navigate({
+                      name: 'AddActivity',
+                      params: { activityId: activity.id }
+                    })}
+                    activeOpacity={0.7}
                   >
                     <View style={[styles.activityIconContainer, { backgroundColor: colors.primary + '20' }]}>
                       <Ionicons 
@@ -278,6 +286,10 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
                           {activity.distance} {activity.distanceUnit || 'km'}
                         </Text>
                       )}
+                      <View style={styles.editIndicator}>
+                        <Ionicons name="create-outline" size={16} color={colors.primary} />
+                        <Text style={[styles.editText, { color: colors.primary }]}>Edit</Text>
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -444,6 +456,16 @@ const styles = StyleSheet.create({
   emptyStateSubtext: {
     fontSize: 14,
     textAlign: 'center',
+  },
+  editIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  editText: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
   },
 });
 

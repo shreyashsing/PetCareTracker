@@ -33,7 +33,6 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.shreyash1313.PetCareTrackerMobile",
-      "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.WAKE_LOCK",

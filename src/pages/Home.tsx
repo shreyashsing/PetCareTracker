@@ -37,6 +37,7 @@ import { ResponsiveText, ButtonText } from '../components/ResponsiveText';
 import { createResponsiveButtonStyle } from '../utils/responsiveLayout';
 import { spacing } from '../utils/responsiveText';
 import { useAppStore } from '../store/AppStore';
+import { notificationService } from '../services/notifications';
 
 const { width } = Dimensions.get('window');
 
@@ -491,6 +492,43 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       if (pet) {
         console.log(`Loaded pet: ${pet.name} (${pet.id})`);
         setActivePet(pet);
+        
+        // Check and fix any medication notification issues
+        console.log('Checking for medication notification issues...');
+        // Get all medications for this pet
+        const allMedications = await unifiedDatabaseManager.medications.getAll();
+        const petMedications = allMedications.filter(med => med.petId === petToLoadId);
+        
+        // Find any non-active medications that might still have notifications
+        const nonActiveMedications = petMedications.filter((med: any) => 
+          (med.status === 'completed' || med.status === 'discontinued')
+        );
+        
+        // Cancel notifications for non-active medications
+        if (nonActiveMedications.length > 0) {
+          console.log(`Found ${nonActiveMedications.length} non-active medications. Ensuring notifications are cancelled...`);
+          for (const medication of nonActiveMedications) {
+            try {
+              await notificationService.cancelMedicationNotifications(medication.id);
+            } catch (error) {
+              console.error(`Failed to cancel notifications for medication ${medication.name}:`, error);
+            }
+          }
+          
+          // Also fix any medications that have incorrect reminder settings
+          const medicationsToFix = nonActiveMedications.filter((med: any) => med.reminderSettings?.enabled === true);
+          if (medicationsToFix.length > 0) {
+            console.log(`Found ${medicationsToFix.length} medications with incorrect reminder settings. Fixing...`);
+            for (const medication of medicationsToFix) {
+              try {
+                await unifiedDatabaseManager.medications.updateStatus(medication.id, medication.status);
+                console.log(`Fixed reminder settings for ${medication.status} medication: ${medication.name}`);
+              } catch (error) {
+                console.error(`Failed to fix reminder settings for medication ${medication.name}:`, error);
+              }
+            }
+          }
+        }
         
         // Load tasks, meals, and health records for today
         const today = new Date();

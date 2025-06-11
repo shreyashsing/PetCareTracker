@@ -114,6 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = async (): Promise<void> => {
     setIsLoading(true);
     try {
+      // Notification clearing is handled by AuthProvider to avoid circular dependency
       await authService.logout();
       setUser(null);
       toast({

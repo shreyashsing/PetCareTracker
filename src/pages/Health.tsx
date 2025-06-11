@@ -121,6 +121,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   // Add ref to track initial mount and loading state
   const isInitialMount = useRef(true);
   const isLoadingRef = useRef(false);
+  
+  // Add refresh trigger for MedicationReminders component
+  const [medicationRefreshTrigger, setMedicationRefreshTrigger] = useState(0);
 
   // Calculate health status and statistics
   const calculateHealthMetrics = (
@@ -553,6 +556,17 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
         if (pet) {
           console.log('Successfully loaded pet:', pet.name, pet.id);
           setActivePet(pet);
+          
+          // Clean up old completed/discontinued medications (older than 2 days)
+          try {
+            console.log('Checking for old completed/discontinued medications to clean up...');
+            const deletedCount = await unifiedDatabaseManager.medications.cleanupOldCompletedMedications();
+            if (deletedCount > 0) {
+              console.log(`Successfully deleted ${deletedCount} old completed/discontinued medications`);
+            }
+          } catch (error) {
+            console.error('Error cleaning up old medications:', error);
+          }
           
           // Try to sync health records with Supabase (only during non-silent reloads)
           if (!silentReload) {
@@ -1062,6 +1076,9 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       // Use silent reload to avoid showing loading screen during navigation
       loadHealthData(true);
       
+      // Trigger refresh of MedicationReminders component when screen focuses
+      setMedicationRefreshTrigger(prev => prev + 1);
+      
       return () => {
         // Clean up if needed
       };
@@ -1170,6 +1187,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const handleMedicationDeleted = () => {
     // Refresh the medications list silently
     loadHealthData(true);
+    // Trigger refresh of MedicationReminders component
+    setMedicationRefreshTrigger(prev => prev + 1);
   };
 
   const renderTabContent = () => {
@@ -1682,6 +1701,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               <MedicationReminders 
                 petId={activePetId || undefined}
                 onMedicationPress={handleViewMedicationDetails}
+                refreshTrigger={medicationRefreshTrigger}
               />
             </View>
 

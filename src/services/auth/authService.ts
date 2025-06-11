@@ -468,6 +468,9 @@ export class AuthService {
    */
   async logout(): Promise<void> {
     try {
+      // Clear notifications will be handled by the AuthProvider
+      // to avoid circular dependency
+      
       // Sign out from Supabase
       const { error } = await supabase.auth.signOut();
       

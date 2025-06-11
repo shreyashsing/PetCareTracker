@@ -28,6 +28,7 @@ export function useFormStatePersistence<T extends Record<string, any>>({
   const hasRestoredRef = useRef(false);
   const initialFormStateRef = useRef<T>();
   const [wasRestored, setWasRestored] = useState(false);
+  const isUnmountingRef = useRef(false);
 
   // Store initial form state for comparison
   useEffect(() => {
@@ -64,7 +65,7 @@ export function useFormStatePersistence<T extends Record<string, any>>({
   // Restore form state when component gains focus
   useFocusEffect(
     useCallback(() => {
-      if (!enabled || hasRestoredRef.current) return;
+      if (!enabled || hasRestoredRef.current || isUnmountingRef.current) return;
 
       const savedState = getFormState(routeName);
       if (savedState) {
@@ -122,6 +123,8 @@ export function useFormStatePersistence<T extends Record<string, any>>({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log(`[AddActivity] Component unmounting, saving form state`);
+      isUnmountingRef.current = true;
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
@@ -195,7 +198,9 @@ function hasSignificantData<T extends Record<string, any>>(
     // Meal form fields
     'foodName', 'amount',
     // Food item form fields
-    'brand', 'quantity', 'dailyFeedingQuantity'
+    'brand', 'quantity', 'dailyFeedingQuantity',
+    // Activity form fields
+    'activityType', 'duration', 'distance'
   ];
 
   return significantFields.some(field => {

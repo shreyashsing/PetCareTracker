@@ -98,8 +98,8 @@ const NavigationContent = () => {
           console.log('[AppNavigator] Re-checking pets');
           setRefreshKey(prev => prev + 1);
           
-          // Handle navigation restoration
-          if (shouldRestoreNavigation && navigationRef.current && !isRestoringNavigation) {
+          // Handle navigation restoration - but only if user is authenticated
+          if (shouldRestoreNavigation && navigationRef.current && !isRestoringNavigation && user) {
             console.log('[AppNavigator] Should restore navigation. Current route:', navigationState.currentRoute);
             console.log('[AppNavigator] Navigation ready:', navigationRef.current?.isReady());
             
@@ -134,8 +134,13 @@ const NavigationContent = () => {
                 setIsRestoringNavigation(false);
               }
             }, 500); // Reduced delay for faster restoration
+          } else if (shouldRestoreNavigation && !user) {
+            // Clear restoration flag if user is not authenticated
+            console.log('[AppNavigator] User not authenticated, clearing navigation restoration');
+            setShouldRestoreNavigation(false);
+            setIsRestoringNavigation(false);
           } else {
-            console.log('[AppNavigator] Not restoring navigation. Should restore:', shouldRestoreNavigation, 'Nav ready:', navigationRef.current?.isReady(), 'Is restoring:', isRestoringNavigation);
+            console.log('[AppNavigator] Not restoring navigation. Should restore:', shouldRestoreNavigation, 'Nav ready:', navigationRef.current?.isReady(), 'Is restoring:', isRestoringNavigation, 'User:', !!user);
           }
         }
       }

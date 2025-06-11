@@ -33,6 +33,8 @@ import {unifiedDatabaseManager} from "../services/db";
 import { useAuth } from '../providers/AuthProvider';
 import { usePetStore } from '../store/PetStore';
 import { setImagePickerActive, updatePetImage } from '../utils/imageUpload';
+import { useActivePet } from '../hooks/useActivePet';
+import { useToast } from '../hooks/use-toast';
 
 const { width } = Dimensions.get('window');
 
@@ -72,6 +74,8 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
   const { colors } = useAppColors();
   const { user } = useAuth();
   const { updatePet: updatePetInStore } = usePetStore();
+  const { activePetId } = useActivePet();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
   const [loadingPet, setLoadingPet] = useState(true);
@@ -149,9 +153,18 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
   useEffect(() => {
     const fetchPet = async () => {
       try {
-        if (route.params?.petId) {
-          setPetId(route.params.petId);
-          const pet = await unifiedDatabaseManager.pets.getById(route.params.petId);
+        // First try to get pet ID from route params
+        let idToFetch = route.params?.petId;
+        
+        // If not available, fall back to active pet ID
+        if (!idToFetch && activePetId) {
+          console.log(`[EditPet] No pet ID in route params, using active pet ID: ${activePetId}`);
+          idToFetch = activePetId;
+        }
+        
+        if (idToFetch) {
+          setPetId(idToFetch);
+          const pet = await unifiedDatabaseManager.pets.getById(idToFetch);
           
           if (pet) {
             // Convert pet data to form state
@@ -180,16 +193,28 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
               status: pet.status || 'healthy'
             });
           } else {
-            Alert.alert('Error', 'Pet not found');
+            toast({
+              title: 'Error',
+              description: 'Pet not found',
+              variant: 'destructive'
+            });
             navigation.goBack();
           }
         } else {
-          Alert.alert('Error', 'No pet ID provided');
+          toast({
+            title: 'Error',
+            description: 'No pet ID found',
+            variant: 'destructive'
+          });
           navigation.goBack();
         }
       } catch (error) {
         console.error('Error fetching pet:', error);
-        Alert.alert('Error', 'Failed to load pet information');
+        toast({
+          title: 'Error',
+          description: 'Failed to load pet information',
+          variant: 'destructive'
+        });
         navigation.goBack();
       } finally {
         setLoadingPet(false);
@@ -197,7 +222,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
     };
     
     fetchPet();
-  }, [route.params]);
+  }, [route.params, activePetId, navigation, toast]);
   
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};

@@ -1,6 +1,7 @@
 import create from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, AppStateStatus } from 'react-native';
+import { isAuthenticatedRoute } from '../utils/navigationUtils';
 
 // Navigation state types
 export interface NavigationState {
@@ -59,6 +60,7 @@ export interface AppStoreType {
 
   // Form state management
   formStates: FormState;
+  formStateSaveTimeouts: Record<string, NodeJS.Timeout | undefined>;
   saveFormState: (routeName: string, formData: FormStateData) => void;
   getFormState: (routeName: string) => FormStateData | null;
   clearFormState: (routeName: string) => void;
@@ -110,7 +112,8 @@ const SAFE_RESTORATION_ROUTES = [
   'AddExercise',
   'AddTask',
   'AddMeal',
-  'AddFoodItem'
+  'AddFoodItem',
+  'AddActivity'
 ];
 
 // Form routes that should have their state persisted
@@ -123,7 +126,8 @@ const FORM_ROUTES = [
   'AddExercise',
   'AddTask',
   'AddMeal',
-  'AddFoodItem'
+  'AddFoodItem',
+  'AddActivity'
 ];
 
 // Maximum time in background before resetting navigation (15 minutes)
@@ -268,6 +272,7 @@ const useAppStore = create<AppStoreType>((set, get) => ({
 
   // Form state management
   formStates: {},
+  formStateSaveTimeouts: {}, // Track debounce timeouts by route
 
   saveFormState: (routeName: string, formData: FormStateData) => {
     if (!FORM_ROUTES.includes(routeName)) {
@@ -277,23 +282,45 @@ const useAppStore = create<AppStoreType>((set, get) => ({
     const currentState = get();
     const now = Date.now();
     
-    const newFormStates = {
-      ...currentState.formStates,
-      [routeName]: {
-        data: formData,
-        timestamp: now,
-        isDirty: true,
-      }
-    };
-
-    set({ formStates: newFormStates });
+    // Clear existing timeout if there is one
+    if (currentState.formStateSaveTimeouts[routeName]) {
+      clearTimeout(currentState.formStateSaveTimeouts[routeName]);
+    }
     
-    console.log(`[AppStore] Form state saved for ${routeName}:`, Object.keys(formData));
+    // Set a new timeout to prevent rapid consecutive updates
+    const timeoutId = setTimeout(() => {
+      const newFormStates = {
+        ...get().formStates,
+        [routeName]: {
+          data: formData,
+          timestamp: Date.now(),
+          isDirty: true,
+        }
+      };
 
-    // Auto-save to storage with debouncing
-    setTimeout(() => {
-      get().saveFormStateToStorage();
-    }, 500);
+      set((state: AppStoreType) => ({ 
+        formStates: newFormStates,
+        formStateSaveTimeouts: {
+          ...state.formStateSaveTimeouts,
+          [routeName]: undefined
+        }
+      }));
+      
+      console.log(`[AppStore] Form state saved for ${routeName}:`, Object.keys(formData));
+
+      // Auto-save to storage with additional debouncing
+      setTimeout(() => {
+        get().saveFormStateToStorage();
+      }, 500);
+    }, 300); // 300ms debounce
+    
+    // Store the timeout ID
+    set((state: AppStoreType) => ({
+      formStateSaveTimeouts: {
+        ...state.formStateSaveTimeouts,
+        [routeName]: timeoutId
+      }
+    }));
   },
 
   getFormState: (routeName: string) => {
@@ -340,6 +367,17 @@ const useAppStore = create<AppStoreType>((set, get) => ({
     return formState?.isDirty || false;
   },
 
+  // Method to clear navigation state on logout
+  clearNavigationState: () => {
+    console.log('[AppStore] Clearing navigation state due to authentication change');
+    set({
+      navigationState: defaultNavigationState,
+      shouldRestoreNavigation: false,
+      isRestoringNavigation: false,
+      wasInBackground: false,
+    });
+  },
+
   // Utility methods
   resetAppState: () => set({
     navigationState: defaultNavigationState,
@@ -354,7 +392,7 @@ const useAppStore = create<AppStoreType>((set, get) => ({
   },
 
   canRestoreToRoute: (route: string) => {
-    return SAFE_RESTORATION_ROUTES.includes(route);
+    return SAFE_RESTORATION_ROUTES.includes(route) && isAuthenticatedRoute(route);
   },
 
   // Persistence methods

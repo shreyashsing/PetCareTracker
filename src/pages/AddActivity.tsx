@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -8,7 +8,10 @@ import {
   TextInput,
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ActivityIndicator,
+  AppState,
+  AppStateStatus
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,19 +22,67 @@ import { useActivePet } from '../hooks/useActivePet';
 import { Button, DatePicker } from '../forms';
 import { generateUUID } from '../utils/helpers';
 import { unifiedDatabaseManager } from '../services/db';
+import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
+import { FormStateNotification } from '../components/FormStateNotification';
 
 type AddActivityScreenProps = NativeStackScreenProps<MainStackParamList, 'AddActivity'>;
 
-const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
+interface FormState {
+  activityType: string;
+  duration: string;
+  distance: string;
+  notes: string;
+  date: Date;
+}
+
+const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) => {
   const { colors } = useAppColors();
   const { activePetId } = useActivePet();
   const [isLoading, setIsLoading] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [activityId, setActivityId] = useState<string | undefined>(undefined);
+  const isMountedRef = useRef(true);
   
-  const [activityType, setActivityType] = useState('Walk');
-  const [duration, setDuration] = useState('');
-  const [distance, setDistance] = useState('');
-  const [notes, setNotes] = useState('');
-  const [date, setDate] = useState(new Date());
+  const [formState, setFormState] = useState<FormState>({
+    activityType: 'Walk',
+    duration: '',
+    distance: '',
+    notes: '',
+    date: new Date(),
+  });
+  
+  // Form state persistence hook - only for new activities (not edit mode)
+  const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
+    routeName: 'AddActivity',
+    formState,
+    setFormState: (state) => {
+      if (isMountedRef.current) {
+        setFormState(state);
+      }
+    },
+    enabled: !isEditMode, // Disable for edit mode
+    debounceMs: 2000
+  });
+  
+  // Map internal activity types to system activity types
+  const activityTypeMap = {
+    'Walk': 'walk',
+    'Play': 'play', 
+    'Training': 'training',
+    'Grooming': 'other',
+    'Vet Visit': 'other',
+    'Other': 'other'
+  };
+  
+  // Reverse map for loading data
+  const reverseActivityTypeMap: Record<string, string> = {
+    'walk': 'Walk',
+    'play': 'Play',
+    'training': 'Training',
+    'run': 'Walk', // Map 'run' to 'Walk' for UI purposes
+    'swim': 'Other',
+    'other': 'Other'
+  };
   
   const activityTypes = [
     'Walk',
@@ -42,18 +93,58 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
     'Other'
   ];
   
+  // Update individual form fields
+  const updateFormField = (field: keyof FormState, value: any) => {
+    setFormState(prev => ({ ...prev, [field]: value }));
+  };
+  
+  // Load activity data if in edit mode
+  useEffect(() => {
+    const loadActivity = async () => {
+      // Check if we're editing an existing activity
+      const editActivityId = route.params?.activityId;
+      if (editActivityId) {
+        setIsLoading(true);
+        setIsEditMode(true);
+        setActivityId(editActivityId);
+        
+        try {
+          // Fetch activity data
+          const activity = await unifiedDatabaseManager.activitySessions.getById(editActivityId);
+          if (activity) {
+            // Set form values from activity data
+            setFormState({
+              activityType: reverseActivityTypeMap[activity.type] || 'Other',
+              duration: activity.duration.toString(),
+              distance: activity.distance ? activity.distance.toString() : '',
+              notes: activity.notes || '',
+              date: new Date(activity.date),
+            });
+          }
+        } catch (error) {
+          console.error('Error loading activity for editing:', error);
+          Alert.alert('Error', 'Failed to load activity data. Please try again.');
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    loadActivity();
+  }, [route.params?.activityId]);
+  
   const handleSave = async () => {
     if (!activePetId) {
       Alert.alert('Error', 'No active pet selected');
       return;
     }
     
-    if (!activityType) {
+    if (!formState.activityType) {
       Alert.alert('Error', 'Please select an activity type');
       return;
     }
     
-    if (!duration || isNaN(Number(duration))) {
+    if (!formState.duration || isNaN(Number(formState.duration))) {
       Alert.alert('Error', 'Please enter a valid duration in minutes');
       return;
     }
@@ -61,40 +152,50 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
     setIsLoading(true);
     
     try {
-      // Map activity type to ActivitySession type
-      const activityTypeMap = {
-        'Walk': 'walk',
-        'Play': 'play', 
-        'Training': 'training',
-        'Grooming': 'other',
-        'Vet Visit': 'other',
-        'Other': 'other'
-      };
+      const mappedType = activityTypeMap[formState.activityType as keyof typeof activityTypeMap] || 'other';
       
-      const mappedType = activityTypeMap[activityType as keyof typeof activityTypeMap] || 'other';
-      
-      // Create ActivitySession object
-      const newActivitySession = {
-        id: generateUUID(),
+      // Create base activity session object
+      const activitySession = {
         petId: activePetId,
-        date: date,
-        startTime: new Date(date.getTime()), // Use the selected date as start time
-        endTime: new Date(date.getTime() + (Number(duration) * 60000)), // Add duration in milliseconds
+        date: formState.date,
+        startTime: new Date(formState.date.getTime()), // Use the selected date as start time
+        endTime: new Date(formState.date.getTime() + (Number(formState.duration) * 60000)), // Add duration in milliseconds
         type: mappedType as 'walk' | 'run' | 'play' | 'swim' | 'training' | 'other',
-        duration: Number(duration),
-        distance: distance ? Number(distance) : undefined,
+        duration: Number(formState.duration),
+        distance: formState.distance ? Number(formState.distance) : undefined,
         distanceUnit: 'km' as 'km' | 'mi',
-        intensity: 'moderate' as 'low' | 'moderate' | 'high', // Default to moderate
+        intensity: 'moderate' as 'low' | 'moderate' | 'high',
         location: {
-          name: 'Home' // Default location
+          name: 'Home'
         },
-        mood: 'happy' as 'energetic' | 'happy' | 'tired' | 'reluctant', // Default mood
-        notes: notes || undefined
+        mood: 'happy' as 'energetic' | 'happy' | 'tired' | 'reluctant',
+        notes: formState.notes || undefined
       };
       
-      console.log('Saving activity session:', newActivitySession);
-      
-      // Save to database using the unified database manager
+      if (isEditMode && activityId) {
+        // Update existing activity
+        await unifiedDatabaseManager.activitySessions.update(activityId, activitySession);
+        
+        Alert.alert(
+          'Success',
+          'Activity updated successfully!',
+          [
+            { 
+              text: 'OK', 
+              onPress: () => {
+                clearSavedState(); // Clear saved state on successful update
+                navigation.goBack();
+              }
+            }
+          ]
+        );
+      } else {
+        // Create new activity
+        const newActivitySession = {
+          id: generateUUID(),
+          ...activitySession
+        };
+        
       await unifiedDatabaseManager.activitySessions.create(newActivitySession);
       
       Alert.alert(
@@ -103,10 +204,14 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
         [
           { 
             text: 'OK', 
-            onPress: () => navigation.goBack() 
+              onPress: () => {
+                clearSavedState(); // Clear saved state on successful save
+                navigation.goBack();
+              }
           }
         ]
       );
+      }
     } catch (error) {
       console.error('Error saving activity:', error);
       Alert.alert('Error', 'Failed to save activity. Please try again.');
@@ -114,6 +219,67 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
       setIsLoading(false);
     }
   };
+  
+  const handleDelete = async () => {
+    if (!isEditMode || !activityId) return;
+    
+    Alert.alert(
+      'Delete Activity',
+      'Are you sure you want to delete this activity? This cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setIsLoading(true);
+            try {
+              await unifiedDatabaseManager.activitySessions.delete(activityId);
+              clearSavedState(); // Clear saved state on successful delete
+              Alert.alert(
+                'Success',
+                'Activity deleted successfully',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => navigation.goBack()
+                  }
+                ]
+              );
+            } catch (error) {
+              console.error('Error deleting activity:', error);
+              Alert.alert('Error', 'Failed to delete activity. Please try again.');
+            } finally {
+              setIsLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+  
+  // Force save state when app goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'background') {
+        forceSave();
+      }
+    });
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [forceSave]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -129,10 +295,26 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
-            Add Activity
+            {isEditMode ? 'Edit Activity' : 'Add Activity'}
           </Text>
+          {isEditMode ? (
+            <TouchableOpacity 
+              style={styles.deleteButton} 
+              onPress={handleDelete}
+            >
+              <Ionicons name="trash-outline" size={22} color={colors.error || '#ff3b30'} />
+            </TouchableOpacity>
+          ) : (
           <View style={styles.rightPlaceholder} />
+          )}
         </View>
+        
+        {/* Form state restoration notification */}
+        <FormStateNotification 
+          visible={wasRestored}
+          onDismiss={dismissRestoreNotification}
+          formName="activity"
+        />
         
         <ScrollView style={styles.content}>
           <View style={styles.formSection}>
@@ -144,16 +326,16 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
                   style={[
                     styles.activityTypeButton,
                     { 
-                      backgroundColor: type === activityType ? colors.primary : colors.card,
-                      borderColor: type === activityType ? colors.primary : colors.border,
+                      backgroundColor: type === formState.activityType ? colors.primary : colors.card,
+                      borderColor: type === formState.activityType ? colors.primary : colors.border,
                     }
                   ]}
-                  onPress={() => setActivityType(type)}
+                  onPress={() => updateFormField('activityType', type)}
                 >
                   <Text 
                     style={[
                       styles.activityTypeText, 
-                      { color: type === activityType ? 'white' : colors.text }
+                      { color: type === formState.activityType ? 'white' : colors.text }
                     ]}
                   >
                     {type}
@@ -168,8 +350,8 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
             
             <DatePicker
               label="Date"
-              value={date}
-              onChange={(selectedDate) => setDate(selectedDate)}
+              value={formState.date}
+              onChange={(selectedDate) => updateFormField('date', selectedDate)}
               mode="date"
               containerStyle={styles.datePickerContainer}
             />
@@ -181,8 +363,8 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
                   <Ionicons name="time-outline" size={20} color={colors.primary} style={styles.inputIcon} />
                   <TextInput
                     style={[styles.input, { color: colors.text }]}
-                    value={duration}
-                    onChangeText={setDuration}
+                    value={formState.duration}
+                    onChangeText={(value) => updateFormField('duration', value)}
                     placeholder="Duration"
                     placeholderTextColor={colors.text + '60'}
                     keyboardType="numeric"
@@ -196,8 +378,8 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
                   <Ionicons name="navigate-outline" size={20} color={colors.primary} style={styles.inputIcon} />
                   <TextInput
                     style={[styles.input, { color: colors.text }]}
-                    value={distance}
-                    onChangeText={setDistance}
+                    value={formState.distance}
+                    onChangeText={(value) => updateFormField('distance', value)}
                     placeholder="Optional"
                     placeholderTextColor={colors.text + '60'}
                     keyboardType="numeric"
@@ -210,8 +392,8 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
             <View style={[styles.notesContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <TextInput
                 style={[styles.notesInput, { color: colors.text }]}
-                value={notes}
-                onChangeText={setNotes}
+                value={formState.notes}
+                onChangeText={(value) => updateFormField('notes', value)}
                 placeholder="Add notes about the activity"
                 placeholderTextColor={colors.text + '60'}
                 multiline
@@ -222,12 +404,22 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation }) => {
         </ScrollView>
         
         <View style={styles.footer}>
-          <Button
-            title={isLoading ? "Saving..." : "Save Activity"}
+          <TouchableOpacity 
+            style={[
+              styles.saveButton, 
+              { backgroundColor: colors.primary },
+              isLoading && styles.disabledButton
+            ]}
             onPress={handleSave}
             disabled={isLoading}
-            style={{ backgroundColor: colors.primary }}
-          />
+            activeOpacity={0.7}
+          >
+            {isLoading ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text style={styles.saveButtonText}>{isEditMode ? 'Update Activity' : 'Save Activity'}</Text>
+            )}
+          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -254,6 +446,11 @@ const styles = StyleSheet.create({
   },
   rightPlaceholder: {
     width: 40,
+  },
+  deleteButton: {
+    padding: 8,
+    width: 40,
+    alignItems: 'center',
   },
   content: {
     flex: 1,
@@ -325,6 +522,27 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+  },
+  saveButton: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 56,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+  },
+  saveButtonText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+    textAlign: 'center',
+  },
+  disabledButton: {
+    opacity: 0.7,
   },
 });
 

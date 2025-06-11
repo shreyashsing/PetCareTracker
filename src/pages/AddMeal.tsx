@@ -19,8 +19,25 @@ import {unifiedDatabaseManager} from "../services/db";
 import { generateUUID } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
 import { useToast } from '../hooks/use-toast';
-import { Meal } from '../types/components';
+import { Meal, FoodItem } from '../types/components';
 import { useAuth } from '../hooks/useAuth';
+
+// Unit conversion constants
+const UNIT_CONVERSIONS = {
+  // Weight conversions
+  'kg_to_g': 1000,
+  'g_to_kg': 0.001,
+  'lb_to_oz': 16,
+  'oz_to_lb': 0.0625,
+  'lb_to_kg': 0.453592,
+  'kg_to_lb': 2.20462,
+  'g_to_oz': 0.035274,
+  'oz_to_g': 28.3495,
+  // Volume approximations (rough estimates)
+  'cups_to_oz': 8,
+  'oz_to_cups': 0.125,
+  // Others kept as 1:1 since they're different units (like packages or cans)
+};
 
 type AddMealScreenProps = NativeStackScreenProps<MainStackParamList, 'AddMeal'>;
 
@@ -28,12 +45,14 @@ type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
 interface FormState {
   type: MealType;
-  foodName: string;
+  foodItemId: string;
   amount: string;
+  unit: string;
   date: Date;
   time: Date;
   notes: string;
   isCompleted: boolean;
+  reminderEnabled: boolean;
 }
 
 const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
@@ -47,16 +66,20 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
   
   const [formState, setFormState] = useState<FormState>({
     type: 'breakfast',
-    foodName: '',
+    foodItemId: '',
     amount: '',
+    unit: 'g',
     date: new Date(),
     time: new Date(),
     notes: '',
     isCompleted: false,
+    reminderEnabled: true,
   });
   
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [foodItems, setFoodItems] = useState<FoodItem[]>([]);
+  const [loadingFoodItems, setLoadingFoodItems] = useState(false);
   
   // Form state persistence hook - only for new meals (not edit mode)
   const { clearSavedState, forceSave, wasRestored, dismissRestoreNotification } = useFormStatePersistence({
@@ -67,6 +90,26 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
     debounceMs: 2000
   });
   
+  // Load food items for the active pet
+  useEffect(() => {
+    const loadFoodItems = async () => {
+      if (!activePetId) return;
+      
+      setLoadingFoodItems(true);
+      try {
+        const allFoodItems = await unifiedDatabaseManager.foodItems.getAll();
+        const petFoodItems = allFoodItems.filter(item => item.petId === activePetId);
+        setFoodItems(petFoodItems);
+      } catch (error) {
+        console.error('Error loading food items:', error);
+      } finally {
+        setLoadingFoodItems(false);
+      }
+    };
+    
+    loadFoodItems();
+  }, [activePetId]);
+
   // Load meal data if editing an existing meal
   useEffect(() => {
     const loadMealData = async () => {
@@ -82,12 +125,14 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
             // Convert the meal data to our form format
             setFormState({
               type: meal.type as MealType,
-              foodName: meal.foods?.[0]?.foodItemId || '',
+              foodItemId: meal.foods?.[0]?.foodItemId || '',
               amount: meal.foods?.[0]?.amount?.toString() || '',
+              unit: meal.foods?.[0]?.unit || 'g',
               date: new Date(meal.date),
               time: new Date(meal.time),
               notes: meal.specialInstructions || '',
               isCompleted: meal.completed,
+              reminderEnabled: meal.reminderSettings?.enabled || false,
             });
           }
         } catch (error) {
@@ -108,18 +153,93 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
     { label: 'Dinner', value: 'dinner' },
     { label: 'Snack', value: 'snack' },
   ];
+
+  // Create food item options for the dropdown
+  const foodItemOptions = foodItems.length > 0 
+    ? foodItems.map(item => {
+        const currentAmount = item.inventory?.currentAmount ?? item.current_amount ?? 0;
+        const unit = item.inventory?.unit ?? item.unit ?? 'g';
+        return {
+          label: `${item.name || 'Unnamed Food'} (${item.brand || 'No Brand'}) - ${currentAmount}${unit} available`,
+          value: item.id,
+        };
+      })
+    : [{ label: 'No food items in inventory', value: '' }];
+    
+  // Define unit options for dropdown
+  const unitOptions = [
+    { label: 'Grams (g)', value: 'g' },
+    { label: 'Kilograms (kg)', value: 'kg' },
+    { label: 'Pounds (lb)', value: 'lb' },
+    { label: 'Ounces (oz)', value: 'oz' },
+    { label: 'Cups', value: 'cups' },
+    { label: 'Cans', value: 'cans' },
+    { label: 'Packages', value: 'packages' },
+  ];
+  
+  // Convert quantity when changing between units
+  const convertQuantity = (value: number, fromUnit: string, toUnit: string): number => {
+    if (fromUnit === toUnit) return value;
+    
+    const conversionKey = `${fromUnit}_to_${toUnit}`;
+    const conversionRate = UNIT_CONVERSIONS[conversionKey as keyof typeof UNIT_CONVERSIONS];
+    
+    if (conversionRate) {
+      return value * conversionRate;
+    }
+    
+    // If direct conversion not found, try to convert through a common unit (g)
+    if (fromUnit !== 'g' && toUnit !== 'g') {
+      const toGKey = `${fromUnit}_to_g`;
+      const fromGKey = `g_to_${toUnit}`;
+      
+      const toGRate = UNIT_CONVERSIONS[toGKey as keyof typeof UNIT_CONVERSIONS];
+      const fromGRate = UNIT_CONVERSIONS[fromGKey as keyof typeof UNIT_CONVERSIONS];
+      
+      if (toGRate && fromGRate) {
+        const toG = value * toGRate;
+        return toG * fromGRate;
+      }
+    }
+    
+    // If no conversion available, return the original value
+    return value;
+  };
+  
+  // Calculate calories based on amount and unit
+  const calculateCalories = (amount: number, unit: string): number => {
+    // Convert to grams for calorie calculation (approx 4 kcal per 10g)
+    const amountInGrams = convertQuantity(amount, unit, 'g');
+    return amountInGrams * 0.4; // ~4 kcal per 10g
+  };
   
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
     
-    if (!formState.foodName.trim()) {
-      newErrors.foodName = 'Food name is required';
+    if (!formState.foodItemId.trim()) {
+      newErrors.foodItemId = 'Food item is required';
     }
     
     if (!formState.amount.trim()) {
       newErrors.amount = 'Amount is required';
     } else if (isNaN(parseFloat(formState.amount))) {
       newErrors.amount = 'Amount must be a number';
+    } else if (parseFloat(formState.amount) <= 0) {
+      newErrors.amount = 'Amount must be greater than 0';
+    } else if (formState.foodItemId) {
+      // Check if amount exceeds available inventory
+      const selectedFood = foodItems.find(item => item.id === formState.foodItemId);
+      if (selectedFood) {
+        const currentAmount = selectedFood.inventory?.currentAmount ?? selectedFood.current_amount ?? 0;
+        const foodUnit = selectedFood.inventory?.unit ?? selectedFood.unit ?? 'g';
+        
+        // Convert the entered amount to the food's unit for comparison
+        const amountInFoodUnit = convertQuantity(parseFloat(formState.amount), formState.unit, foodUnit);
+        
+        if (amountInFoodUnit > currentAmount) {
+          newErrors.amount = `Amount exceeds available inventory (${currentAmount}${foodUnit} available)`;
+        }
+      }
     }
     
     setErrors(newErrors);
@@ -145,6 +265,78 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       [name]: true,
     }));
   };
+
+  // Function to deduct amount from inventory when meal is completed
+  const deductFromInventory = async (foodItemId: string, amountUsed: number, unitUsed: string) => {
+    try {
+      const foodItem = await unifiedDatabaseManager.foodItems.getById(foodItemId);
+      if (!foodItem) {
+        console.error('Food item not found for inventory deduction');
+        return;
+      }
+
+      const currentAmount = foodItem.inventory?.currentAmount ?? foodItem.current_amount ?? 0;
+      const foodUnit = foodItem.inventory?.unit ?? foodItem.unit ?? 'g';
+      
+      // Convert amount used to the same unit as the food item's inventory
+      const convertedAmountUsed = convertQuantity(amountUsed, unitUsed, foodUnit);
+      const newAmount = Math.max(0, currentAmount - convertedAmountUsed); // Ensure amount doesn't go below 0
+
+      console.log(`Deducted ${amountUsed}${unitUsed} (${convertedAmountUsed.toFixed(2)}${foodUnit}) from ${foodItem.name}. New amount: ${newAmount}${foodUnit}`);
+      
+      // Get daily feeding amount and unit
+      const dailyFeedingAmount = foodItem.inventory?.dailyFeedingAmount ?? foodItem.daily_feeding_amount ?? 1;
+      const dailyFeedingUnit = foodItem.inventory?.dailyFeedingUnit ?? foodItem.daily_feeding_unit ?? 'g';
+      
+      // Convert daily feeding amount to the same unit as the inventory if they differ
+      let normalizedDailyAmount = dailyFeedingAmount;
+      if (foodUnit !== dailyFeedingUnit) {
+        normalizedDailyAmount = convertQuantity(dailyFeedingAmount, dailyFeedingUnit, foodUnit);
+        console.log(`Converting daily feeding: ${dailyFeedingAmount}${dailyFeedingUnit} = ${normalizedDailyAmount.toFixed(2)}${foodUnit}`);
+      }
+      
+      // Calculate days remaining with normalized units
+      const daysRemaining = normalizedDailyAmount > 0 
+        ? Math.floor(newAmount / normalizedDailyAmount) 
+        : 9999; // Prevent division by zero
+      
+      console.log(`Days remaining calculation: ${newAmount}${foodUnit} / ${normalizedDailyAmount}${foodUnit} = ${daysRemaining} days`);
+      
+      // Update inventory with the new amount
+      await unifiedDatabaseManager.foodItems.updateInventory(foodItemId, newAmount);
+      
+      // If days remaining is low, show a warning and trigger a notification
+      const lowStockThreshold = foodItem.inventory?.lowStockThreshold ?? foodItem.low_stock_threshold ?? 10;
+      if (daysRemaining <= lowStockThreshold) {
+        toast({
+          title: 'Low Stock Warning',
+          description: `${foodItem.name} is running low (${daysRemaining} days remaining)`,
+          variant: 'destructive'
+        });
+        
+        // Also send a toast notification to ensure user is alerted
+        try {
+          // For now, we'll rely on the toast message as the immediate notification
+          // The proper notification will be triggered by UnifiedDatabaseManager when inventory is updated
+                     toast({
+             title: 'Action Required',
+             description: `Please remember to restock ${foodItem.name} soon. Only ${daysRemaining} days remaining.`,
+             variant: 'default'
+           });
+          console.log(`Showed extended toast alert for ${foodItem.name}`);
+        } catch (err) {
+          console.error('Failed to show extended toast:', err);
+        }
+      }
+    } catch (error) {
+      console.error('Error deducting from inventory:', error);
+      toast({
+        title: 'Warning',
+        description: 'Could not update inventory automatically',
+        variant: 'destructive'
+      });
+    }
+  };
   
   const saveMeal = async () => {
     try {
@@ -169,10 +361,10 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       
       // Create a proper food item
       const foodItem = {
-        foodItemId: formState.foodName, // This would ideally be an ID reference to a food item
+        foodItemId: formState.foodItemId,
         amount: parseFloat(formState.amount) || 0,
-        unit: 'cups', // Default unit
-        calories: (parseFloat(formState.amount) || 0) * 50 // Simplified calorie calculation
+        unit: formState.unit,
+        calories: calculateCalories(parseFloat(formState.amount) || 0, formState.unit)
       };
       
       // Prepare the meal data
@@ -184,13 +376,13 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
         time: formState.time,
         type: formState.type,
         foods: [foodItem],
-        totalCalories: (parseFloat(formState.amount) || 0) * 50, // Store calories in DB-recognized field
-        specialInstructions: formState.notes + (formState.amount ? `\nAmount: ${formState.amount} cups` : ''), // Add amount to notes
+        totalCalories: calculateCalories(parseFloat(formState.amount) || 0, formState.unit), // Store calories in DB-recognized field
+        specialInstructions: formState.notes + (formState.amount ? `\nAmount: ${formState.amount} ${formState.unit}` : ''), // Add amount to notes
         completed: formState.isCompleted,
         skipped: false,
         recurring: false,
         reminderSettings: {
-          enabled: false,
+          enabled: formState.reminderEnabled,
           reminderTime: 15
         }
       };
@@ -199,11 +391,26 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
         // If editing, first cancel existing notifications
         await notificationService.cancelMealNotifications(mealId as string);
         
+        // Get the original meal to check if completion status changed
+        const originalMeal = await unifiedDatabaseManager.meals.getById(mealId as string);
+        const wasCompleted = originalMeal?.completed || false;
+        const isNowCompleted = formState.isCompleted;
+        
         // Update the meal
         await unifiedDatabaseManager.meals.update(mealId as string, mealData);
+        
+        // Handle inventory deduction if meal was just marked as completed
+        if (!wasCompleted && isNowCompleted && formState.foodItemId && formState.amount) {
+          await deductFromInventory(formState.foodItemId, parseFloat(formState.amount), formState.unit);
+        }
       } else {
         // Create a new meal
         await unifiedDatabaseManager.meals.create(mealData);
+        
+        // Handle inventory deduction if meal is created as completed
+        if (formState.isCompleted && formState.foodItemId && formState.amount) {
+          await deductFromInventory(formState.foodItemId, parseFloat(formState.amount), formState.unit);
+        }
       }
       
       // Schedule notifications for the meal if it's not already completed
@@ -347,28 +554,111 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
             containerStyle={styles.inputContainer}
           />
           
-          <Input
-            label="Food Name"
-            placeholder="Enter food name"
-            value={formState.foodName}
-            onChangeText={(value) => handleChange('foodName', value)}
-            error={errors.foodName}
-            touched={touched.foodName}
-            icon={<Ionicons name="fast-food-outline" size={20} color={colors.primary} />}
-            iconPosition="left"
+          <Select
+            label="Food Item"
+            selectedValue={formState.foodItemId}
+            onValueChange={(value) => handleChange('foodItemId', value)}
+            error={errors.foodItemId}
+            touched={touched.foodItemId}
+            options={foodItemOptions}
             containerStyle={styles.inputContainer}
           />
+
+          {/* Show message when no food items available */}
+          {foodItems.length === 0 && !loadingFoodItems && (
+            <View style={[styles.noInventoryMessage, { backgroundColor: colors.warning + '15' }]}>
+              <Ionicons name="alert-circle" size={16} color={colors.warning} />
+              <Text style={[styles.noInventoryText, { color: colors.warning }]}>
+                No food items in inventory. 
+              </Text>
+              <TouchableOpacity 
+                onPress={() => navigation.navigate('AddFoodItem', { petId: activePetId || undefined })}
+                style={styles.addFoodLink}
+              >
+                <Text style={[styles.addFoodLinkText, { color: colors.primary }]}>Add food item</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Show current stock for selected food item */}
+          {formState.foodItemId && (() => {
+            const selectedFood = foodItems.find(item => item.id === formState.foodItemId);
+            if (selectedFood) {
+              const currentAmount = selectedFood.inventory?.currentAmount ?? selectedFood.current_amount ?? 0;
+              const unit = selectedFood.inventory?.unit ?? selectedFood.unit ?? 'g';
+              const daysRemaining = selectedFood.inventory?.daysRemaining ?? selectedFood.days_remaining ?? 0;
+              const lowStockThreshold = selectedFood.inventory?.lowStockThreshold ?? selectedFood.low_stock_threshold ?? 10;
+              
+              // Use days remaining for low stock determination rather than raw quantity
+              const isLowStock = daysRemaining <= lowStockThreshold;
+              
+              return (
+                <View style={[styles.stockInfo, { backgroundColor: isLowStock ? colors.warning + '15' : colors.success + '15' }]}>
+                  <Ionicons 
+                    name={isLowStock ? "alert-circle" : "checkmark-circle"} 
+                    size={16} 
+                    color={isLowStock ? colors.warning : colors.success} 
+                  />
+                  <Text style={[styles.stockText, { color: isLowStock ? colors.warning : colors.success }]}>
+                    Current stock: {currentAmount}{unit} available ({daysRemaining} days remaining)
+                    {isLowStock && ' (Low stock!)'}
+                  </Text>
+                </View>
+              );
+            }
+            return null;
+          })()}
           
-          <Input
-            label="Amount"
-            placeholder="Enter amount"
-            value={formState.amount}
-            onChangeText={(value) => handleChange('amount', value)}
-            error={errors.amount}
-            touched={touched.amount}
-            keyboardType="numeric"
-            containerStyle={styles.inputContainer}
-          />
+          <FormRow>
+            <View style={[styles.formRowItem, { flex: 1 }]}>
+              <Input
+                label="Amount"
+                placeholder="Enter amount"
+                value={formState.amount}
+                onChangeText={(value) => handleChange('amount', value)}
+                error={errors.amount}
+                touched={touched.amount}
+                keyboardType="numeric"
+                containerStyle={styles.inputContainer}
+              />
+            </View>
+            
+            <View style={[styles.formRowItem, { flex: 1 }]}>
+              <Select
+                label="Unit"
+                options={unitOptions}
+                selectedValue={formState.unit}
+                onValueChange={(value) => handleChange('unit', value)}
+                error={errors.unit}
+                touched={touched.unit}
+                containerStyle={styles.inputContainer}
+              />
+            </View>
+          </FormRow>
+          
+          {/* Show unit equivalent for the selected food item if units differ */}
+          {formState.foodItemId && formState.amount && formState.unit && (() => {
+            const selectedFood = foodItems.find(item => item.id === formState.foodItemId);
+            if (selectedFood && !isNaN(parseFloat(formState.amount))) {
+              const foodUnit = selectedFood.inventory?.unit ?? selectedFood.unit ?? 'g';
+              if (formState.unit !== foodUnit) {
+                const convertedAmount = convertQuantity(
+                  parseFloat(formState.amount), 
+                  formState.unit, 
+                  foodUnit
+                );
+                return (
+                  <View style={styles.unitConversionInfo}>
+                    <Text style={[styles.unitConversionText, {color: colors.text + '80'}]}>
+                      {parseFloat(formState.amount)} {formState.unit} = 
+                      {' '}{convertedAmount.toFixed(2)} {foodUnit}
+                    </Text>
+                  </View>
+                );
+              }
+            }
+            return null;
+          })()}
           
           <DatePicker
             label="Time"
@@ -390,12 +680,21 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
             containerStyle={styles.inputContainer}
           />
           
-          <Switch
-            label="Mark as Completed"
-            value={formState.isCompleted}
-            onValueChange={(value) => handleChange('isCompleted', value)}
-            containerStyle={styles.switchContainer}
-          />
+          <View style={styles.switchesContainer}>
+            <Switch
+              label="Mark as Completed"
+              value={formState.isCompleted}
+              onValueChange={(value) => handleChange('isCompleted', value)}
+              containerStyle={styles.switchContainer}
+            />
+            
+            <Switch
+              label="Enable Reminders"
+              value={formState.reminderEnabled}
+              onValueChange={(value) => handleChange('reminderEnabled', value)}
+              containerStyle={styles.switchContainer}
+            />
+          </View>
         </View>
         
         <View style={styles.buttonContainer}>
@@ -483,9 +782,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
   },
-  switchContainer: {
+  switchesContainer: {
     marginTop: 8,
-    marginBottom: 8,
+  },
+  switchContainer: {
+    marginBottom: 16,
   },
   buttonContainer: {
     flexDirection: 'row',
@@ -534,6 +835,48 @@ const styles = StyleSheet.create({
   noSelectionText: {
     fontSize: 16,
     textAlign: 'center',
+  },
+  stockInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  stockText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 8,
+    flex: 1,
+  },
+  noInventoryMessage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  noInventoryText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 8,
+  },
+  addFoodLink: {
+    marginLeft: 4,
+  },
+  addFoodLinkText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  unitConversionInfo: {
+    marginTop: -10,
+    marginBottom: 16,
+    paddingHorizontal: 5,
+  },
+  unitConversionText: {
+    fontSize: 12,
+    fontStyle: 'italic',
   },
 });
 

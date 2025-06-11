@@ -39,10 +39,11 @@ export class FoodItemRepository extends BaseRepository<FoodItem> {
   async getLowStock(petId: string): Promise<FoodItem[]> {
     return this.find(item => {
       const { inventory } = item;
+      // Use days remaining for determining low stock, not raw quantity
       return (
         item.petId === petId && 
         !!inventory &&
-        inventory.currentAmount <= inventory.lowStockThreshold
+        inventory.daysRemaining <= inventory.lowStockThreshold
       );
     });
   }

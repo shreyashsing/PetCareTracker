@@ -45,5 +45,3 @@ yarn-error.*
 .netlify
 
 # Firebase configuration files containing API keys
-android/app/google-services.json
-ios/GoogleService-Info.plist

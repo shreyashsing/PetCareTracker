@@ -175,6 +175,24 @@ async function initializeBackgroundTasks(): Promise<void> {
     })
   );
 
+  // Cleanup completed/discontinued medications that are older than 2 days
+  backgroundTasks.push(
+    PerformanceMonitor.measureAsync('OldMeds_Cleanup', async () => {
+      const deletedCount = await Promise.race([
+        unifiedDatabaseManager.medications.cleanupOldCompletedMedications(),
+        timeout(getProductionTimeout('BACKGROUND_TASK'))
+      ]) as number;
+      
+      if (deletedCount > 0) {
+        ProductionLogger.info(`Cleaned up ${deletedCount} completed/discontinued medications`, 'Background');
+      }
+      
+      return deletedCount;
+    }).catch((error: any) => {
+      ProductionLogger.warn(`Completed medications cleanup failed: ${error.message}`, 'Background');
+    })
+  );
+
   // Notification rescheduling
   backgroundTasks.push(
     PerformanceMonitor.measureAsync('Notifications_Reschedule', async () => {

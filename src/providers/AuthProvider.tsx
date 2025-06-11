@@ -3,6 +3,8 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase, getCurrentUser, refreshSessionSafe } from '../services/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform } from 'react-native';
+import { notificationService } from '../services/notifications';
+import { clearNavigationStateOnLogout } from '../utils/navigationUtils';
 
 // Helper function to create a timeout promise
 const timeout = (ms: number) => new Promise((_, reject) => 
@@ -347,6 +349,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setIsLoading(true);
       
+      // Clear all notifications before logout
+      await notificationService.clearAllNotifications();
+      
+      // Clear navigation state to prevent restoration to authenticated routes
+      await clearNavigationStateOnLogout();
+      
       // Add timeout to prevent getting stuck
       const signOutPromise = supabase.auth.signOut();
       
@@ -379,6 +387,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(null);
       setUser(null);
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+      await clearNavigationStateOnLogout(); // Clear navigation state even on error
     } finally {
       setIsLoading(false);
     }

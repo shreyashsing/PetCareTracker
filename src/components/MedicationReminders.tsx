@@ -23,6 +23,7 @@ const isSameDay = (date1: Date, date2: Date): boolean => {
 interface MedicationRemindersProps {
   petId?: string;
   onMedicationPress?: (medicationId: string) => void;
+  refreshTrigger?: number; // Add refresh trigger prop
 }
 
 interface MedicationDose {
@@ -36,14 +37,14 @@ interface MedicationDose {
   petId: string;
 }
 
-const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedicationPress }) => {
+const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedicationPress, refreshTrigger }) => {
   const { colors } = useAppColors();
   const [loading, setLoading] = useState(true);
   const [upcomingDoses, setUpcomingDoses] = useState<MedicationDose[]>([]);
   
   useEffect(() => {
     loadMedicationSchedule();
-  }, [petId]);
+  }, [petId, refreshTrigger]); // Add refreshTrigger to dependency array
   
   const loadMedicationSchedule = async () => {
     try {
@@ -268,9 +269,28 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
       for (const medication of medicationsToFix) {
         try {
           await unifiedDatabaseManager.medications.updateStatus(medication.id, medication.status);
+          // Also make sure to cancel any scheduled notifications
+          await notificationService.cancelMedicationNotifications(medication.id);
           console.log(`✅ Fixed reminder settings for ${medication.status} medication: ${medication.name}`);
         } catch (error) {
           console.error(`❌ Failed to fix reminder settings for medication ${medication.name}:`, error);
+        }
+      }
+    }
+    
+    // Also ensure all non-active medications have their notifications cancelled
+    const nonActiveMedications = medications.filter(med => 
+      med.status === 'completed' || med.status === 'discontinued'
+    );
+    
+    if (nonActiveMedications.length > 0) {
+      console.log(`🔧 Ensuring notifications are cancelled for ${nonActiveMedications.length} non-active medications...`);
+      
+      for (const medication of nonActiveMedications) {
+        try {
+          await notificationService.cancelMedicationNotifications(medication.id);
+        } catch (error) {
+          console.error(`❌ Failed to cancel notifications for medication ${medication.name}:`, error);
         }
       }
     }

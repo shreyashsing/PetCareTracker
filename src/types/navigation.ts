@@ -24,11 +24,11 @@ export type MainStackParamList = {
   AddFoodItem: { petId?: string; itemId?: string };
   Settings: undefined;
   FullAnalytics: { petId?: string };
-  Feeding: { refresh?: boolean };
+  Feeding: { refresh?: boolean; mealCompleted?: number };
   Schedule: undefined;
   Health: undefined;
   Exercise: undefined;
-  AddActivity: undefined;
+  AddActivity: { activityId?: string };
   AddFirstPet: undefined;
   ChatAssistant: { petId?: string; sessionId?: string };
   SupabaseSetup: undefined;
@@ -51,7 +51,7 @@ export type RootStackParamList = {
 // Extended param list for full app navigation (includes all screens)
 export type AppStackParamList = {
   Home: undefined;
-  Feeding: { refresh?: boolean };
+  Feeding: { refresh?: boolean; mealCompleted?: number };
   Schedule: undefined;
   Health: undefined;
   Exercise: undefined;
@@ -65,7 +65,7 @@ export type AppStackParamList = {
   FullAnalytics: { petId?: string };
   ViewPet: { petId: string };
   EnterMedication: undefined;
-  AddActivity: undefined;
+  AddActivity: { activityId?: string };
   Pet: { id: string };
   Profile: undefined;
   PetDetails: { petId: string };

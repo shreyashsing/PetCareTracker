@@ -62,7 +62,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
   const handleMarkCompleted = () => {
     Alert.alert(
       'Mark as Completed',
-      'Mark this medication as completed? This will stop all future reminders.',
+      'Mark this medication as completed? This will stop all future reminders and automatically delete the medication after 2 days.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -73,7 +73,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
               await notificationService.cancelMedicationNotifications(medication.id);
               onRefresh();
               onClose();
-              Alert.alert('Success', 'Medication marked as completed');
+              Alert.alert('Success', 'Medication marked as completed and will be deleted after 2 days');
             } catch (error) {
               Alert.alert('Error', 'Failed to update medication status');
               console.error('Error updating medication status:', error);
@@ -87,7 +87,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
   const handleDiscontinue = () => {
     Alert.alert(
       'Discontinue Medication',
-      'Discontinue this medication? This will stop all future reminders and mark it as discontinued.',
+      'Discontinue this medication? This will stop all future reminders, mark it as discontinued, and automatically delete the medication after 2 days.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -99,7 +99,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
               await notificationService.cancelMedicationNotifications(medication.id);
               onRefresh();
               onClose();
-              Alert.alert('Success', 'Medication discontinued');
+              Alert.alert('Success', 'Medication discontinued and will be deleted after 2 days');
             } catch (error) {
               Alert.alert('Error', 'Failed to update medication status');
               console.error('Error updating medication status:', error);

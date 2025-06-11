@@ -112,6 +112,8 @@ export interface Meal {
   // UI properties
   amount?: string | number;
   calories?: number;
+  foodName?: string;
+  unit?: string;
 }
 
 export interface FoodItem {

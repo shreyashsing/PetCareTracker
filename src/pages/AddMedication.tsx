@@ -5,6 +5,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
 import { FormStateNotification } from '../components/FormStateNotification';
 import { 
@@ -43,6 +44,7 @@ interface FormState {
 const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors  } = useAppColors();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [realPetId, setRealPetId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -238,27 +240,7 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       return;
     }
     
-    // Check for time configuration warnings
-    if (formState.reminderEnabled && formState.frequencyPeriod === 'day' && parseInt(formState.frequencyTimes, 10) > 1) {
-      const timesPerDay = parseInt(formState.frequencyTimes, 10);
-      const specificTimesCount = formState.reminderTimes?.length || 0;
-      
-      if (specificTimesCount === 1 && timesPerDay > 1) {
-        const warnings = validateMedicationTimes();
-        if (warnings.length > 0) {
-          Alert.alert(
-            'Reminder Times',
-            warnings[0],
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Continue', onPress: () => submitForm() },
-            ]
-          );
-          return;
-        }
-      }
-    }
-    
+    // Even when reminder times don't match frequency, just submit without showing alert
     submitForm();
   };
   
@@ -273,7 +255,11 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       const effectivePetId = realPetId || activePetId;
       
       if (!effectivePetId) {
-        Alert.alert('Error', 'No active pet selected. Please select a pet first.');
+        toast({
+          title: 'Error',
+          description: 'No active pet selected. Please select a pet first.',
+          type: 'error'
+        });
         return;
       }
       
@@ -336,11 +322,11 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
             // Check if this is a notification limit error
             const errorMessage = notificationError.message || '';
             if (errorMessage.includes('maximum limit') || errorMessage.includes('limit reached')) {
-              Alert.alert(
-                'Notification Limit Reached',
-                'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
-                [{ text: 'OK' }]
-              );
+              toast({
+                title: 'Notification Limit Reached',
+                description: 'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
+                type: 'warning'
+              });
             } else {
               // For other notification errors, just log them but don't block the medication from being saved
               console.error('Error scheduling medication notifications:', notificationError);
@@ -366,11 +352,11 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
             // Check if this is a notification limit error
             const errorMessage = notificationError.message || '';
             if (errorMessage.includes('maximum limit') || errorMessage.includes('limit reached')) {
-              Alert.alert(
-                'Notification Limit Reached',
-                'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
-                [{ text: 'OK' }]
-              );
+              toast({
+                title: 'Notification Limit Reached',
+                description: 'Your device has reached the maximum number of scheduled notifications. Only the most recent medications will receive notifications. Your medication has been saved.',
+                type: 'warning'
+              });
             } else {
               // For other notification errors, just log them but don't block the medication from being saved
               console.error('Error scheduling medication notifications:', notificationError);
@@ -380,14 +366,20 @@ const AddMedication: React.FC<AddMedicationScreenProps> = ({ navigation, route }
       }
       
       console.log('Medication saved successfully!');
-      Alert.alert(
-        'Success', 
-        isEditMode ? 'Medication updated successfully!' : 'Medication added successfully!',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      toast({
+        title: 'Success',
+        description: isEditMode ? 'Medication updated successfully!' : 'Medication added successfully!',
+        type: 'success'
+      });
+      
+      navigation.goBack();
     } catch (error) {
       console.error('Error submitting medication:', error);
-      Alert.alert('Error', 'Failed to save medication. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'Failed to save medication. Please try again.',
+        type: 'error'
+      });
     } finally {
       setIsLoading(false);
     }

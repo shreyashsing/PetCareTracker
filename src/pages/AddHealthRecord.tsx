@@ -5,6 +5,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
 import { FormStateNotification } from '../components/FormStateNotification';
 import { 
@@ -48,6 +49,7 @@ interface FormState {
 const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors  } = useAppColors();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [realPetId, setRealPetId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -253,7 +255,11 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
       
       if (!effectivePetId) {
         console.log('Missing effective pet ID');
-        alert('No pet selected');
+        toast({
+          title: 'Error',
+          description: 'No pet selected',
+          type: 'error'
+        });
         return;
       }
       
@@ -371,7 +377,11 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
         // Don't fail the entire operation for notification errors
       }
       
-      alert(isEditMode ? 'Health record updated successfully!' : 'Health record added successfully!');
+      toast({
+        title: 'Success',
+        description: isEditMode ? 'Health record updated successfully!' : 'Health record added successfully!',
+        type: 'success'
+      });
       
       // Navigate back with refresh parameter
       if (navigation.canGoBack()) {
@@ -381,7 +391,11 @@ const AddHealthRecord: React.FC<AddHealthRecordScreenProps> = ({ navigation, rou
       }
     } catch (error) {
       console.error('Error submitting health record:', error);
-      Alert.alert('Error', 'Failed to save health record. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'Failed to save health record. Please try again.',
+        type: 'error'
+      });
     } finally {
       setIsLoading(false);
     }

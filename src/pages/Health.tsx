@@ -15,11 +15,12 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { TopNavBar, HealthRecordDetails, MedicationDetails } from '../components';
 import WeightTrendCard from '../components/WeightTrendCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import Footer from '../components/layout/Footer';
-import { format } from 'date-fns';
+import { format, differenceInYears, differenceInMonths } from 'date-fns';
 import { STORAGE_KEYS,unifiedDatabaseManager} from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { formatDate } from '../utils/helpers';
@@ -75,6 +76,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const [activeTab, setActiveTab] = useState<'overview' | 'records' | 'medications'>('overview');
   const { colors } = useAppColors();
+  const { toast } = useToast();
   
   // State for storing the real data
   const [activePet, setActivePet] = useState<Pet | null>(null);
@@ -714,9 +716,6 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
             case 'Completed':
               filteredMeds = meds.filter(med => med.status === 'completed');
               break;
-            case 'Discontinued':
-              filteredMeds = meds.filter(med => med.status === 'discontinued');
-              break;
             case 'All':
             default:
               filteredMeds = meds; // Show all medications
@@ -875,8 +874,6 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               
               if (med.status === 'completed') {
                 nextDue = 'Completed';
-              } else if (med.status === 'discontinued') {
-                nextDue = 'Discontinued';
               } else {
                 // Only calculate next due for active medications
                 let nextDueDate;
@@ -1156,6 +1153,11 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
   const handleRecordDeleted = () => {
     // Refresh the records list silently
     loadHealthData(true);
+    toast({
+      title: 'Success',
+      description: 'Health record deleted successfully',
+      type: 'success'
+    });
   };
   
   const handleViewMedicationDetails = async (medicationId: string) => {
@@ -1189,6 +1191,11 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     loadHealthData(true);
     // Trigger refresh of MedicationReminders component
     setMedicationRefreshTrigger(prev => prev + 1);
+    toast({
+      title: 'Success',
+      description: 'Medication deleted successfully',
+      type: 'success'
+    });
   };
 
   const renderTabContent = () => {
@@ -1718,7 +1725,7 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                 style={styles.medicationTypesScrollView}
                 contentContainerStyle={styles.medicationTypesContent}
               >
-                {['All', 'Active', 'Completed', 'Discontinued'].map(type => (
+                {['All', 'Active', 'Completed'].map(type => (
                   <TouchableOpacity
                     key={type}
                     style={[
@@ -1826,13 +1833,6 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
                                 {medication.nextDue}
                               </Text>
                             </>
-                          ) : medication.nextDue === 'Discontinued' ? (
-                            <>
-                              <Ionicons name="stop-circle-outline" size={14} color={colors.warning} />
-                              <Text style={[styles.medicationNextDueText, { color: colors.warning }]}>
-                                {medication.nextDue}
-                              </Text>
-                            </>
                           ) : (
                             <>
                               <Ionicons name="time-outline" size={14} color={colors.text + '70'} />
@@ -1898,6 +1898,26 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
     return tomorrow;
   }
 
+  // Function to calculate pet age
+  const calculateAge = (birthDate: Date | null): string => {
+    if (!birthDate) return 'Unknown age';
+    
+    const today = new Date();
+    const birth = new Date(birthDate);
+    
+    const years = differenceInYears(today, birth);
+    if (years > 0) {
+      return years === 1 ? `${years} year` : `${years} years`;
+    }
+    
+    const months = differenceInMonths(today, birth);
+    if (months > 0) {
+      return months === 1 ? `${months} month` : `${months} months`;
+    }
+    
+    return 'Newborn';
+  };
+
   // Show loading indicator while data is being fetched
   if (loading) {
     return (
@@ -1914,6 +1934,8 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
       </View>
     );
   }
+
+  // No need for another pet variable definition here, we already have one above
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -1938,12 +1960,22 @@ const Health: React.FC<HealthScreenProps> = ({ navigation, route }) => {
               />
               <View style={styles.petInfo}>
                 <Text style={[styles.petName, { color: colors.text }]}>{pet.name}</Text>
-                <Text style={[styles.petType, { color: colors.text + '80' }]}>{pet.type}</Text>
-                <View style={[styles.healthStatusContainer, { backgroundColor: colors.success + '20' }]}>
-                  <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                  <Text style={[styles.healthStatus, { color: colors.success }]}>
-                    {pet.status.charAt(0).toUpperCase() + pet.status.slice(1)}
-                  </Text>
+                <Text style={[styles.petType, { color: colors.text + '80' }]}>
+                  {pet.type.charAt(0).toUpperCase() + pet.type.slice(1)} • {pet.breed}
+                </Text>
+                <View style={styles.petDetailsRow}>
+                  <View style={styles.petDetailItem}>
+                    <Ionicons name="calendar-outline" size={14} color={colors.primary} />
+                    <Text style={[styles.petDetailText, { color: colors.text + '80' }]}>
+                      {calculateAge(pet.birthDate)}
+                    </Text>
+                  </View>
+                  <View style={styles.petDetailItem}>
+                    <Ionicons name="scale-outline" size={14} color={colors.primary} />
+                    <Text style={[styles.petDetailText, { color: colors.text + '80' }]}>
+                      {pet.weight} {pet.weightUnit}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </View>
@@ -2056,6 +2088,7 @@ const styles = StyleSheet.create({
   },
   petInfo: {
     marginLeft: 16,
+    flex: 1,
   },
   petName: {
     fontSize: 24,
@@ -2064,6 +2097,20 @@ const styles = StyleSheet.create({
   petType: {
     fontSize: 16,
     marginTop: 2,
+  },
+  petDetailsRow: {
+    flexDirection: 'row',
+    marginTop: 8,
+    gap: 16,
+  },
+  petDetailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  petDetailText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   healthStatusContainer: {
     flexDirection: 'row',

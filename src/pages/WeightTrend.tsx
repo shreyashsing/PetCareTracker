@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
@@ -14,6 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
+import { useToast } from '../hooks/use-toast';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LineChart } from 'react-native-gifted-charts';
 import { format, subWeeks, isWithinInterval, startOfWeek, endOfWeek } from 'date-fns';
@@ -58,6 +58,7 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
   const { colors, isDark } = useAppColors();
   const { activePetId } = useActivePet();
   const { updatePet } = usePetStore();
+  const { toast } = useToast();
   
   const [activePet, setActivePet] = useState<Pet | null>(null);
   const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
@@ -87,7 +88,11 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
       }
 
       if (!currentPetId) {
-        Alert.alert('Error', 'No pet selected');
+        toast({
+          title: 'Error',
+          description: 'No pet selected',
+          type: 'error'
+        });
         navigation.goBack();
         return;
       }
@@ -95,7 +100,11 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
       // Load pet info
       const pet = await unifiedDatabaseManager.pets.getById(currentPetId);
       if (!pet) {
-        Alert.alert('Error', 'Pet not found');
+        toast({
+          title: 'Error',
+          description: 'Pet not found',
+          type: 'error'
+        });
         navigation.goBack();
         return;
       }
@@ -130,7 +139,11 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
 
     } catch (error) {
       console.error('Error loading weight data:', error);
-      Alert.alert('Error', 'Failed to load weight data');
+      toast({
+        title: 'Error',
+        description: 'Failed to load weight data',
+        type: 'error'
+      });
     } finally {
       setLoading(false);
     }
@@ -1109,13 +1122,21 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
   // Add new weight record
   const handleAddWeight = async () => {
     if (!newWeight || !activePet) {
-      Alert.alert('Error', 'Please enter a valid weight');
+      toast({
+        title: 'Error',
+        description: 'Please enter a valid weight',
+        type: 'error'
+      });
       return;
     }
 
     const weight = parseFloat(newWeight);
     if (isNaN(weight) || weight <= 0) {
-      Alert.alert('Error', 'Please enter a valid weight');
+      toast({
+        title: 'Error',
+        description: 'Please enter a valid weight',
+        type: 'error'
+      });
       return;
     }
 
@@ -1153,11 +1174,19 @@ const WeightTrend: React.FC<WeightTrendScreenProps> = ({ navigation }) => {
       setBodyConditionScore(3);
       setShowAddWeight(false);
 
-      Alert.alert('Success', 'Weight record added successfully!');
+      toast({
+        title: 'Success',
+        description: 'Weight record added successfully!',
+        type: 'success'
+      });
 
     } catch (error) {
       console.error('Error adding weight record:', error);
-      Alert.alert('Error', 'Failed to add weight record');
+      toast({
+        title: 'Error',
+        description: 'Failed to add weight record',
+        type: 'error'
+      });
     } finally {
       setAddingWeight(false);
     }

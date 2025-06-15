@@ -148,7 +148,7 @@ export const medicationSchema = z.object({
       administeredBy: z.string().optional()
     })
   ).optional(),
-  status: z.enum(['active', 'completed', 'discontinued'], {
+  status: z.enum(['active', 'completed'], {
     errorMap: () => ({ message: "Invalid medication status" })
   }),
   inventory: z.object({

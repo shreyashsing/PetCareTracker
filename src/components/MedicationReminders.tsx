@@ -259,7 +259,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
   // Function to fix medications with incorrect reminder settings
   const fixIncorrectReminderSettings = async (medications: Medication[]) => {
     const medicationsToFix = medications.filter(med => 
-      (med.status === 'completed' || med.status === 'discontinued') && 
+      med.status === 'completed' && 
       med.reminderSettings?.enabled === true
     );
     
@@ -280,7 +280,7 @@ const MedicationReminders: React.FC<MedicationRemindersProps> = ({ petId, onMedi
     
     // Also ensure all non-active medications have their notifications cancelled
     const nonActiveMedications = medications.filter(med => 
-      med.status === 'completed' || med.status === 'discontinued'
+      med.status === 'completed'
     );
     
     if (nonActiveMedications.length > 0) {

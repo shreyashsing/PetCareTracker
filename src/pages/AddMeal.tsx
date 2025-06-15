@@ -310,8 +310,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       if (daysRemaining <= lowStockThreshold) {
         toast({
           title: 'Low Stock Warning',
-          description: `${foodItem.name} is running low (${daysRemaining} days remaining)`,
-          variant: 'destructive'
+          description: `${foodItem.name} is running low (${daysRemaining} days remaining)`
         });
         
         // Also send a toast notification to ensure user is alerted
@@ -320,8 +319,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
           // The proper notification will be triggered by UnifiedDatabaseManager when inventory is updated
                      toast({
              title: 'Action Required',
-             description: `Please remember to restock ${foodItem.name} soon. Only ${daysRemaining} days remaining.`,
-             variant: 'default'
+             description: `Please remember to restock ${foodItem.name} soon. Only ${daysRemaining} days remaining.`
            });
           console.log(`Showed extended toast alert for ${foodItem.name}`);
         } catch (err) {
@@ -332,8 +330,7 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       console.error('Error deducting from inventory:', error);
       toast({
         title: 'Warning',
-        description: 'Could not update inventory automatically',
-        variant: 'destructive'
+        description: 'Could not update inventory automatically'
       });
     }
   };
@@ -450,15 +447,21 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
       const result = await saveMeal();
       
       if (result) {
-        Alert.alert(
-          'Success', 
-          isEditMode ? 'Meal updated successfully!' : 'Meal added successfully!',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
+        // Show success toast instead of Alert
+        toast({
+          title: isEditMode ? 'Meal updated' : 'Meal added',
+          description: isEditMode ? 'Meal has been updated successfully!' : 'Meal has been added successfully!'
+        });
+        
+        // Navigate back
+        navigation.goBack();
       }
     } catch (error) {
       console.error('Error submitting meal:', error);
-      Alert.alert('Error', 'Failed to save meal. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'Failed to save meal. Please try again.'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -497,7 +500,10 @@ const AddMeal: React.FC<AddMealScreenProps> = ({ navigation, route }) => {
               });
             } catch (error) {
               console.error('Error deleting meal:', error);
-              Alert.alert('Error', 'Failed to delete meal');
+              toast({
+                title: 'Error',
+                description: 'Failed to delete meal'
+              });
             } finally {
               setIsLoading(false);
             }

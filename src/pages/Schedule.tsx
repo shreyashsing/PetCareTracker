@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, FlatList, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, FlatList } from 'react-native';
+import ConfirmationDialog from '../components/ConfirmationDialog';
 import { useActivePet } from '../hooks/useActivePet';
 import { format, addDays, isToday, isTomorrow, isSameDay } from 'date-fns';
 import { TopNavBar } from '../components';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -45,6 +47,7 @@ type UpcomingEvent = {
 export default function Schedule({ navigation }: ScheduleScreenProps) {
   const { activePetId } = useActivePet();
   const { colors, isDark } = useAppColors();
+  const { toast } = useToast();
   const today = new Date();
   const formattedDate = format(today, 'EEEE, MMMM d, yyyy');
   const [selectedDate, setSelectedDate] = useState(today);
@@ -52,6 +55,10 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
   const [tasks, setTasks] = useState<LocalTask[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Confirmation dialog states
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState<string>('');
   
   // Load data from database
   const loadData = async () => {
@@ -216,30 +223,35 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
     }
   };
 
-  // Handle task deletion
+  // Handle task deletion - shows confirmation dialog
   const handleDeleteTask = (taskId: string) => {
-    Alert.alert(
-      'Delete Task',
-      'Are you sure you want to delete this task?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
+    setTaskToDelete(taskId);
+    setConfirmDialogVisible(true);
+  };
+  
+  // Actual task deletion after confirmation
+  const confirmDeleteTask = async () => {
             try {
-              await unifiedDatabaseManager.tasks.delete(taskId);
+      if (!taskToDelete) return;
+      
+      await unifiedDatabaseManager.tasks.delete(taskToDelete);
               loadData(); // Reload data after deletion
+      
+      toast({
+        title: 'Success',
+        description: 'Task deleted successfully'
+      });
             } catch (error) {
               console.error('Error deleting task:', error);
-            }
-          },
-        },
-      ]
-    );
+      toast({
+        title: 'Error',
+        description: 'Failed to delete task. Please try again.'
+      });
+    } finally {
+      // Reset state
+      setConfirmDialogVisible(false);
+      setTaskToDelete('');
+    }
   };
 
   // Toggle task completion status
@@ -317,7 +329,11 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
       }, 300);
     } catch (error) {
       console.error('Error updating task status:', error);
-      Alert.alert('Error', 'Failed to update task status. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'Failed to update task status. Please try again.',
+        type: 'error'
+      });
     }
   };
 
@@ -631,6 +647,22 @@ export default function Schedule({ navigation }: ScheduleScreenProps) {
       </ScrollView>
 
       <Footer />
+      
+      {/* Custom Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={confirmDialogVisible}
+        title="Delete Task"
+        message="Are you sure you want to delete this task? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmType="danger"
+        icon="calendar-outline"
+        onConfirm={confirmDeleteTask}
+        onCancel={() => {
+          setConfirmDialogVisible(false);
+          setTaskToDelete('');
+        }}
+      />
     </View>
   );
 }

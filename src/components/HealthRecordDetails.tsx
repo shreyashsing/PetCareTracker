@@ -1,10 +1,12 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { HealthRecord } from '../types/components';
-import {unifiedDatabaseManager} from "../services/db";
+import { unifiedDatabaseManager } from "../services/db";
 import { formatDate } from '../utils/helpers';
+import ConfirmationDialog from './ConfirmationDialog';
 
 interface HealthRecordDetailsProps {
   record: HealthRecord | null;
@@ -24,6 +26,8 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
   onRefresh
 }) => {
   const { colors } = useAppColors();
+  const { toast } = useToast();
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
 
   if (!record) return null;
   
@@ -32,28 +36,29 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
   };
   
   const handleDelete = () => {
-    Alert.alert(
-      'Delete Record',
-      'Are you sure you want to delete this health record? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await unifiedDatabaseManager.healthRecords.delete(record.id);
-              onRefresh();
-              onClose();
-              Alert.alert('Success', 'Health record deleted successfully');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to delete health record');
-              console.error('Error deleting health record:', error);
-            }
-          }
-        }
-      ]
-    );
+    setConfirmDialogVisible(true);
+  };
+  
+  const confirmDelete = async () => {
+    try {
+      await unifiedDatabaseManager.healthRecords.delete(record.id);
+      onRefresh();
+      onClose();
+      toast({
+        title: 'Success',
+        description: 'Health record deleted successfully',
+        type: 'success'
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete health record',
+        type: 'error'
+      });
+      console.error('Error deleting health record:', error);
+    } finally {
+      setConfirmDialogVisible(false);
+    }
   };
   
   const getRecordIcon = (type: string) => {
@@ -339,6 +344,19 @@ export const HealthRecordDetails: React.FC<HealthRecordDetailsProps> = ({
           </View>
         </View>
       </View>
+      
+      {/* Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={confirmDialogVisible}
+        title="Delete Health Record"
+        message="Are you sure you want to delete this health record? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmType="danger"
+        icon="trash-outline"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmDialogVisible(false)}
+      />
     </Modal>
   );
 };

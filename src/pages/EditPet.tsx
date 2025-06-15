@@ -196,7 +196,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
             toast({
               title: 'Error',
               description: 'Pet not found',
-              variant: 'destructive'
+              type: 'error'
             });
             navigation.goBack();
           }
@@ -204,7 +204,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
           toast({
             title: 'Error',
             description: 'No pet ID found',
-            variant: 'destructive'
+            type: 'error'
           });
           navigation.goBack();
         }
@@ -213,7 +213,7 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
         toast({
           title: 'Error',
           description: 'Failed to load pet information',
-          variant: 'destructive'
+          type: 'error'
         });
         navigation.goBack();
       } finally {
@@ -454,22 +454,21 @@ const EditPet: React.FC<EditPetScreenProps> = ({ route, navigation }) => {
       // Clear any saved form state since update was successful
       clearSavedState();
       
-      // Navigate to Home screen and show success message
-      Alert.alert(
-        'Success',
-        'Pet updated successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              navigation.navigate('Home');
-            }
-          }
-        ]
-      );
+      // Show toast notification and navigate to Home screen
+      toast({
+        title: 'Success',
+        description: `${updatedPet.name} updated successfully!`,
+        type: 'success'
+      });
+      
+      navigation.navigate('Home');
     } catch (error) {
       console.error('Error updating pet:', error);
-      Alert.alert('Error', 'There was a problem updating your pet. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'There was a problem updating your pet. Please try again.',
+        type: 'error'
+      });
     } finally {
       setIsLoading(false);
     }

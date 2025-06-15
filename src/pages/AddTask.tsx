@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
@@ -7,6 +7,7 @@ import { useActivePet } from '../hooks/useActivePet';
 import { useAppColors } from '../hooks/useAppColors';
 import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
 import { FormStateNotification } from '../components/FormStateNotification';
+import { useToast } from '../hooks/use-toast';
 import { 
   Input, 
   Select, 
@@ -47,6 +48,7 @@ interface FormState {
 const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
   const { activePetId } = useActivePet();
   const { colors  } = useAppColors();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -276,7 +278,11 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
             await notificationService.cancelTaskNotifications(taskData.id);
           }
           
-          Alert.alert('Success', 'Task updated successfully!');
+          toast({
+            title: 'Success',
+            description: 'Task updated successfully!',
+            type: 'success'
+          });
         } else {
           // Create new task using TypeScript-friendly version
           // The DataManager will handle both local storage and Supabase operations
@@ -288,7 +294,11 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
             console.log('Notifications scheduled for task:', taskData.id);
           }
           
-          Alert.alert('Success', 'Task created successfully!');
+          toast({
+            title: 'Success',
+            description: 'Task created successfully!',
+            type: 'success'
+          });
         }
         
         // Instead of navigating directly to Schedule, go back to previous screen
@@ -303,7 +313,11 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
           console.error('Error details:', JSON.stringify(error, null, 2));
         }
         // Handle error (show alert, etc.)
-        Alert.alert('Error', `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        toast({
+          title: 'Error',
+          description: `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          type: 'error'
+        });
       } finally {
         setIsLoading(false);
       }
@@ -317,7 +331,11 @@ const AddTask: React.FC<AddTaskScreenProps> = ({ navigation, route }) => {
         console.error('Error details:', JSON.stringify(error, null, 2));
       }
       // Handle error (show alert, etc.)
-      Alert.alert('Error', `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast({
+        title: 'Error',
+        description: `Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'error'
+      });
     }
   };
 

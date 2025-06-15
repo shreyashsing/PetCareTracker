@@ -395,6 +395,14 @@ const ChatAssistant = () => {
     placeholderText: theme.colors.text + '80',
   }), [theme.colors, isDark]);
   
+  // Ensure we have valid insets even if SafeAreaContext fails
+  const safeInsets = useMemo(() => ({
+    top: insets?.top || 30, // Default to reasonable status bar height if insets not available
+    bottom: insets?.bottom || 0,
+    left: insets?.left || 0,
+    right: insets?.right || 0,
+  }), [insets]);
+  
   // Add function to check API health - moved to top
   const checkApiHealth = useCallback(async () => {
     try {
@@ -1409,13 +1417,14 @@ const ChatAssistant = () => {
         inverted={false}
       />
     );
-  }, [messages, isLoading, error, initializing, themeColors, insets.bottom, user, petId, renderMessage]);
+  }, [messages, isLoading, error, initializing, themeColors, safeInsets.bottom, user, petId, renderMessage]);
 
   return (
-    <SafeAreaView style={[styles.container, { paddingBottom: insets.bottom }]}>
+    <SafeAreaView style={[styles.container, { paddingBottom: safeInsets.bottom }]}>
       <View style={{ flex: 1, backgroundColor: themeColors.background }}>
         <View style={{ 
           padding: 16, 
+          paddingTop: 16 + safeInsets.top, // Add top inset to prevent overlap with status bar
           backgroundColor: themeColors.primary, 
           flexDirection: 'row',
           alignItems: 'center',
@@ -1442,7 +1451,7 @@ const ChatAssistant = () => {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={[styles.inputContainer, { 
-            paddingBottom: Math.max(insets.bottom, 10),
+            paddingBottom: Math.max(safeInsets.bottom, 10),
             borderTopWidth: 1,
             borderTopColor: themeColors.border || '#e0e0e0'
           }]}>

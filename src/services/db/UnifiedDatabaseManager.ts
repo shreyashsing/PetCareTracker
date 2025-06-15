@@ -381,7 +381,7 @@ class MedicationDataManager extends DataManager<Medication> {
       const updateData: Partial<Medication> = { status };
       
       // Automatically disable reminders for non-active medications
-      if (status === 'completed' || status === 'discontinued') {
+      if (status === 'completed') {
         updateData.reminderSettings = {
           ...medication.reminderSettings,
           enabled: false
@@ -457,19 +457,19 @@ class MedicationDataManager extends DataManager<Medication> {
   }
 
   /**
-   * Clean up medications that have been completed or discontinued for 2 days
+   * Clean up medications that have been completed for 2 days
    * @returns Number of deleted medications
    */
   async cleanupOldCompletedMedications(): Promise<number> {
     try {
-      console.log('Starting cleanup of old completed/discontinued medications');
+      console.log('Starting cleanup of old completed medications');
       
-      // Get all completed or discontinued medications
+      // Get all completed medications
       const nonActiveMedications = await this.find(medication => 
-        medication.status === 'completed' || medication.status === 'discontinued'
+        medication.status === 'completed'
       );
       
-      console.log(`Found ${nonActiveMedications.length} completed/discontinued medications`);
+      console.log(`Found ${nonActiveMedications.length} completed medications`);
       
       if (nonActiveMedications.length === 0) {
         return 0;
@@ -480,7 +480,7 @@ class MedicationDataManager extends DataManager<Medication> {
       const twoDaysAgo = new Date(now);
       twoDaysAgo.setDate(now.getDate() - 2);
       
-      // To determine when a medication was marked as completed/discontinued,
+      // To determine when a medication was marked as completed,
       // we need to check its last update time or look at history entries
       
       // Track medications to delete

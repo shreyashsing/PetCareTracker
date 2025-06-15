@@ -7,8 +7,26 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CommonActions } from '@react-navigation/native';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
-import { fcmService } from './fcm';
-import { firebaseCloudFunctionsService } from './firebaseCloudFunctions';
+
+/**
+ * Mock implementation of Firebase Cloud Functions service
+ * Used as a replacement after removing Firebase dependencies
+ */
+const firebaseCloudFunctionsService = {
+  initialize: async () => {},
+  scheduleNotification: async () => ({ success: false, error: 'Firebase has been removed' }),
+  scheduleMedicationReminder: async () => ({ success: false, error: 'Firebase has been removed' }),
+  scheduleTaskReminder: async () => ({ success: false, error: 'Firebase has been removed' }),
+  scheduleMealReminder: async () => ({ success: false, error: 'Firebase has been removed' }),
+  scheduleInventoryAlert: async () => ({ success: false, error: 'Firebase has been removed' }),
+  sendImmediateNotification: async () => ({ success: false, error: 'Firebase has been removed' }),
+  cancelNotification: async () => ({ success: false, error: 'Firebase has been removed' }),
+  getNotificationStats: async () => ({ success: false, error: 'Firebase has been removed' }),
+  testConnection: async () => ({ success: false, message: 'Firebase has been removed' }),
+  getEndpoints: () => ({}),
+  getCachedNotifications: async () => [],
+  clearCache: async () => {},
+};
 
 /**
  * Pet Care Tracker Notification Service
@@ -327,9 +345,6 @@ class NotificationService {
         // Set up push notification token
         await this.setupPushToken();
         
-        // Initialize Firebase Cloud Functions service (for future use)
-        await firebaseCloudFunctionsService.initialize();
-        
         // Set up notification listeners
         this.setupNotificationListeners();
         
@@ -632,61 +647,10 @@ class NotificationService {
    */
   private async setupPushToken(): Promise<void> {
     try {
-      // Initialize FCM service
-      const fcmInitialized = await fcmService.initialize();
-      
-      if (fcmInitialized) {
-        // Get real FCM token
-        this.pushToken = await fcmService.getFCMToken();
-        
-        if (this.pushToken) {
-          // Store token with metadata
-          const pushTokenInfo: PushToken = {
-            token: this.pushToken,
-            platform: Platform.OS as 'ios' | 'android',
-            created: Date.now(),
-            lastUpdated: Date.now()
-          };
-          
-          await AsyncStorage.setItem(PUSH_TOKEN_KEY, JSON.stringify(pushTokenInfo));
-          console.log('FCM Push notification token set up:', this.pushToken);
-        } else {
-          console.warn('Failed to get FCM token');
-        }
-      } else {
-        console.warn('FCM initialization failed, falling back to placeholder token');
-        
-        // Fallback to placeholder approach for development
-        const deviceId = await AsyncStorage.getItem('deviceId') || 'unknown-device';
-        this.pushToken = `expo-token-${deviceId}-${Date.now()}`;
-        
-        const pushTokenInfo: PushToken = {
-          token: this.pushToken,
-          platform: Platform.OS as 'ios' | 'android',
-          created: Date.now(),
-          lastUpdated: Date.now()
-        };
-        
-        await AsyncStorage.setItem(PUSH_TOKEN_KEY, JSON.stringify(pushTokenInfo));
-        console.log('Fallback push notification token set up:', this.pushToken);
-      }
-      
+      this.pushToken = `local_${Platform.OS}_${Math.random().toString(36).substring(2, 15)}`;
+      console.log('Using local push token:', this.pushToken);
     } catch (error) {
-      console.error('Error setting up push token:', error);
-      
-      // Fallback to placeholder approach
-      const deviceId = await AsyncStorage.getItem('deviceId') || 'unknown-device';
-      this.pushToken = `expo-token-${deviceId}-${Date.now()}`;
-      
-      const pushTokenInfo: PushToken = {
-        token: this.pushToken,
-        platform: Platform.OS as 'ios' | 'android',
-        created: Date.now(),
-        lastUpdated: Date.now()
-      };
-      
-      await AsyncStorage.setItem(PUSH_TOKEN_KEY, JSON.stringify(pushTokenInfo));
-      console.log('Error fallback push notification token set up:', this.pushToken);
+      console.error('Failed to set up push token:', error);
     }
   }
 
@@ -999,45 +963,8 @@ class NotificationService {
    * TODO: Implement server-side notification endpoint
    */
   private async sendCriticalRemindersToServer(reminders: CriticalReminder[]): Promise<void> {
-    try {
-      const token = await this.getPushToken();
-      if (!token) {
-        console.warn('No push token available for server-side notifications');
-        return;
-      }
-      
-      // TODO: Replace with your actual server endpoint
-      const serverEndpoint = 'https://your-server.com/api/schedule-notifications';
-      
-      const payload = {
-        pushToken: token,
-        reminders: reminders,
-        platform: Platform.OS,
-        timestamp: Date.now()
-      };
-      
-      // Uncomment when server endpoint is ready
-      /*
-      const response = await fetch(serverEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (response.ok) {
-        console.log('Critical reminders sent to server successfully');
-      } else {
-        console.error('Failed to send critical reminders to server:', response.status);
-      }
-      */
-      
-      console.log('Server-side notifications would be sent:', payload);
-      
-    } catch (error) {
-      console.error('Error sending critical reminders to server:', error);
-    }
+    // Local fallback implementation - just log that we would send reminders
+    console.log(`Would send ${reminders.length} critical reminders to server if FCM was implemented`);
   }
 
   /**
@@ -1145,40 +1072,8 @@ class NotificationService {
    * Send backup notifications to server for delivery when app is closed
    */
   private async sendToServerBackup(backupNotifications: BackupNotification[]): Promise<void> {
-    try {
-      if (!this.pushToken) {
-        console.warn('No push token available for server backup');
-        return;
-      }
-
-      // Convert backup notifications to FCM format
-      const fcmReminders = backupNotifications.map(backup => ({
-        id: backup.id,
-        type: backup.type as 'medication' | 'task' | 'meal',
-        entityId: backup.serverPayload.notification.data.entityId || backup.serverPayload.notification.data.taskId || backup.serverPayload.notification.data.medicationId || backup.serverPayload.notification.data.mealId,
-        petId: backup.serverPayload.notification.data.petId,
-        title: backup.serverPayload.notification.title,
-        body: backup.serverPayload.notification.body,
-        scheduledTime: backup.scheduledTime,
-        priority: backup.isCritical ? 'critical' : 'high' as 'high' | 'critical'
-      }));
-
-      // Send to Firebase via FCM service
-      await fcmService.sendCriticalRemindersToFirebase(fcmReminders);
-
-      // Mark notifications as sent to server
-      for (const notification of backupNotifications) {
-        await this.confirmNotificationDelivery(notification.id, 'sent_to_server');
-      }
-
-    } catch (error) {
-      console.error('Error sending backup notifications to server:', error);
-      
-      // Add failed notifications to retry queue
-      for (const notification of backupNotifications) {
-        await this.handleFailedDelivery(notification.id, (error as Error).message || 'Unknown error');
-      }
-    }
+    // Local fallback implementation
+    console.log(`Would send ${backupNotifications.length} backup notifications to server if Firebase was implemented`);
   }
 
   /**
@@ -3033,11 +2928,11 @@ class NotificationService {
     }
   }
 
-  // ===== FIREBASE CLOUD FUNCTIONS PRODUCTION METHODS =====
+  // ===== LOCAL PRODUCTION NOTIFICATION METHODS =====
 
   /**
-   * Schedule production push notification via Firebase Cloud Functions
-   * This method uses server-side scheduling for reliable delivery
+   * Schedule local push notification (replaces Firebase implementation)
+   * This method uses local device scheduling
    */
   async scheduleProductionNotification(
     title: string,
@@ -3047,38 +2942,27 @@ class NotificationService {
     priority: 'normal' | 'high' | 'critical' = 'normal'
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
-      }
-
-      const result = await firebaseCloudFunctionsService.scheduleNotification({
-        pushToken: this.pushToken,
-        title,
-        body,
-        data: {
-          ...data,
-          priority
-        },
-        scheduledTime
-      });
-
-      if (result.success) {
-        console.log('Production notification scheduled:', result.notificationId);
-        
-        // Track locally for statistics
-        await this.trackNotificationScheduled(result.notificationId!, 'production_notification', data);
-      }
-
-      return result;
+      // Use local notification scheduling instead of Firebase
+      const notificationId = await this.scheduleNotification(
+        { title, body, data: { ...data, priority } },
+        new Date(scheduledTime)
+      );
+      
+      console.log('Local notification scheduled:', notificationId);
+      
+      // Track locally for statistics
+      await this.trackNotificationScheduled(notificationId, 'local_notification', data);
+      
+      return { success: true, notificationId };
 
     } catch (error: any) {
-      console.error('Error scheduling production notification:', error);
+      console.error('Error scheduling local notification:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Schedule production medication reminder via Firebase Cloud Functions
+   * Schedule local medication reminder (replaces Firebase implementation)
    */
   async scheduleProductionMedicationReminder(
     medicationId: string,
@@ -3088,40 +2972,41 @@ class NotificationService {
     priority: 'normal' | 'high' | 'critical' = 'high'
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
-      }
-
-      const result = await firebaseCloudFunctionsService.scheduleMedicationReminder(
-        this.pushToken,
+      // Create notification content
+      const title = '💊 Medication Reminder';
+      const body = `Time to give ${medicationName} to your pet`;
+      const data = {
+        type: 'medication_reminder',
         medicationId,
         petId,
-        medicationName,
-        scheduledTime,
         priority
+      };
+      
+      // Use local notification scheduling
+      const notificationId = await this.scheduleNotification(
+        { title, body, data },
+        new Date(scheduledTime)
       );
-
-      if (result.success) {
-        console.log('Production medication reminder scheduled:', result.notificationId);
-        
-        // Track locally for statistics
-        await this.trackNotificationScheduled(result.notificationId!, 'medication_reminder', {
-          medicationId,
-          petId,
-          medicationName
-        });
-      }
-
-      return result;
+      
+      console.log('Local medication reminder scheduled:', notificationId);
+      
+      // Track locally for statistics
+      await this.trackNotificationScheduled(notificationId, 'medication_reminder', {
+        medicationId,
+        petId,
+        medicationName
+      });
+      
+      return { success: true, notificationId };
 
     } catch (error: any) {
-      console.error('Error scheduling production medication reminder:', error);
+      console.error('Error scheduling local medication reminder:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Schedule production task reminder via Firebase Cloud Functions
+   * Schedule local task reminder (replaces Firebase implementation)
    */
   async scheduleProductionTaskReminder(
     taskId: string,
@@ -3131,40 +3016,41 @@ class NotificationService {
     priority: 'normal' | 'high' | 'critical' = 'normal'
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
-      }
-
-      const result = await firebaseCloudFunctionsService.scheduleTaskReminder(
-        this.pushToken,
+      // Create notification content
+      const title = '✓ Task Reminder';
+      const body = `Time for task: ${taskTitle}`;
+      const data = {
+        type: 'task_reminder',
         taskId,
         petId,
-        taskTitle,
-        scheduledTime,
         priority
+      };
+      
+      // Use local notification scheduling
+      const notificationId = await this.scheduleNotification(
+        { title, body, data },
+        new Date(scheduledTime)
       );
-
-      if (result.success) {
-        console.log('Production task reminder scheduled:', result.notificationId);
-        
-        // Track locally for statistics
-        await this.trackNotificationScheduled(result.notificationId!, 'task_reminder', {
-          taskId,
-          petId,
-          taskTitle
-        });
-      }
-
-      return result;
+      
+      console.log('Local task reminder scheduled:', notificationId);
+      
+      // Track locally for statistics
+      await this.trackNotificationScheduled(notificationId, 'task_reminder', {
+        taskId,
+        petId,
+        taskTitle
+      });
+      
+      return { success: true, notificationId };
 
     } catch (error: any) {
-      console.error('Error scheduling production task reminder:', error);
+      console.error('Error scheduling local task reminder:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Schedule production meal reminder via Firebase Cloud Functions
+   * Schedule local meal reminder (replaces Firebase implementation)
    */
   async scheduleProductionMealReminder(
     mealId: string,
@@ -3174,40 +3060,41 @@ class NotificationService {
     priority: 'normal' | 'high' | 'critical' = 'normal'
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
-      }
-
-      const result = await firebaseCloudFunctionsService.scheduleMealReminder(
-        this.pushToken,
+      // Create notification content
+      const title = '🍲 Meal Reminder';
+      const body = `Time for ${mealType} meal`;
+      const data = {
+        type: 'meal_reminder',
         mealId,
         petId,
-        mealType,
-        scheduledTime,
         priority
+      };
+      
+      // Use local notification scheduling
+      const notificationId = await this.scheduleNotification(
+        { title, body, data },
+        new Date(scheduledTime)
       );
-
-      if (result.success) {
-        console.log('Production meal reminder scheduled:', result.notificationId);
-        
-        // Track locally for statistics
-        await this.trackNotificationScheduled(result.notificationId!, 'meal_reminder', {
-          mealId,
-          petId,
-          mealType
-        });
-      }
-
-      return result;
+      
+      console.log('Local meal reminder scheduled:', notificationId);
+      
+      // Track locally for statistics
+      await this.trackNotificationScheduled(notificationId, 'meal_reminder', {
+        mealId,
+        petId,
+        mealType
+      });
+      
+      return { success: true, notificationId };
 
     } catch (error: any) {
-      console.error('Error scheduling production meal reminder:', error);
+      console.error('Error scheduling local meal reminder:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Schedule production inventory alert via Firebase Cloud Functions
+   * Schedule local inventory alert (replaces Firebase implementation)
    */
   async scheduleProductionInventoryAlert(
     itemId: string,
@@ -3217,40 +3104,41 @@ class NotificationService {
     priority: 'normal' | 'high' | 'critical' = 'high'
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
-      }
-
-      const result = await firebaseCloudFunctionsService.scheduleInventoryAlert(
-        this.pushToken,
+      // Create notification content
+      const title = '⚠️ Inventory Alert';
+      const body = `Running low on ${itemName}`;
+      const data = {
+        type: 'inventory_alert',
+        foodItemId: itemId,
+        petId,
+        priority
+      };
+      
+      // Use local notification scheduling
+      const notificationId = await this.scheduleNotification(
+        { title, body, data },
+        new Date(scheduledTime)
+      );
+      
+      console.log('Local inventory alert scheduled:', notificationId);
+      
+      // Track locally for statistics
+      await this.trackNotificationScheduled(notificationId, 'inventory_alert', {
         itemId,
         petId,
-        itemName,
-        scheduledTime,
-        priority
-      );
-
-      if (result.success) {
-        console.log('Production inventory alert scheduled:', result.notificationId);
-        
-        // Track locally for statistics
-        await this.trackNotificationScheduled(result.notificationId!, 'inventory_alert', {
-          itemId,
-          petId,
-          itemName
-        });
-      }
-
-      return result;
+        itemName
+      });
+      
+      return { success: true, notificationId };
 
     } catch (error: any) {
-      console.error('Error scheduling production inventory alert:', error);
+      console.error('Error scheduling local inventory alert:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Send immediate production push notification via Firebase Cloud Functions
+   * Send immediate local notification (replaces Firebase implementation)
    */
   async sendImmediateProductionNotification(
     title: string,
@@ -3258,53 +3146,44 @@ class NotificationService {
     data: any = {}
   ): Promise<{ success: boolean; ticketId?: string; error?: string }> {
     try {
-      if (!this.pushToken) {
-        return { success: false, error: 'Push token not available' };
+      // Use local notification instead of Firebase
+      const notificationId = await this.sendImmediateNotification(title, body, data);
+      
+      if (notificationId) {
+        console.log('Local immediate notification sent:', notificationId);
+        return { success: true, ticketId: notificationId };
+      } else {
+        return { success: false, error: 'Failed to send notification' };
       }
-
-      const result = await firebaseCloudFunctionsService.sendImmediateNotification(
-        this.pushToken,
-        title,
-        body,
-        data
-      );
-
-      if (result.success) {
-        console.log('Immediate production notification sent:', result.ticketId);
-      }
-
-      return result;
 
     } catch (error: any) {
-      console.error('Error sending immediate production notification:', error);
+      console.error('Error sending local immediate notification:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Cancel production notification via Firebase Cloud Functions
+   * Cancel local notification (replaces Firebase implementation)
    */
   async cancelProductionNotification(notificationId: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const result = await firebaseCloudFunctionsService.cancelNotification(notificationId);
-
-      if (result.success) {
-        console.log('Production notification cancelled:', notificationId);
+      // Cancel notification locally
+      await Notifications.cancelScheduledNotificationAsync(notificationId);
+      console.log('Local notification cancelled:', notificationId);
         
-        // Track cancellation locally
-        await this.trackNotificationDelivery(notificationId, 'cancelled', {});
-      }
-
-      return result;
+      // Track cancellation locally
+      await this.trackNotificationDelivery(notificationId, 'cancelled', {});
+      
+      return { success: true };
 
     } catch (error: any) {
-      console.error('Error cancelling production notification:', error);
+      console.error('Error cancelling local notification:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Get production notification statistics from Firebase Cloud Functions
+   * Get local notification statistics (replaces Firebase implementation)
    */
   async getProductionNotificationStats(): Promise<{ 
     success: boolean; 
@@ -3312,22 +3191,31 @@ class NotificationService {
     error?: string 
   }> {
     try {
-      const result = await firebaseCloudFunctionsService.getNotificationStats();
+      // Use local notification stats
+      const stats = await this.getDeliveryStats();
       
-      if (result.success) {
-        console.log('Production notification stats retrieved:', result.stats);
+      if (stats) {
+        return {
+          success: true,
+          stats: {
+            pending: 0, // No pending notifications in local implementation
+            sent: stats.totalDelivered,
+            failed: stats.totalFailed,
+            total: stats.totalScheduled
+          }
+        };
+      } else {
+        return { success: false, error: 'Failed to get notification stats' };
       }
 
-      return result;
-
     } catch (error: any) {
-      console.error('Error getting production notification stats:', error);
+      console.error('Error getting local notification stats:', error);
       return { success: false, error: error.message };
     }
   }
 
   /**
-   * Test Firebase Cloud Functions connection
+   * Test local notification system (replaces Firebase implementation)
    */
   async testProductionNotificationConnection(): Promise<{ 
     success: boolean; 
@@ -3335,53 +3223,89 @@ class NotificationService {
     stats?: { pending: number; sent: number; failed: number; total: number } 
   }> {
     try {
-      const result = await firebaseCloudFunctionsService.testConnection();
+      // Check if notification permissions are granted
+      const permissionStatus = await this.hasPermission();
       
-      if (result.success) {
-        console.log('Firebase Cloud Functions connection test successful');
+      if (permissionStatus) {
+        // Get local notification stats
+        const stats = await this.getDeliveryStats() || {
+          totalScheduled: 0,
+          totalDelivered: 0,
+          totalFailed: 0,
+          totalCancelled: 0,
+          totalInteracted: 0,
+          deliveryRate: 0,
+          interactionRate: 0,
+          lastUpdated: Date.now()
+        };
+        
+        console.log('Local notification system is available');
+        
+        return { 
+          success: true, 
+          message: 'Local notification system is available',
+          stats: {
+            pending: 0,
+            sent: stats.totalDelivered,
+            failed: stats.totalFailed,
+            total: stats.totalScheduled
+          }
+        };
       } else {
-        console.error('Firebase Cloud Functions connection test failed:', result.message);
+        console.error('Notification permission not granted');
+        return { 
+          success: false, 
+          message: 'Notification permission not granted' 
+        };
       }
 
-      return result;
-
     } catch (error: any) {
-      console.error('Error testing Firebase Cloud Functions connection:', error);
+      console.error('Error testing local notification system:', error);
       return { 
         success: false, 
-        message: `Connection test failed: ${error.message}` 
+        message: `Test failed: ${error.message}` 
       };
     }
   }
 
   /**
-   * Get Firebase Cloud Functions service endpoints for debugging
+   * Get local notification endpoints for debugging (replaces Firebase implementation)
    */
   getProductionNotificationEndpoints(): { [key: string]: string } {
-    return firebaseCloudFunctionsService.getEndpoints();
+    return { localNotifications: 'enabled' };
   }
 
   /**
-   * Get cached production notifications
+   * Get scheduled local notifications (replaces Firebase implementation)
    */
   async getCachedProductionNotifications(): Promise<any[]> {
     try {
-      return await firebaseCloudFunctionsService.getCachedNotifications();
+      // Use getScheduledNotificationCount as a workaround since we can't directly get all notifications
+      const count = await this.getScheduledNotificationCount();
+      
+      // Return a simplified mock version
+      return Array(count).fill(0).map((_, index) => ({
+        id: `local_notification_${index}`,
+        title: 'Local Notification',
+        body: 'Notification content not directly accessible',
+        data: {},
+        triggerTime: Date.now() + 3600000 // Approximate 1 hour in the future
+      }));
     } catch (error: any) {
-      console.error('Error getting cached production notifications:', error);
+      console.error('Error getting scheduled local notifications:', error);
       return [];
     }
   }
 
   /**
-   * Clear production notification cache
+   * Clear all scheduled local notifications (replaces Firebase implementation)
    */
   async clearProductionNotificationCache(): Promise<void> {
     try {
-      await firebaseCloudFunctionsService.clearCache();
-      console.log('Production notification cache cleared');
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      console.log('All scheduled local notifications cleared');
     } catch (error: any) {
-      console.error('Error clearing production notification cache:', error);
+      console.error('Error clearing scheduled local notifications:', error);
     }
   }
 

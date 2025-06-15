@@ -24,6 +24,7 @@ import { generateUUID } from '../utils/helpers';
 import { unifiedDatabaseManager } from '../services/db';
 import { useFormStatePersistence } from '../hooks/useFormStatePersistence';
 import { FormStateNotification } from '../components/FormStateNotification';
+import { useToast } from '../hooks/use-toast';
 
 type AddActivityScreenProps = NativeStackScreenProps<MainStackParamList, 'AddActivity'>;
 
@@ -38,6 +39,7 @@ interface FormState {
 const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) => {
   const { colors } = useAppColors();
   const { activePetId } = useActivePet();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [activityId, setActivityId] = useState<string | undefined>(undefined);
@@ -123,7 +125,11 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) =>
           }
         } catch (error) {
           console.error('Error loading activity for editing:', error);
-          Alert.alert('Error', 'Failed to load activity data. Please try again.');
+          toast({
+            title: 'Error',
+            description: 'Failed to load activity data. Please try again.',
+            type: 'error'
+          });
         } finally {
           setIsLoading(false);
         }
@@ -131,21 +137,33 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) =>
     };
     
     loadActivity();
-  }, [route.params?.activityId]);
+  }, [route.params?.activityId, toast]);
   
   const handleSave = async () => {
     if (!activePetId) {
-      Alert.alert('Error', 'No active pet selected');
+      toast({
+        title: 'Error',
+        description: 'No active pet selected',
+        type: 'error'
+      });
       return;
     }
     
     if (!formState.activityType) {
-      Alert.alert('Error', 'Please select an activity type');
+      toast({
+        title: 'Error',
+        description: 'Please select an activity type',
+        type: 'error'
+      });
       return;
     }
     
     if (!formState.duration || isNaN(Number(formState.duration))) {
-      Alert.alert('Error', 'Please enter a valid duration in minutes');
+      toast({
+        title: 'Error',
+        description: 'Please enter a valid duration in minutes',
+        type: 'error'
+      });
       return;
     }
     
@@ -176,19 +194,13 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) =>
         // Update existing activity
         await unifiedDatabaseManager.activitySessions.update(activityId, activitySession);
         
-        Alert.alert(
-          'Success',
-          'Activity updated successfully!',
-          [
-            { 
-              text: 'OK', 
-              onPress: () => {
-                clearSavedState(); // Clear saved state on successful update
-                navigation.goBack();
-              }
-            }
-          ]
-        );
+        clearSavedState(); // Clear saved state on successful update
+        toast({
+          title: 'Success',
+          description: 'Activity updated successfully!',
+          type: 'success'
+        });
+        navigation.goBack();
       } else {
         // Create new activity
         const newActivitySession = {
@@ -196,25 +208,23 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) =>
           ...activitySession
         };
         
-      await unifiedDatabaseManager.activitySessions.create(newActivitySession);
-      
-      Alert.alert(
-        'Success',
-        'Activity saved successfully!',
-        [
-          { 
-            text: 'OK', 
-              onPress: () => {
-                clearSavedState(); // Clear saved state on successful save
-                navigation.goBack();
-              }
-          }
-        ]
-      );
+        await unifiedDatabaseManager.activitySessions.create(newActivitySession);
+        
+        clearSavedState(); // Clear saved state on successful save
+        toast({
+          title: 'Success',
+          description: 'Activity saved successfully!',
+          type: 'success'
+        });
+        navigation.goBack();
       }
     } catch (error) {
       console.error('Error saving activity:', error);
-      Alert.alert('Error', 'Failed to save activity. Please try again.');
+      toast({
+        title: 'Error',
+        description: 'Failed to save activity. Please try again.',
+        type: 'error'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -223,42 +233,27 @@ const AddActivity: React.FC<AddActivityScreenProps> = ({ navigation, route }) =>
   const handleDelete = async () => {
     if (!isEditMode || !activityId) return;
     
-    Alert.alert(
-      'Delete Activity',
-      'Are you sure you want to delete this activity? This cannot be undone.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setIsLoading(true);
-            try {
-              await unifiedDatabaseManager.activitySessions.delete(activityId);
-              clearSavedState(); // Clear saved state on successful delete
-              Alert.alert(
-                'Success',
-                'Activity deleted successfully',
-                [
-                  {
-                    text: 'OK',
-                    onPress: () => navigation.goBack()
-                  }
-                ]
-              );
-            } catch (error) {
-              console.error('Error deleting activity:', error);
-              Alert.alert('Error', 'Failed to delete activity. Please try again.');
-            } finally {
-              setIsLoading(false);
-            }
-          }
-        }
-      ]
-    );
+    setIsLoading(true);
+    try {
+      await unifiedDatabaseManager.activitySessions.delete(activityId);
+      clearSavedState(); // Clear saved state on successful delete
+      
+      toast({
+        title: 'Success',
+        description: 'Activity deleted successfully',
+        type: 'success'
+      });
+      navigation.goBack();
+    } catch (error) {
+      console.error('Error deleting activity:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete activity. Please try again.',
+        type: 'error'
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   // Force save state when app goes to background

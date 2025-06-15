@@ -17,12 +17,14 @@ import { useAppColors } from '../hooks/useAppColors';
 import { useActivePet } from '../hooks/useActivePet';
 import { unifiedDatabaseManager } from "../services/db";
 import { ActivitySession } from '../types/components';
+import { useToast } from '../hooks/use-toast';
 
 type ExerciseScreenProps = NativeStackScreenProps<MainStackParamList, 'Exercise'>;
 
 const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
   const { colors } = useAppColors();
   const { activePetId } = useActivePet();
+  const { toast } = useToast();
   const [activities, setActivities] = useState<ActivitySession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -74,23 +76,9 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
     }
   };
 
-  // Manual cleanup function with user confirmation
+  // Manual cleanup function
   const handleManualCleanup = () => {
-    Alert.alert(
-      'Delete Old Activities',
-      'This will delete all activity records older than 6 days. This action cannot be undone. Are you sure?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: performManualCleanup
-        }
-      ]
-    );
+    performManualCleanup();
   };
 
   const performManualCleanup = async () => {
@@ -102,27 +90,27 @@ const Exercise: React.FC<ExerciseScreenProps> = ({ navigation }) => {
       const deleteCount = await unifiedDatabaseManager.activitySessions.deleteOlderThan(sixDaysAgo);
       
       if (deleteCount > 0) {
-        Alert.alert(
-          'Cleanup Complete',
-          `Successfully deleted ${deleteCount} old activity record${deleteCount === 1 ? '' : 's'}.`,
-          [{ text: 'OK' }]
-        );
+        toast({
+          title: 'Cleanup Complete',
+          description: `Successfully deleted ${deleteCount} old activity record${deleteCount === 1 ? '' : 's'}.`,
+          type: 'success'
+        });
         // Reload the data to reflect changes
         await loadData();
       } else {
-        Alert.alert(
-          'No Old Records',
-          'No activity records older than 6 days were found.',
-          [{ text: 'OK' }]
-        );
+        toast({
+          title: 'No Old Records',
+          description: 'No activity records older than 6 days were found.',
+          type: 'info'
+        });
       }
     } catch (error) {
       console.error('Error during manual cleanup:', error);
-      Alert.alert(
-        'Error',
-        'Failed to delete old records. Please try again.',
-        [{ text: 'OK' }]
-      );
+      toast({
+        title: 'Error',
+        description: 'Failed to delete old records. Please try again.',
+        type: 'error'
+      });
     } finally {
       setIsDeleting(false);
     }

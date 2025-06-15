@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useAppColors } from '../../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { sendConfirmationEmail } from '../../utils/emailConfirmation';
+import NetInfo from '@react-native-community/netinfo';
 
 type LoginScreenProps = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
@@ -28,9 +29,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [loginInProgress, setLoginInProgress] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   
   // Combined loading state from both local and auth context
   const isLoading = loginInProgress || authLoading;
+  
+  // Check network status on mount and when it changes
+  useEffect(() => {
+    // Check initial connection status
+    const checkConnection = async () => {
+      const netInfo = await NetInfo.fetch();
+      setIsOffline(!(netInfo.isConnected && netInfo.isInternetReachable));
+    };
+    
+    checkConnection();
+    
+    // Subscribe to connection changes
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected && state.isInternetReachable));
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
   
   const validateForm = (): boolean => {
     const newErrors: { email?: string; password?: string } = {};
@@ -60,11 +82,45 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     if (validateForm()) {
       try {
         setLoginInProgress(true);
-        const success = await login(email, password);
+        const { error } = await login(email, password);
         setLoginInProgress(false);
         
-        if (!success) {
-          Alert.alert('Login Failed', 'Invalid email or password.');
+        if (error) {
+          console.log('Login error:', error);
+          if (isOffline) {
+            if (error.message === 'Cannot verify credentials while offline') {
+              Alert.alert(
+                'Offline Login Failed',
+                'The email you entered doesn\'t match your previous login. When offline, you can only sign in with the same email as your last successful login.'
+              );
+            } else if (error.message === 'No stored credentials found') {
+              Alert.alert(
+                'Offline Login Failed',
+                'No previous login found. You need to sign in at least once online before using offline mode.'
+              );
+            } else if (error.message?.includes('timeout') || error.message?.includes('timed out')) {
+              Alert.alert(
+                'Network Error',
+                'The request timed out. Please check your connection and try again.'
+              );
+            } else {
+              Alert.alert(
+                'Offline Login Failed',
+                'Unable to sign in while offline. Please connect to the internet and try again.'
+              );
+            }
+          } else {
+            if (error.message?.includes('Invalid login credentials')) {
+              Alert.alert('Login Failed', 'Invalid email or password. Please check your credentials and try again.');
+            } else if (error.message?.includes('Email not confirmed')) {
+              Alert.alert(
+                'Email Not Verified',
+                'Your email has not been verified. Please check your email inbox for a verification link.'
+              );
+            } else {
+              Alert.alert('Login Failed', `${error.message || 'An unknown error occurred'}`);
+            }
+          }
         }
       } catch (error: any) {
         setLoginInProgress(false);
@@ -114,6 +170,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           <Ionicons name="paw" size={60} color="#4CAF50" />
           <Text style={styles.title}>Pet Care Tracker</Text>
           <Text style={styles.subtitle}>Log in to your account</Text>
+          {isOffline && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline" size={20} color="#FF9800" />
+              <Text style={styles.offlineText}>
+                You are currently offline. You can sign in with your previous credentials.
+              </Text>
+            </View>
+          )}
         </View>
         
         <View style={styles.form}>
@@ -137,8 +201,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           />
           
           <View style={styles.forgotPassword}>
-            <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
-              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            <TouchableOpacity 
+              onPress={() => navigation.navigate('ForgotPassword')}
+              disabled={isOffline}
+            >
+              <Text style={[
+                styles.forgotPasswordText, 
+                isOffline && styles.disabledText
+              ]}>
+                Forgot Password?
+              </Text>
             </TouchableOpacity>
           </View>
           
@@ -151,9 +223,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           
           <View style={styles.registerContainer}>
             <Text style={styles.registerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-              <Text style={styles.registerLink}>Sign Up</Text>
+            <TouchableOpacity 
+              onPress={() => navigation.navigate('Register')}
+              disabled={isOffline}
+            >
+              <Text style={[
+                styles.registerLink,
+                isOffline && styles.disabledText
+              ]}>
+                Sign Up
+              </Text>
             </TouchableOpacity>
+            {isOffline && (
+              <Text style={styles.disabledInfo}> (requires internet)</Text>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -204,6 +287,7 @@ const styles = StyleSheet.create({
   registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
+    flexWrap: 'wrap',
   },
   registerText: {
     color: '#666',
@@ -213,6 +297,30 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  offlineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    padding: 10,
+    borderRadius: 5,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#FFE0B2',
+  },
+  offlineText: {
+    color: '#F57C00',
+    fontSize: 12,
+    marginLeft: 6,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  disabledText: {
+    color: '#BDBDBD',
+  },
+  disabledInfo: {
+    color: '#BDBDBD',
+    fontSize: 14,
   },
 });
 

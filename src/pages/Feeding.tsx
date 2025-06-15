@@ -16,6 +16,7 @@ import {
   Animated,
   Easing
 } from 'react-native';
+import ConfirmationDialog from '../components/ConfirmationDialog';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import { useActivePet } from '../hooks/useActivePet';
@@ -63,6 +64,11 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
   const [activeTab, setActiveTab] = useState<TabType>('today');
   const [foodInventory, setFoodInventory] = useState<FoodItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Confirmation dialog states
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
+  const [confirmDialogType, setConfirmDialogType] = useState<'meal' | 'food'>('meal');
+  const [itemToDelete, setItemToDelete] = useState<string>('');
   
   // Create animated values for chart bars
   const barAnimations = useMemo(() => {
@@ -378,7 +384,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       toast({
         title: 'Warning',
         description: 'Could not update inventory automatically',
-        variant: 'destructive'
+        type: 'error'
       });
     }
   }, [toast]);
@@ -422,7 +428,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       toast({
         title: isCompleted ? '✅ Meal Completed' : '🔄 Meal Restored',
         description: isCompleted ? 'Meal marked as completed' : 'Meal marked as incomplete',
-        variant: 'default',
+        type: 'success',
       });
       
       // Refresh the data
@@ -438,32 +444,31 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       toast({
         title: '❌ Error',
         description: 'Failed to update meal status',
-        variant: 'destructive',
+        type: 'error',
       });
     }
   }, [loadMeals, deductFromInventory, toast, navigation]);
 
-  // Delete a meal
-  const handleDeleteMeal = useCallback(async (mealId: string) => {
-    try {
+  // Show confirmation dialog for meal deletion
+  const handleDeleteMeal = useCallback((mealId: string) => {
       if (mealId === 'mock-meal') return; // Don't process mock meal
       
-      // Show confirmation dialog
-      Alert.alert(
-        'Delete Meal',
-        'Are you sure you want to delete this meal?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Delete', 
-            style: 'destructive',
-            onPress: async () => {
+    // Set up confirmation dialog
+    setItemToDelete(mealId);
+    setConfirmDialogType('meal');
+    setConfirmDialogVisible(true);
+  }, []);
+  
+  // Actual meal deletion function
+  const confirmDeleteMeal = useCallback(async () => {
               try {
+      if (!itemToDelete) return;
+      
                 // Cancel notifications for this meal first
-                await notificationService.cancelMealNotifications(mealId);
+      await notificationService.cancelMealNotifications(itemToDelete);
                 
                 // Delete the meal from database
-                await unifiedDatabaseManager.meals.delete(mealId);
+      await unifiedDatabaseManager.meals.delete(itemToDelete);
                 
                 // Show success toast
                 toast({
@@ -477,18 +482,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                 console.error('Error deleting meal:', error);
                 toast({
                   title: 'Error',
-                  description: 'Failed to delete the meal',
-                  variant: 'destructive'
-                });
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Error in handleDeleteMeal:', error);
+        description: 'Failed to delete the meal'
+      });
+    } finally {
+      // Reset state
+      setConfirmDialogVisible(false);
+      setItemToDelete('');
     }
-  }, [loadMeals, toast]);
+  }, [itemToDelete, loadMeals, toast]);
 
   // Load inventory data
   const loadInventoryData = useCallback(async () => {
@@ -773,28 +774,30 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       toast({
         title: 'Error checking inventory',
         description: 'Failed to check inventory and schedule alerts',
-        variant: 'destructive'
+        type: 'error'
       });
     }
   }, [activePetId, toast]);
 
-  // Add function to handle food item deletion
-  const handleDeleteFoodItem = useCallback(async (itemId: string) => {
+  // Show confirmation dialog for food item deletion
+  const handleDeleteFoodItem = useCallback((itemId: string) => {
+    // Set up confirmation dialog
+    setItemToDelete(itemId);
+    setConfirmDialogType('food');
+    setConfirmDialogVisible(true);
+  }, []);
+  
+  // Actual food item deletion function
+  const confirmDeleteFoodItem = useCallback(async () => {
     try {
-      // Show confirmation alert
-      Alert.alert(
-        "Delete Food Item",
-        "Are you sure you want to delete this food item? This action cannot be undone.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { 
-            text: "Delete", 
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await unifiedDatabaseManager.foodItems.delete(itemId);
+      if (!itemToDelete) return;
+      
+      // Delete from database
+      await unifiedDatabaseManager.foodItems.delete(itemToDelete);
+      
                 // Refresh the inventory list
                 loadInventoryData();
+      
                 // Show success toast
                 toast({
                   title: "Food item deleted",
@@ -804,18 +807,14 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                 console.error('Error deleting food item:', error);
                 toast({
                   title: "Error",
-                  description: "Failed to delete food item",
-                  variant: "destructive"
-                });
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Error in handleDeleteFoodItem:', error);
+        description: "Failed to delete food item"
+      });
+    } finally {
+      // Reset state
+      setConfirmDialogVisible(false);
+      setItemToDelete('');
     }
-  }, [loadInventoryData, toast]);
+  }, [itemToDelete, loadInventoryData, toast]);
 
   // Return UI
   if (!activePetId) {
@@ -1003,7 +1002,7 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
                         toast({
                           title: 'Debug Error',
                           description: 'Failed to check Supabase data',
-                          variant: 'destructive'
+                          type: 'error'
                         });
                       }
                     }}
@@ -1130,6 +1129,25 @@ const Feeding: React.FC<FeedingScreenProps> = ({ navigation, route }) => {
       
       {/* Add Footer component */}
       <Footer />
+      
+      {/* Custom Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={confirmDialogVisible}
+        title={confirmDialogType === 'meal' ? 'Delete Meal' : 'Delete Food Item'}
+        message={confirmDialogType === 'meal' 
+          ? 'Are you sure you want to delete this meal? This action cannot be undone.'
+          : 'Are you sure you want to delete this food item? This action cannot be undone.'
+        }
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmType="danger"
+        icon={confirmDialogType === 'meal' ? 'restaurant-outline' : 'nutrition-outline'}
+        onConfirm={confirmDialogType === 'meal' ? confirmDeleteMeal : confirmDeleteFoodItem}
+        onCancel={() => {
+          setConfirmDialogVisible(false);
+          setItemToDelete('');
+        }}
+      />
     </View>
   );
 };

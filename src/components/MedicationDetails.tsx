@@ -1,11 +1,13 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppColors } from '../hooks/useAppColors';
+import { useToast } from '../hooks/use-toast';
 import { Medication } from '../types/components';
-import {unifiedDatabaseManager} from "../services/db";
+import { unifiedDatabaseManager } from "../services/db";
 import { formatDate } from '../utils/helpers';
 import { notificationService } from '../services/notifications';
+import ConfirmationDialog from './ConfirmationDialog';
 
 interface MedicationDetailsProps {
   medication: Medication | null;
@@ -25,6 +27,10 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
   onRefresh
 }) => {
   const { colors } = useAppColors();
+  const { toast } = useToast();
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
+  const [markCompletedDialogVisible, setMarkCompletedDialogVisible] = useState(false);
+  const [reactivateDialogVisible, setReactivateDialogVisible] = useState(false);
 
   if (!medication) return null;
   
@@ -33,92 +39,65 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
   };
   
   const handleDelete = () => {
-    Alert.alert(
-      'Delete Medication',
-      'Are you sure you want to delete this medication? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
+    setConfirmDialogVisible(true);
+  };
+  
+  const confirmDelete = async () => {
             try {
               await unifiedDatabaseManager.medications.delete(medication.id);
               // Cancel any scheduled notifications
               await notificationService.cancelMedicationNotifications(medication.id);
               onRefresh();
               onClose();
-              Alert.alert('Success', 'Medication deleted successfully');
+      toast({
+        title: 'Success',
+        description: 'Medication deleted successfully',
+        type: 'success'
+      });
             } catch (error) {
-              Alert.alert('Error', 'Failed to delete medication');
+      toast({
+        title: 'Error',
+        description: 'Failed to delete medication',
+        type: 'error'
+      });
               console.error('Error deleting medication:', error);
-            }
-          }
+    } finally {
+      setConfirmDialogVisible(false);
         }
-      ]
-    );
   };
 
   const handleMarkCompleted = () => {
-    Alert.alert(
-      'Mark as Completed',
-      'Mark this medication as completed? This will stop all future reminders and automatically delete the medication after 2 days.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark Completed',
-          onPress: async () => {
+    setMarkCompletedDialogVisible(true);
+  };
+  
+  const confirmMarkCompleted = async () => {
             try {
               await unifiedDatabaseManager.medications.updateStatus(medication.id, 'completed');
               await notificationService.cancelMedicationNotifications(medication.id);
               onRefresh();
               onClose();
-              Alert.alert('Success', 'Medication marked as completed and will be deleted after 2 days');
+      toast({
+        title: 'Success',
+        description: 'Medication marked as completed and will be deleted after 2 days',
+        type: 'success'
+      });
             } catch (error) {
-              Alert.alert('Error', 'Failed to update medication status');
+      toast({
+        title: 'Error',
+        description: 'Failed to update medication status',
+        type: 'error'
+      });
               console.error('Error updating medication status:', error);
-            }
-          }
+    } finally {
+      setMarkCompletedDialogVisible(false);
         }
-      ]
-    );
-  };
-
-  const handleDiscontinue = () => {
-    Alert.alert(
-      'Discontinue Medication',
-      'Discontinue this medication? This will stop all future reminders, mark it as discontinued, and automatically delete the medication after 2 days.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Discontinue',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await unifiedDatabaseManager.medications.updateStatus(medication.id, 'discontinued');
-              await notificationService.cancelMedicationNotifications(medication.id);
-              onRefresh();
-              onClose();
-              Alert.alert('Success', 'Medication discontinued and will be deleted after 2 days');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to update medication status');
-              console.error('Error updating medication status:', error);
-            }
-          }
-        }
-      ]
-    );
   };
 
   const handleReactivate = () => {
-    Alert.alert(
-      'Reactivate Medication',
-      'Reactivate this medication and resume notifications?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reactivate',
-          onPress: async () => {
+    setReactivateDialogVisible(true);
+  };
+  
+  const confirmReactivate = async () => {
             try {
               await unifiedDatabaseManager.medications.updateStatus(medication.id, 'active');
               // Reschedule notifications if reminders are enabled
@@ -127,15 +106,21 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
               }
               onRefresh();
               onClose();
-              Alert.alert('Success', 'Medication reactivated');
+      toast({
+        title: 'Success',
+        description: 'Medication reactivated',
+        type: 'success'
+      });
             } catch (error) {
-              Alert.alert('Error', 'Failed to reactivate medication');
+      toast({
+        title: 'Error',
+        description: 'Failed to reactivate medication',
+        type: 'error'
+      });
               console.error('Error reactivating medication:', error);
-            }
-          }
+    } finally {
+      setReactivateDialogVisible(false);
         }
-      ]
-    );
   };
   
   // Determine medication status color and text
@@ -153,12 +138,6 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
           text: 'Completed',
           icon: 'checkmark-done-outline' as const
         };
-      case 'discontinued':
-        return { 
-          color: colors.warning || '#FF9800', 
-          text: 'Discontinued',
-          icon: 'stop-circle-outline' as const
-        };
       default:
         return { 
           color: colors.text || '#4F46E5', 
@@ -169,6 +148,14 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
   };
 
   const statusInfo = getStatusInfo();
+  
+  const viewFullHistory = () => {
+    toast({
+      title: 'Full History',
+      description: 'This would show the complete medication history.',
+      type: 'info'
+    });
+  };
   
   return (
     <Modal
@@ -385,10 +372,7 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
                 {medication.history && medication.history.length > 5 && (
                   <TouchableOpacity 
                     style={[styles.viewAllHistoryButton, { borderTopColor: colors.border }]}
-                    onPress={() => {
-                      // In a real app, this would navigate to a full history screen
-                      Alert.alert('Full History', 'This would show the complete medication history.');
-                    }}
+                    onPress={viewFullHistory}
                   >
                     <Text style={[styles.viewAllHistoryText, { color: colors.primary }]}>
                       View all history ({medication.history.length} records)
@@ -412,11 +396,11 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
                 </TouchableOpacity>
                 
                 <TouchableOpacity 
-                  style={[styles.button, styles.discontinueButton, { backgroundColor: colors.warning || '#FF9800' }]}
-                  onPress={handleDiscontinue}
+                  style={[styles.button, styles.deleteButton, { backgroundColor: colors.error || '#F44336' }]}
+                  onPress={handleDelete}
                 >
-                  <Ionicons name="stop-outline" size={16} color="white" />
-                  <Text style={[styles.buttonText, { color: 'white' }]}>Discontinue</Text>
+                  <Ionicons name="trash-outline" size={16} color="white" />
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Delete</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -430,17 +414,56 @@ export const MedicationDetails: React.FC<MedicationDetailsProps> = ({
                 </TouchableOpacity>
                 
                 <TouchableOpacity 
-                  style={[styles.button, styles.editButton, { backgroundColor: colors.text + '20', borderColor: colors.text + '40', borderWidth: 1 }]}
-                  onPress={handleEdit}
+                  style={[styles.button, styles.deleteButton, { backgroundColor: colors.error || '#F44336' }]}
+                  onPress={handleDelete}
                 >
-                  <Ionicons name="pencil-outline" size={16} color={colors.text} />
-                  <Text style={[styles.buttonText, { color: colors.text }]}>Edit</Text>
+                  <Ionicons name="trash-outline" size={16} color="white" />
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Delete</Text>
                 </TouchableOpacity>
               </>
             )}
           </View>
         </View>
       </View>
+      
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={confirmDialogVisible}
+        title="Delete Medication"
+        message="Are you sure you want to delete this medication? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmType="danger"
+        icon="trash-outline"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmDialogVisible(false)}
+      />
+      
+      {/* Mark Completed Dialog */}
+      <ConfirmationDialog
+        visible={markCompletedDialogVisible}
+        title="Mark as Completed"
+        message="Mark this medication as completed? This will stop all future reminders and automatically delete the medication after 2 days."
+        confirmText="Mark Completed"
+        cancelText="Cancel"
+        confirmType="success"
+        icon="checkmark-done-outline"
+        onConfirm={confirmMarkCompleted}
+        onCancel={() => setMarkCompletedDialogVisible(false)}
+      />
+      
+      {/* Reactivate Dialog */}
+      <ConfirmationDialog
+        visible={reactivateDialogVisible}
+        title="Reactivate Medication"
+        message="Reactivate this medication and resume notifications?"
+        confirmText="Reactivate"
+        cancelText="Cancel"
+        confirmType="info"
+        icon="refresh-outline"
+        onConfirm={confirmReactivate}
+        onCancel={() => setReactivateDialogVisible(false)}
+      />
     </Modal>
   );
 };
@@ -588,13 +611,11 @@ const styles = StyleSheet.create({
   completeButton: {
     borderWidth: 1,
   },
-  discontinueButton: {
+  deleteButton: {
     borderWidth: 1,
+    backgroundColor: '#F44336',
   },
   reactivateButton: {
-    backgroundColor: '#4A90E2',
-  },
-  editButton: {
     backgroundColor: '#4A90E2',
   },
   noHistoryContainer: {

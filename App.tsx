@@ -21,6 +21,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
 import { enableScreens } from 'react-native-screens';
+import NetInfo from '@react-native-community/netinfo';
 
 // Import the ErrorBoundary component
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -155,6 +156,26 @@ const AppContent: React.FC = () => {
   const [backgroundInitialized, setBackgroundInitialized] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [initializationStage, setInitializationStage] = useState<string>("Starting up...");
+  const [isOffline, setIsOffline] = useState<boolean>(false);
+
+  // Check network connectivity first before any other initialization
+  useEffect(() => {
+    const checkConnectivity = async () => {
+      try {
+        console.log('App: Checking network connectivity...');
+        const netInfo = await NetInfo.fetch();
+        const offline = !(netInfo.isConnected && netInfo.isInternetReachable);
+        console.log(`App: Network status - ${offline ? 'OFFLINE' : 'ONLINE'}`);
+        setIsOffline(offline);
+      } catch (error) {
+        console.warn('App: Error checking network connectivity:', error);
+        // Assume offline in case of error to be safe
+        setIsOffline(true);
+      }
+    };
+    
+    checkConnectivity();
+  }, []);
 
   // Optimized: Initialize core and background services in parallel
   useEffect(() => {
@@ -165,10 +186,20 @@ const AppContent: React.FC = () => {
         
         // Initialize all core services in parallel (essential for app startup)
         const coreInitPromises = [
-          // Authentication check
+          // Authentication check - modified to be offline-aware
           (async () => {
             try {
-              console.log('App: Checking authentication...');
+              console.log(`App: Checking authentication (${isOffline ? 'OFFLINE' : 'ONLINE'} mode)...`);
+              
+              if (isOffline) {
+                // When offline, bypass Supabase checks and load directly from storage
+                console.log('App: Offline mode - loading auth from local storage only');
+                // The AuthProvider will handle loading from storage
+                // We don't need to set currentUser here as it will be managed by AuthProvider
+                return;
+              }
+              
+              // Online flow - first try to get current user with timeout
               const userResult = await Promise.race([
                 getCurrentUser(),
                 timeout(2000) // Reduced timeout for faster failover
@@ -269,9 +300,11 @@ const AppContent: React.FC = () => {
       }
     };
 
-    // Start core initialization immediately
-    initializeCoreServices();
-  }, []);
+    // Only start initialization once we know connectivity status
+    if (isOffline !== undefined) {
+      initializeCoreServices();
+    }
+  }, [isOffline]);
 
   // Background initialization (non-critical services)
   useEffect(() => {
@@ -347,9 +380,19 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     if (coreInitialized) {
       console.log('App: Core initialization complete, app ready to load');
+      
+      // If we're in offline mode, we can't rely on currentUser that's set via Supabase
+      // Instead, AuthProvider will handle the authentication state directly
+      if (isOffline) {
+        console.log('App: Offline mode - bypassing authentication check in App component');
+        // Don't perform any additional checks here - AuthProvider will manage this
+      } else {
+        console.log('App: Online mode - authentication setup complete');
+      }
+      
       setIsLoading(false);
     }
-  }, [coreInitialized]);
+  }, [coreInitialized, isOffline]);
 
   // Show splash screen during initialization
   if (!coreInitialized) {
@@ -380,7 +423,7 @@ const AppContent: React.FC = () => {
   // Return the app navigator with pet synchronizer if user is authenticated
   return (
     <>
-      {currentUser && currentUser.id && <PetSynchronizer userId={currentUser.id} />}
+      {/* We no longer need to check currentUser here since AuthProvider will handle the authenticated state */}
       <AppNavigator />
     </>
   );

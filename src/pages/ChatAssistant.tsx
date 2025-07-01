@@ -42,6 +42,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { NetworkUtils } from '../config/network';
+import { useActivePet } from '../hooks/useActivePet';
+import { useAuth } from '../contexts/AuthContext';
+import { formatResponseText } from '../utils/textFormatter';
 
 // Define our simple ChatMessage interface
 interface ChatMessage {
@@ -156,6 +159,8 @@ const SimpleChatUI = React.memo(({
   // Memoize the message rendering function to prevent unnecessary re-renders
   const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
     const isUser = item.user._id !== 'assistant';
+    const displayText = isUser ? item.text : formatResponseText(item.text);
+    
     return (
       <View style={[
         uiStyles.messageBubble,
@@ -165,7 +170,7 @@ const SimpleChatUI = React.memo(({
           uiStyles.messageText,
           { color: isUser ? '#fff' : colors.text }
         ]}>
-          {item.text}
+          {displayText}
         </Text>
       </View>
     );
@@ -357,8 +362,17 @@ const ChatAssistant = () => {
     getAuthUser();
   }, []);
   
-  // Get pet ID if provided through route params
-  const petId = route.params?.petId;
+  // Get hooks first
+  const { reportError } = useErrorReporting();
+  const insets = useSafeAreaInsets();
+  const { activePet } = usePetStore();
+  const { activePetId } = useActivePet();
+  
+  // Get pet ID from route params, fallback to active pet ID
+  const routePetId = route.params?.petId;
+  const petId = routePetId || activePetId || undefined; // Convert null to undefined
+  
+  console.log('ChatAssistant: Pet ID resolution - Route:', routePetId, 'Active:', activePetId, 'Final:', petId);
   
   // Component state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -378,10 +392,6 @@ const ChatAssistant = () => {
   
   // State to track online/offline status
   const [isOnline, setIsOnline] = useState<boolean>(true);
-  
-  const { reportError } = useErrorReporting();
-  const insets = useSafeAreaInsets();
-  const { activePet } = usePetStore();
   
   // State to track pet info
   const [petInfo, setPetInfo] = useState<string | null>(null);
@@ -1290,6 +1300,7 @@ const ChatAssistant = () => {
   const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
     const isUser = item.user._id !== 'assistant' && item.user._id !== 'system';
     const isSystem = item.user._id === 'system' || item.system === true;
+    const displayText = isUser ? item.text : formatResponseText(item.text);
     
     return (
       <View style={[
@@ -1307,7 +1318,7 @@ const ChatAssistant = () => {
           { color: isUser ? '#ffffff' : themeColors.text },
           isSystem ? styles.systemText : {}
         ]}>
-          {item.text}
+          {displayText}
         </Text>
       </View>
     );

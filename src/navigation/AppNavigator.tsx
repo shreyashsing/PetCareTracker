@@ -75,10 +75,16 @@ const NavigationContent = () => {
     }
   }, [user]);
   
+  // We need to track if this is the first load to prevent unnecessary re-renders
+  const isFirstLoad = useRef(true);
+  
   // Run the pet check when user changes or refresh key changes
   useEffect(() => {
     if (!isImagePickerActive) {
+      if (isFirstLoad.current || refreshKey > 0) {
     checkUserPets();
+        isFirstLoad.current = false;
+      }
     }
   }, [checkUserPets, refreshKey, isImagePickerActive]);
 
@@ -113,8 +119,15 @@ const NavigationContent = () => {
               console.log('[AppNavigator] Attempting to restore navigation to:', targetRoute, routeParams);
               
               try {
-                if (targetRoute && targetRoute !== 'Home' && navigationRef.current?.isReady()) {
-                  // Navigate directly to the target route
+                if (targetRoute && navigationRef.current?.isReady()) {
+                  // Special handling for FeedbackForm to ensure it's always restored
+                  if (targetRoute === 'FeedbackForm') {
+                    console.log('[AppNavigator] Special handling for FeedbackForm restoration');
+                    navigationRef.current.navigate('FeedbackForm' as never);
+                    console.log('[AppNavigator] FeedbackForm navigation restored successfully');
+                  }
+                  // For other routes, maintain the existing logic
+                  else if (targetRoute !== 'Home') {
                   console.log('[AppNavigator] Restoring directly to target route:', targetRoute);
                   
                   if (routeParams) {
@@ -124,7 +137,10 @@ const NavigationContent = () => {
                   }
                   console.log('[AppNavigator] Navigation restored successfully to:', targetRoute);
                 } else {
-                  console.log('[AppNavigator] Not restoring - target route is Home or invalid:', targetRoute);
+                    console.log('[AppNavigator] Not restoring - target route is Home:', targetRoute);
+                  }
+                } else {
+                  console.log('[AppNavigator] Not restoring - target route is invalid or navigation not ready:', targetRoute);
                 }
               } catch (error) {
                 console.error('[AppNavigator] Error restoring navigation:', error);
@@ -248,13 +264,14 @@ const NavigationContent = () => {
               component={AddFirstPetScreen} 
               listeners={{
                 focus: () => {
-                  // When AddFirstPet screen comes into focus, re-check for pets
-                  // This handles the case where a pet was just added
-                  // But only if image picker isn't active
+                  // Use a ref to track if we already did the initial check
+                  // to prevent continuous re-checking
                   if (!isImagePickerActive) {
-                  console.log('[AppNavigator] AddFirstPet focused, scheduling re-check');
-                  // Add a slight delay to ensure the DB operation has completed
-                  setTimeout(() => setRefreshKey(prev => prev + 1), 1000);
+                    // Only log without scheduling a re-check - the pet check will happen
+                    // naturally when navigation completes
+                    console.log('[AppNavigator] AddFirstPet focused');
+                    // We don't need to trigger a re-check on every focus
+                    // This was causing the infinite render loop
                   } else {
                     console.log('[AppNavigator] Ignoring focus event during image picker');
                   }

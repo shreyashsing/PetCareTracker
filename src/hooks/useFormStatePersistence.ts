@@ -200,7 +200,9 @@ function hasSignificantData<T extends Record<string, any>>(
     // Food item form fields
     'brand', 'quantity', 'dailyFeedingQuantity',
     // Activity form fields
-    'activityType', 'duration', 'distance'
+    'activityType', 'duration', 'distance',
+    // Feedback form fields
+    'feedbackType', 'severity', 'deviceInfo', 'isAnonymous', 'contactEmail'
   ];
 
   return significantFields.some(field => {

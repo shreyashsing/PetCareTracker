@@ -13,6 +13,7 @@ import { setupErrorHandling } from './utils/errorHandler';
 import { unifiedDatabaseManager } from "./services/db";
 import { notificationService } from './services/notifications';
 import { initializeStorage } from './utils/setupStorage';
+import { createAppFeedbackTable } from './services/db';
 import { 
   ProductionLogger, 
   PerformanceMonitor, 
@@ -156,6 +157,24 @@ async function initializeBackgroundTasks(): Promise<void> {
   const backgroundTasks = [];
 
   ProductionLogger.info('Starting background tasks', 'Background');
+
+  // Check and create app feedback table if needed
+  backgroundTasks.push(
+    PerformanceMonitor.measureAsync('AppFeedback_Check', async () => {
+      const feedbackTableExists = await Promise.race([
+        createAppFeedbackTable(),
+        timeout(getProductionTimeout('BACKGROUND_TASK'))
+      ]);
+      
+      if (feedbackTableExists) {
+        ProductionLogger.info('App feedback table exists', 'Background');
+      } else {
+        ProductionLogger.warn('App feedback table needs to be created', 'Background');
+      }
+    }).catch((error: any) => {
+      ProductionLogger.warn(`App feedback table check failed: ${error.message}`, 'Background');
+    })
+  );
 
   // Expired medications check
   backgroundTasks.push(

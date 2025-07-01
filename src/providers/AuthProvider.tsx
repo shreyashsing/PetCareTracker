@@ -714,6 +714,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
         await clearNavigationStateOnLogout();
+        
+        // Show success toast even when offline
+        console.log('Auth: Showing offline logout success toast');
+        toast({
+          title: 'Successfully Logged Out',
+          description: 'You have been securely logged out of your account',
+          type: 'success',
+          duration: 4000
+        });
         return;
       }
       
@@ -746,6 +755,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           title: 'Sign Out Error',
           description: typedResult.error.message,
           type: 'error'
+        });
+      } else {
+        // Show success toast notification
+        console.log('Auth: Showing online logout success toast');
+        toast({
+          title: 'Successfully Logged Out',
+          description: 'You have been securely logged out of your account',
+          type: 'success',
+          duration: 4000
         });
       }
       

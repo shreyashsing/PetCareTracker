@@ -7,12 +7,8 @@ import {
   Switch, 
   ScrollView, 
   StatusBar,
-  Image,
   Alert,
-  Platform,
-  Modal,
-  FlatList,
-  TextInput
+  Platform
 } from 'react-native';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,14 +16,13 @@ import { useAppColors } from '../hooks/useAppColors';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { AppUser } from '../contexts/AuthContext';
-import * as ImagePicker from 'expo-image-picker';
 import Footer from '../components/layout/Footer';
 import {unifiedDatabaseManager, STORAGE_KEYS } from "../services/db";
 import { AsyncStorageService } from '../services/db/asyncStorage';
 import { useActivePet } from '../hooks/useActivePet';
 import { Pet } from '../types/components';
 import { notificationService } from '../services/notifications';
-import { MainStackParamList } from '../types/navigation';
+import { MainStackParamList, AppStackParamList } from '../types/navigation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useToast } from '../hooks/use-toast';
 
@@ -72,7 +67,7 @@ const IconWrapper = ({
 );
 
 const Settings = () => {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<AppStackParamList>>();
   const insets = useSafeAreaInsets();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [reminderTimes, setReminderTimes] = useState<string>('15'); // Default 15 minutes
@@ -80,13 +75,8 @@ const Settings = () => {
   const { colors, isDark } = useAppColors();
   const { user, signOut } = useAuth();
   const appUser = user as AppUser; // Cast to AppUser type for TypeScript
-  const [profileImage, setProfileImage] = useState<string | null>(null);
   const [pets, setPets] = useState<Pet[]>([]);
-  const [showPetModal, setShowPetModal] = useState(false);
-  const { activePetId, setActivePetId } = useActivePet();
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<'profile' | 'apiKey'>('profile');
-  const [apiKey, setApiKey] = useState('');
+  const { activePetId } = useActivePet();
   const { toast } = useToast();
   
   // Check notification permissions using the notification service
@@ -229,82 +219,6 @@ const Settings = () => {
     return 'Guest';
   };
   
-  // Show image selection options
-  const showImageOptions = () => {
-    Alert.alert(
-      'Change Profile Photo',
-      'Choose an option',
-      [
-        {
-          text: 'Take Photo',
-          onPress: takePhoto,
-        },
-        {
-          text: 'Choose from Gallery',
-          onPress: chooseFromGallery,
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ],
-      { cancelable: true }
-    );
-  };
-
-  // Take a photo with the camera
-  const takePhoto = async () => {
-    try {
-      // Ask for camera permission
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Sorry, we need camera permissions to take a photo.'
-        );
-        return;
-      }
-
-      // Take a photo
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        quality: 1,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        setProfileImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'There was an error taking a photo.');
-    }
-  };
-
-  // Choose from gallery
-  const chooseFromGallery = async () => {
-    try {
-      // Ask for permission
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Sorry, we need photo library permissions to access your photos.'
-        );
-        return;
-      }
-
-      // Just use the most basic configuration possible
-      const result = await ImagePicker.launchImageLibraryAsync();
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        setProfileImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error selecting image:', error);
-      Alert.alert('Error', 'There was an error selecting an image.');
-    }
-  };
-  
   const handleLogout = async () => {
     try {
       await signOut();
@@ -316,8 +230,13 @@ const Settings = () => {
       // We don't need any explicit navigation - just let the AuthProvider handle it
       // The app's root navigator will detect the user is null and show the auth screens
       
-      // If needed, we can add a message to show the logout was successful
-      Alert.alert("Logged Out", "You have been successfully logged out.");
+      // Add direct toast notification here to ensure it appears
+      toast({
+        title: 'Successfully Logged Out',
+        description: 'You have been securely logged out of your account',
+        type: 'success',
+        duration: 4000
+      });
     } catch (error) {
       console.error('Logout error:', error);
       Alert.alert("Error", "There was a problem logging out. Please try again.");
@@ -326,12 +245,7 @@ const Settings = () => {
 
   const handleManagePets = () => {
     // Navigate to the dedicated ManagePets screen
-    navigation.navigate('ManagePets');
-  };
-  
-  const handleOpenChatAssistant = () => {
-    // @ts-ignore - Workaround for type mismatch in navigation
-    navigation.navigate('ChatAssistant', { petId: activePetId });
+    navigation.navigate('ManagePets' as never);
   };
   
   const handleDeletePet = (pet: Pet) => {
@@ -354,7 +268,6 @@ const Settings = () => {
               // If this was the active pet, clear the active pet
               if (activePetId === pet.id) {
                 await AsyncStorageService.removeItem(STORAGE_KEYS.ACTIVE_PET_ID);
-                setActivePetId(null);
               }
               
               // Refresh the pet list
@@ -370,66 +283,6 @@ const Settings = () => {
         }
       ]
     );
-  };
-  
-  const handleSetActivePet = async (pet: Pet) => {
-    try {
-      await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, pet.id);
-      setActivePetId(pet.id);
-      Alert.alert('Success', `${pet.name} is now your active pet.`);
-      setShowPetModal(false);
-    } catch (error) {
-      console.error('Error setting active pet:', error);
-      Alert.alert('Error', 'There was an error setting the active pet. Please try again.');
-    }
-  };
-  
-  const renderPetItem = ({ item }: { item: Pet }) => {
-    return (
-      <View style={[styles.petItem, { borderBottomColor: colors.border }]}>
-        <View style={styles.petInfo}>
-          {item.image ? (
-            <Image source={{ uri: item.image }} style={styles.petImage} />
-          ) : (
-            <View style={[styles.petImagePlaceholder, { backgroundColor: colors.primary + '50' }]}>
-              <Text style={[styles.petImageText, { color: colors.primary }]}>
-                {item.name.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-          )}
-          <View style={styles.petDetails}>
-            <Text style={[styles.petName, { color: colors.text }]}>{item.name}</Text>
-            <Text style={[styles.petBreed, { color: colors.text + '80' }]}>{item.breed}</Text>
-          </View>
-        </View>
-        <View style={styles.petActions}>
-          {activePetId !== item.id && (
-            <TouchableOpacity 
-              style={[styles.activateButton, { backgroundColor: colors.primary + '20' }]} 
-              onPress={() => handleSetActivePet(item)}
-            >
-              <Text style={{ color: colors.primary }}>Activate</Text>
-            </TouchableOpacity>
-          )}
-          {activePetId === item.id && (
-            <View style={[styles.activeIndicator, { backgroundColor: colors.primary + '20' }]}>
-              <Text style={{ color: colors.primary }}>Active</Text>
-            </View>
-          )}
-          <TouchableOpacity 
-            style={styles.deleteButton} 
-            onPress={() => handleDeletePet(item)}
-          >
-            <Ionicons name="trash-outline" size={20} color="#F44336" />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  const handleOpenChatDebug = () => {
-    // navigation.navigate('ChatDebug');
-    Alert.alert('Chat Debug', 'Chat debug functionality not yet implemented');
   };
 
   // Dynamic styles based on theme
@@ -475,25 +328,9 @@ const Settings = () => {
 
         {/* Profile Section */}
         <View style={styles.profileSection}>
-          <TouchableOpacity 
-            style={styles.avatarTouchable}
-            onPress={showImageOptions}
-            activeOpacity={0.8}
-          >
-            {profileImage ? (
-              <Image 
-                source={{ uri: profileImage }}
-                style={styles.avatarImage}
-              />
-            ) : (
           <View style={[styles.avatarContainer, { backgroundColor: colors.primary }]}>
                 <Text style={styles.avatarText}>{getUserInitial()}</Text>
               </View>
-            )}
-            <View style={styles.cameraIconContainer}>
-              <Ionicons name="camera" size={14} color="white" />
-          </View>
-          </TouchableOpacity>
           
           <View style={styles.profileInfo}>
             <Text style={[styles.profileName, dynamicStyles.profileName]}>
@@ -509,7 +346,10 @@ const Settings = () => {
         </View>
 
         {/* App Improvement Section */}
-        <TouchableOpacity style={[styles.optionItem, dynamicStyles.optionItem]}>
+        <TouchableOpacity 
+          style={[styles.optionItem, dynamicStyles.optionItem]}
+          onPress={() => navigation.navigate('FeedbackForm' as never)}
+        >
           <View style={styles.optionIconContainer}>
             <IconWrapper name="document-text-outline" color={colors.text} />
           </View>
@@ -539,89 +379,6 @@ const Settings = () => {
             <IconWrapper name="paw-outline" color={colors.text} />
           </View>
           <Text style={[styles.optionText, dynamicStyles.optionText]}>Manage pets</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => setShowPetModal(true)}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="swap-horizontal-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Switch active pet</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        {/* Assistant & Features Section */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>FEATURES</Text>
-        </View>
-        
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => {
-            setModalType('apiKey');
-            setModalVisible(true);
-          }}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="key-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Configure Pet Assistant</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={handleOpenChatAssistant}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="chatbubbles-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Open Chat Assistant</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        {/* Debug Section */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionHeaderText, dynamicStyles.sectionHeaderText]}>DEBUG & SUPPORT</Text>
-        </View>
-        
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => {
-            Alert.alert('Debug Menu', 'Debug menu functionality not yet implemented');
-          }}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="bug-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Debug Menu</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={handleOpenChatDebug}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="terminal-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Chat Debug</Text>
-          <ForwardArrow color={colors.text + '80'} />
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.optionItem, dynamicStyles.optionItem]}
-          onPress={() => {
-            Alert.alert('Storage Diagnostic', 'Storage diagnostic functionality not yet implemented');
-          }}
-        >
-          <View style={styles.optionIconContainer}>
-            <IconWrapper name="folder-outline" color={colors.text} />
-          </View>
-          <Text style={[styles.optionText, dynamicStyles.optionText]}>Storage Diagnostic</Text>
           <ForwardArrow color={colors.text + '80'} />
         </TouchableOpacity>
 
@@ -678,133 +435,6 @@ const Settings = () => {
         </View>
       </ScrollView>
       
-      {/* Pet Management Modal */}
-      <Modal
-        visible={showPetModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowPetModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Manage Your Pets</Text>
-              <TouchableOpacity onPress={() => setShowPetModal(false)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            {pets.length === 0 ? (
-              <View style={styles.noPetsContainer}>
-                <Ionicons name="paw" size={60} color={colors.primary + '50'} />
-                <Text style={[styles.noPetsText, { color: colors.text + '80' }]}>
-                  You don't have any pets yet
-                </Text>
-                <TouchableOpacity 
-                  style={[styles.addPetButton, { backgroundColor: colors.primary }]}
-                  onPress={() => {
-                    setShowPetModal(false);
-                    navigation.navigate('AddPet');
-                  }}
-                >
-                  <Text style={{ color: 'white', fontWeight: 'bold' }}>Add a Pet</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <FlatList
-                data={pets}
-                renderItem={renderPetItem}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.petList}
-              />
-            )}
-          </View>
-        </View>
-      </Modal>
-      
-      {/* API Key Input Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible && modalType === 'apiKey'}
-        onRequestClose={() => {
-          setModalVisible(false);
-        }}
-      >
-        <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Configure Gemini API Key</Text>
-            <Text style={[styles.modalDescription, { color: colors.text + '99' }]}>
-              Enter your Gemini API key to enable the Pet Assistant. You can get one from Google MakerSuite.
-            </Text>
-            
-            <TextInput
-              style={[styles.modalInput, { 
-                backgroundColor: colors.background, 
-                color: colors.text,
-                borderColor: colors.border
-              }]}
-              placeholder="Enter Gemini API key"
-              placeholderTextColor={colors.text + '80'}
-              value={apiKey}
-              onChangeText={setApiKey}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            
-            <View style={styles.modalButtonContainer}>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.background }]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.primary }]}
-                onPress={async () => {
-                  try {
-                    if (!apiKey.trim()) {
-                      Alert.alert('Error', 'Please enter a valid API key');
-                      return;
-                    }
-                    
-                    console.log('Settings: Attempting to set Gemini API key...');
-                    
-                    // Import the pet assistant service
-                    const { petAssistantService } = await import('../services/petAssistant');
-                    
-                    // Save the API key
-                    console.log('Settings: Calling petAssistantService.setApiKey()...');
-                    await petAssistantService.setApiKey(apiKey.trim());
-                    
-                    // Check if it's valid
-                    console.log('Settings: Calling petAssistantService.hasApiKey()...');
-                    const isValid = await petAssistantService.hasApiKey();
-                    console.log('Settings: API key validation result:', isValid);
-                    
-                    if (isValid) {
-                      console.log('Settings: API key configured successfully');
-                      Alert.alert('Success', 'API key configured successfully. You can now use the Pet Assistant.');
-                      setModalVisible(false);
-                      setApiKey('');
-                    } else {
-                      console.error('Settings: API key validation failed');
-                      Alert.alert('Error', 'Failed to validate API key. Please check and try again.');
-                    }
-                  } catch (error) {
-                    console.error('Settings: Error saving API key:', error);
-                    Alert.alert('Error', 'Failed to save API key. Please try again.');
-                  }
-                }}
-              >
-                <Text style={styles.modalButtonText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-      
       <Footer />
     </View>
   );
@@ -836,33 +466,12 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     marginBottom: 20,
   },
-  avatarTouchable: {
-    position: 'relative',
-  },
   avatarContainer: {
     width: 60,
     height: 60,
     borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  avatarImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
-  cameraIconContainer: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: '#4CAF50',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'white',
   },
   avatarText: {
     fontSize: 28,
@@ -924,114 +533,6 @@ const styles = StyleSheet.create({
   },
   iconWrapper: {
     alignItems: 'center',
-  },
-  // Pet management styles
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    paddingVertical: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalDescription: {
-    fontSize: 16,
-    marginBottom: 20,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-    marginTop: 10,
-  },
-  petList: {
-    paddingHorizontal: 20,
-  },
-  petItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-  },
-  petInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  petImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  petImagePlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  petImageText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  petDetails: {
-    marginLeft: 15,
-  },
-  petName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  petBreed: {
-    fontSize: 14,
-    marginTop: 3,
-  },
-  petActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  activateButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 15,
-    marginRight: 10,
-  },
-  activeIndicator: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 15,
-    marginRight: 10,
-  },
-  deleteButton: {
-    padding: 5,
-  },
-  noPetsContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  noPetsText: {
-    fontSize: 16,
-    marginTop: 15,
-    marginBottom: 20,
-  },
-  addPetButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
   },
   valueContainer: {
     flexDirection: 'row',
@@ -1109,61 +610,7 @@ const styles = StyleSheet.create({
   },
   settingDescription: {
     fontSize: 14,
-  },
-  // API Key Modal styles
-  modalInput: {
-    width: '90%',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 20,
-    marginTop: 10,
-    alignSelf: 'center',
-  },
-  modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '90%',
-    alignSelf: 'center',
-  },
-  modalButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    flex: 1,
-    marginHorizontal: 5,
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  settingsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-  },
-  settingsButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  settingsIcon: {
-    marginRight: 16,
-  },
-  settingsTextContainer: {
-    flex: 1,
-  },
-  settingsButtonTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  settingsButtonDescription: {
-    fontSize: 14,
-  },
+  }
 });
 
 export default Settings;

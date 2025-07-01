@@ -2,6 +2,7 @@ import { STORAGE_KEYS } from './constants';
 import { DataManager, BaseEntity } from './DataManager';
 import { Pet, Task, Meal, FoodItem, Medication, HealthRecord, ActivitySession, User, WeightRecord } from '../../types/components';
 import { createEntityTables } from './migrations';
+import { AppFeedbackRepository } from './appFeedbackRepository';
 
 /**
  * Extended DataManager for FoodItems with additional methods
@@ -954,6 +955,7 @@ export class UnifiedDatabaseManager {
   activitySessions: ActivitySessionDataManager;
   weightRecords: WeightRecordDataManager;
   users: DataManager<User>;
+  appFeedback: AppFeedbackRepository;
 
   constructor() {
     // Initialize all entity managers with appropriate storage keys and table names
@@ -966,46 +968,50 @@ export class UnifiedDatabaseManager {
     this.activitySessions = new ActivitySessionDataManager(STORAGE_KEYS.ACTIVITY_SESSIONS, 'activity_sessions');
     this.weightRecords = new WeightRecordDataManager(STORAGE_KEYS.WEIGHT_RECORDS, 'weight_records');
     this.users = new DataManager<User>(STORAGE_KEYS.USERS, 'users');
+    this.appFeedback = new AppFeedbackRepository();
   }
 
   /**
    * Initialize the database
    */
   async initialize(): Promise<void> {
-    console.log('Initializing UnifiedDatabaseManager...');
-    
     try {
-      // Check if required tables exist and create them if needed
+      console.log('Initializing database...');
+      
+      // Create tables if they don't exist
       await createEntityTables();
       
-      // Initialize all DataManagers with timeout
+      // Function to retry operations with timeout
       const timeout = (ms: number) => new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Database initialization timed out')), ms)
+        setTimeout(() => reject(new Error('Connection timeout')), ms)
       );
       
-      // Set a 10-second timeout for initialization
-      await Promise.race([
-        Promise.all([
-          this.pets.tableExists(),
-          this.tasks.tableExists(),
-          this.meals.tableExists(),
-          this.foodItems.tableExists(),
-          this.medications.tableExists(),
-          this.healthRecords.tableExists(),
-          this.activitySessions.tableExists(),
-          this.weightRecords.tableExists(),
-          this.users.tableExists()
-        ]),
-        timeout(10000) // 10 seconds timeout
-      ]).catch((error: Error) => {
-        console.warn('Database initialization timeout or error:', error.message);
-        console.warn('Continuing with initialization to prevent app from getting stuck');
+      // Initialize loading of user data (excluding appFeedback which doesn't need initialization)
+      const initializePromise = Promise.all([
+        this.pets.ready(),
+        this.tasks.ready(),
+        this.meals.ready(), 
+        this.foodItems.ready(),
+        this.medications.ready(),
+        this.healthRecords.ready(),
+        this.activitySessions.ready(),
+        this.weightRecords.ready(),
+        this.users.ready()
+      ])
+      .then(() => console.log('Database ready'))
+      .catch(error => {
+        console.error('Error initializing database:', error);
+        throw error;
       });
       
-      console.log('UnifiedDatabaseManager initialized');
+      // Wait with timeout
+      await Promise.race([
+        initializePromise,
+        timeout(30000) // 30 seconds timeout
+      ]);
     } catch (error) {
-      console.error('Error during database initialization:', error);
-      console.warn('Continuing despite initialization error to prevent app from getting stuck');
+      console.error('Failed to initialize database:', error);
+      throw error;
     }
   }
 
@@ -1080,6 +1086,7 @@ export class UnifiedDatabaseManager {
         this.clearEntityType(this.healthRecords),
         this.clearEntityType(this.activitySessions),
         this.clearEntityType(this.weightRecords)
+        // We don't clear app feedback as it's handled separately in Supabase
       ]);
       
       console.log('Database reset successfully');

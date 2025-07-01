@@ -39,6 +39,7 @@ export type MainStackParamList = {
   ManagePets: undefined;
   EditPet: { petId: string };
   WeightTrend: { petId?: string };
+  FeedbackForm: { initialFeedbackType?: 'bug_report' | 'feature_request' | 'general_feedback' | 'issue_report' };
 };
 
 // Root stack combining all param lists (App-level navigation)
@@ -89,6 +90,7 @@ export type AppStackParamList = {
   WeightTrend: { petId?: string };
   StorageDiagnostic: undefined;
   DebugMenu: undefined;
+  FeedbackForm: { initialFeedbackType?: 'bug_report' | 'feature_request' | 'general_feedback' | 'issue_report' };
 };
 
 // Export a custom navigation type for use in components

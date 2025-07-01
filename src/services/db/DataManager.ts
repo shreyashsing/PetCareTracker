@@ -44,6 +44,21 @@ export class DataManager<T extends BaseEntity> {
   }
 
   /**
+   * Initialize the data manager and load data from local storage
+   * @returns Promise that resolves when data is ready to be used
+   */
+  async ready(): Promise<T[]> {
+    try {
+      // Load data from local storage
+      const data = await this.getAll();
+      return data;
+    } catch (error) {
+      console.error(`Error initializing ${this.tableName} data:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Check if a table exists in Supabase
    * @returns true if the table exists, false otherwise
    */

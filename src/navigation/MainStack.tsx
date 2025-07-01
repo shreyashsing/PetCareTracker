@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../types/navigation';
 import type { ComponentType } from 'react';
+import { useAppStore } from '../store/AppStore';
 
 // Import screens from pages directory (our primary implementation)
 import HomeScreen from '../pages/Home';
@@ -27,11 +28,23 @@ import EditPetScreen from '../pages/EditPet';
 import ExerciseScreen from '../pages/Exercise';
 import AddActivityScreen from '../pages/AddActivity';
 import WeightTrendScreen from '../pages/WeightTrend';
+import FeedbackFormScreen from '../pages/FeedbackForm';
 
 // Create stack navigator with correct type
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
 const MainStack = () => {
+  const { updateCurrentRoute, saveStateToStorage } = useAppStore();
+  
+  // Function to create screen focus listener
+  const createFocusListener = (screenName: string) => ({
+    focus: () => {
+      console.log(`[MainStack] Screen focused: ${screenName}`);
+      updateCurrentRoute(screenName);
+      saveStateToStorage();
+    }
+  });
+
   return (
     <Stack.Navigator
       initialRouteName="Home"
@@ -62,6 +75,11 @@ const MainStack = () => {
       <Stack.Screen name="Exercise" component={ExerciseScreen as ComponentType<any>} />
       <Stack.Screen name="AddActivity" component={AddActivityScreen as ComponentType<any>} />
       <Stack.Screen name="WeightTrend" component={WeightTrendScreen as ComponentType<any>} />
+      <Stack.Screen 
+        name="FeedbackForm" 
+        component={FeedbackFormScreen as ComponentType<any>} 
+        listeners={createFocusListener('FeedbackForm')}
+      />
     </Stack.Navigator>
   );
 };

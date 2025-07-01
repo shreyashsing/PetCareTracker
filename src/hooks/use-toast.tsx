@@ -38,6 +38,7 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-100)).current;
+  const progressAnim = useRef(new Animated.Value(0)).current;
   const timeout = useRef<NodeJS.Timeout | null>(null);
 
   const showToast = () => {
@@ -46,6 +47,9 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     
     setVisible(true);
+    
+    // Reset progress animation
+    progressAnim.setValue(0);
     
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -57,6 +61,11 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         toValue: 0,
         duration: 300,
         useNativeDriver: true,
+      }),
+      Animated.timing(progressAnim, {
+        toValue: 1,
+        duration: toastProps.duration,
+        useNativeDriver: false,
       }),
     ]).start();
 
@@ -183,6 +192,20 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               <Ionicons name="close" size={20} color="#6b7280" />
             </TouchableOpacity>
           </View>
+          
+          {/* Progress bar */}
+          <Animated.View 
+            style={[
+              styles.progressBar,
+              {
+                backgroundColor: getBorderColor(toastProps.type as ToastType),
+                width: progressAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0%', '100%'],
+                }),
+              },
+            ]} 
+          />
         </Animated.View>
       )}
     </ToastContext.Provider>
@@ -198,18 +221,19 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 4,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
     zIndex: 9999,
     borderLeftWidth: 4,
+    overflow: 'hidden', // To ensure the progress bar doesn't overflow
   },
   contentContainer: {
     flexDirection: 'row',
@@ -233,6 +257,12 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 4,
+  },
+  progressBar: {
+    height: 3,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
   },
 });
 

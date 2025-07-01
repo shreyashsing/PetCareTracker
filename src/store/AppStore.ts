@@ -103,6 +103,7 @@ const SAFE_RESTORATION_ROUTES = [
   'ChatAssistant',
   'ManagePets',
   'WeightTrend',
+  'FeedbackForm',
   // Form routes that should also be preserved
   'AddMedication',
   'AddPet',
@@ -127,7 +128,8 @@ const FORM_ROUTES = [
   'AddTask',
   'AddMeal',
   'AddFoodItem',
-  'AddActivity'
+  'AddActivity',
+  'FeedbackForm'
 ];
 
 // Maximum time in background before resetting navigation (15 minutes)
@@ -392,7 +394,19 @@ const useAppStore = create<AppStoreType>((set, get) => ({
   },
 
   canRestoreToRoute: (route: string) => {
-    return SAFE_RESTORATION_ROUTES.includes(route) && isAuthenticatedRoute(route);
+    // Special case for FeedbackForm - always allow restoration
+    if (route === 'FeedbackForm') {
+      console.log(`[AppStore] canRestoreToRoute special handling for "FeedbackForm": true`);
+      return true;
+    }
+    
+    const canRestore = SAFE_RESTORATION_ROUTES.includes(route) && isAuthenticatedRoute(route);
+    console.log(`[AppStore] canRestoreToRoute check for "${route}":`, {
+      inSafeRoutes: SAFE_RESTORATION_ROUTES.includes(route),
+      isAuthenticated: isAuthenticatedRoute(route),
+      result: canRestore
+    });
+    return canRestore;
   },
 
   // Persistence methods
@@ -428,17 +442,31 @@ const useAppStore = create<AppStoreType>((set, get) => ({
         
         // Only restore if not too much time has passed AND was actually in background
         if (timeSinceLastActive < MAX_BACKGROUND_TIME && parsedState.wasInBackground) {
-          const canRestore = get().canRestoreToRoute(parsedState.navigationState?.currentRoute || 'Home');
+          const route = parsedState.navigationState?.currentRoute || 'Home';
           
-          if (canRestore && parsedState.navigationState?.currentRoute !== 'Home') {
+          // Special case for FeedbackForm - always allow restoration
+          if (route === 'FeedbackForm' && SAFE_RESTORATION_ROUTES.includes(route)) {
+            console.log('[AppStore] Special handling for FeedbackForm route - bypassing auth check');
             set({
               navigationState: parsedState.navigationState || defaultNavigationState,
               shouldRestoreNavigation: true,
               wasInBackground: false, // Reset background flag
             });
-            console.log('[AppStore] Navigation state restored successfully, will navigate to:', parsedState.navigationState?.currentRoute);
+            console.log('[AppStore] Navigation state restored successfully for FeedbackForm');
+            return;
+          }
+          
+          const canRestore = get().canRestoreToRoute(route);
+          
+          if (canRestore && route !== 'Home') {
+            set({
+              navigationState: parsedState.navigationState || defaultNavigationState,
+              shouldRestoreNavigation: true,
+              wasInBackground: false, // Reset background flag
+            });
+            console.log('[AppStore] Navigation state restored successfully, will navigate to:', route);
           } else {
-            console.log('[AppStore] Cannot restore to route or route is Home:', parsedState.navigationState?.currentRoute);
+            console.log('[AppStore] Cannot restore to route or route is Home:', route);
             set({ wasInBackground: false });
           }
         } else {

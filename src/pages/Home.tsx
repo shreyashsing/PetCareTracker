@@ -1204,7 +1204,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       toast({
         title: "Health record not found",
         description: "Unable to find the health record details",
-        variant: 'destructive'
+        type: 'error'
       });
     }
   }, [recentHealthRecords, toast]);
@@ -1231,7 +1231,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       toast({
         title: "Follow-up completed",
         description: `Health record follow-up completed on ${format(currentDate, 'MMM d, yyyy')}`,
-        variant: 'default'
+        type: 'success'
       });
       
       // Close modal and refresh data
@@ -1246,7 +1246,7 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
       toast({
         title: "Error",
         description: "Failed to mark follow-up as complete",
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setIsMarkingComplete(false);
@@ -1450,85 +1450,6 @@ const Home: React.FC<HomeScreenProps> = ({ navigation }) => {
             onPress={() => navigation.navigate('AddPet')}
           >
             <Text style={styles.addPetButtonText}>Add Your First Pet</Text>
-          </TouchableOpacity>
-          
-          {/* Debug button to check database state */}
-          <TouchableOpacity
-            style={[styles.debugButton, { backgroundColor: colors.secondary, marginTop: 20 }]}
-            onPress={async () => {
-              try {
-                // Get current user ID
-                if (!user || !user.id) {
-                  console.log("Debug: No user logged in");
-                  toast({ 
-                    title: "No user logged in", 
-                    description: "Please log in to view pets",
-                    variant: 'destructive'
-                  });
-                  return;
-                }
-                
-                // Debug: Check if pets exist for this user
-                const allPets = await unifiedDatabaseManager.pets.getAll();
-                const userPets = allPets.filter((pet: Pet) => pet.userId === user.id);
-                console.log(`Debug: Found ${userPets.length} pets for user ${user.id}`);
-                userPets.forEach((pet: Pet) => console.log(`- Pet: ${pet.name} (${pet.id}), owned by: ${pet.userId}`));
-                
-                // Check total pets in DB for debugging
-                const allDbPets = await unifiedDatabaseManager.pets.getAll();
-                console.log(`Debug: Total pets in DB: ${allDbPets.length}`);
-                
-                // Try to get active pet ID
-                const activeId = await AsyncStorageService.getItem<string>(STORAGE_KEYS.ACTIVE_PET_ID);
-                console.log(`Debug: Active pet ID: ${activeId}`);
-                
-                // Check if there's a mismatch between hasPets and actual pets
-                if (userPets.length > 0 && !hasPets) {
-                  console.log("Debug: Data inconsistency - pets exist but hasPets is false");
-                  
-                  // Fix: Reset active pet ID and force reload
-                  if (userPets.length > 0) {
-                    await AsyncStorageService.setItem(STORAGE_KEYS.ACTIVE_PET_ID, userPets[0].id);
-                    console.log(`Debug: Reset active pet ID to first pet: ${userPets[0].id}`);
-                    
-                    toast({ 
-                      title: "Fixed pet data inconsistency", 
-                      description: `Set active pet to: ${userPets[0].name}`,
-                      variant: 'default'
-                    });
-                  }
-                } else if (userPets.length === 0 && hasPets) {
-                  console.log("Debug: Data inconsistency - hasPets is true but no pets exist");
-                  setHasPets(false);
-                  toast({ 
-                    title: "Fixed state inconsistency", 
-                    description: "Updated UI to show no pets",
-                    variant: 'default'
-                  });
-                  return;
-                } else {
-                  toast({ 
-                    title: `${userPets.length} pets found for this user`, 
-                    description: userPets.length > 0 ? 'Reloading data...' : 'No pets for this user',
-                    variant: 'default'
-                  });
-                }
-                
-                // Force reload data
-                if (userPets.length > 0) {
-                  loadHomeData(false);
-                }
-              } catch (error: any) {
-                console.error('Debug error:', error);
-                toast({ 
-                  title: "Debug error", 
-                  description: error.message || "Unknown error",
-                  variant: 'destructive'
-                });
-              }
-            }}
-          >
-            <Text style={styles.addPetButtonText}>Debug: Check Pets</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

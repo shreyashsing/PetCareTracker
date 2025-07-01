@@ -34,7 +34,13 @@ export const isAuthenticatedRoute = (route: string): boolean => {
     'EditPet',
     'AddHealthRecord',
     'ChatAssistant',
-    'FullAnalytics'
+    'FullAnalytics',
+    'FeedbackForm',
+    'WeightTrend',
+    'AddTask',
+    'AddMeal',
+    'AddFoodItem',
+    'AddActivity'
   ];
   
   return authRoutes.includes(route);

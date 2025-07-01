@@ -54,14 +54,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         toast({
           title: 'Success',
           description: 'Logged in successfully',
-          variant: 'default'
+          type: 'success'
         });
         return true;
       } else {
         toast({
           title: 'Error',
           description: 'Invalid email or password',
-          variant: 'destructive'
+          type: 'error'
         });
         return false;
       }
@@ -70,7 +70,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       toast({
         title: 'Error',
         description: 'Failed to login',
-        variant: 'destructive'
+        type: 'error'
       });
       return false;
     } finally {
@@ -87,14 +87,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         toast({
           title: 'Success',
           description: 'Account created successfully',
-          variant: 'default'
+          type: 'success'
         });
         return true;
       } else {
         toast({
           title: 'Error',
           description: 'Failed to create account. Email may already be in use.',
-          variant: 'destructive'
+          type: 'error'
         });
         return false;
       }
@@ -103,7 +103,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       toast({
         title: 'Error',
         description: 'Failed to create account',
-        variant: 'destructive'
+        type: 'error'
       });
       return false;
     } finally {
@@ -118,16 +118,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await authService.logout();
       setUser(null);
       toast({
-        title: 'Success',
-        description: 'Logged out successfully',
-        variant: 'default'
+        title: 'Successfully Logged Out',
+        description: 'You have been securely logged out of your account',
+        type: 'success',
+        duration: 4000
       });
     } catch (error) {
       console.error('Error logging out:', error);
       toast({
         title: 'Error',
         description: 'Failed to logout',
-        variant: 'destructive'
+        type: 'error'
       });
     } finally {
       setIsLoading(false);

@@ -15,7 +15,8 @@ import {
   useColorScheme,
   TouchableOpacity,
   Button,
-  StyleSheet
+  StyleSheet,
+  Image
 } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -128,13 +129,12 @@ const SplashScreen: React.FC<{
       <View style={styles.splashContent}>
         {/* App Logo/Icon */}
         <View style={styles.logoContainer}>
-          <Text style={styles.logoText}>🐾</Text>
-          <Text style={styles.appName}>Pet Care Tracker</Text>
-        </View>
-        
-        {/* Loading indicator - clean, no text */}
-        <View style={styles.loadingSection}>
-          <ActivityIndicator size="large" color="rgba(255, 255, 255, 0.9)" />
+          {/* Your actual logo - centered and prominent */}
+          <Image 
+            source={require('./assets/logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
       </View>
       
@@ -450,18 +450,13 @@ export default function App() {
 
 // Styles
 const styles = StyleSheet.create({
-  // Splash screen styles
+  // Splash screen styles - matching your logo's soft cream background
   splashContainer: {
     flex: 1,
-    backgroundColor: '#2E8B57', // Sea Green
+    backgroundColor: '#f5f3f0', // Soft cream background like your logo
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 50,
-    // Subtle gradient effect using shadow
-    shadowColor: '#1F5F3F',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
   },
   splashContent: {
     flex: 1,
@@ -470,51 +465,29 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 60,
-    // Subtle glow effect
-    shadowColor: 'rgba(255, 255, 255, 0.3)',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
+    justifyContent: 'center',
+    flex: 1,
   },
-  logoText: {
-    fontSize: 80,
-    marginBottom: 20,
-    // Add subtle shadow to emoji
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4,
-  },
-  appName: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#F0FFF0', // Honeydew - very light green
-    textAlign: 'center',
-    letterSpacing: 1,
-    // Text shadow for depth
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  loadingSection: {
-    alignItems: 'center',
-    marginTop: 40,
-  },
-  loadingText: {
-    marginTop: 20,
-    fontSize: 18,
-    color: 'rgba(240, 255, 240, 0.9)', // Light green tint
-    textAlign: 'center',
+  logoImage: {
+    width: 280,
+    height: 280,
+    // Add subtle shadow for depth and elegance
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
   splashFooter: {
     paddingHorizontal: 40,
   },
   footerText: {
-    fontSize: 16,
-    color: 'rgba(240, 255, 240, 0.85)', // Light green tint
+    fontSize: 20,
+    color: '#A0C878', 
     textAlign: 'center',
     fontStyle: 'italic',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
+    fontWeight: '500',
+    lineHeight: 26,
   },
 
   // Error screen styles
